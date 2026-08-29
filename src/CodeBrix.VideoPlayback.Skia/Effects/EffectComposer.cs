@@ -1,4 +1,5 @@
 using System;
+using CodeBrix.VideoPlayback.Color.Luts;
 
 namespace CodeBrix.VideoPlayback.Skia.Effects;
 
@@ -12,6 +13,17 @@ namespace CodeBrix.VideoPlayback.Skia.Effects;
 /// applies itself, so effect two sees the colours effect one produced - which is what makes the chain's ORDER
 /// meaningful. When the last effect has run, the presenter turns the grid into one texture and the shader
 /// samples it once per pixel.
+/// </para>
+/// <para>
+/// <b>The arithmetic is not here.</b> Filling the grid and folding a table into it is
+/// <see cref="LutComposer" />'s work, in the core package, and this class is the presenter-side face of it -
+/// so the table an application sees at playback and the table the authoring tools bake into a ".cube" file
+/// are produced by the very same code. What lives here is the effect-chain protocol and the grid the atlas
+/// is written from.
+/// </para>
+/// <para>
+/// The grid always runs over 0 to 1, because that is the range a decoded frame's colour arrives in. A LAYER
+/// declaring some other domain is still honoured - on the way in to its own lookup, where it belongs.
 /// </para>
 /// <para>
 /// The grid is sampled, not exact: a colour that falls between nodes is interpolated from the eight around
@@ -39,72 +51,52 @@ public sealed class EffectComposer
     /// <summary>How many nodes the grid holds altogether - <c>Size</c> cubed.</summary>
     public int NodeCount => Size * Size * Size;
 
+    /// <summary>How a table is sampled between its own nodes while it is being composed.</summary>
+    /// <remarks>
+    /// Tetrahedral by default, which is what colour-grading tools and FFmpeg's <c>lut3d</c> filter do, so
+    /// the same chain composed here and baked for the authoring pipeline gives the same table. The two
+    /// methods agree exactly on a table that is linear along each axis.
+    /// </remarks>
+    public LutInterpolation Interpolation { get; set; } = LutInterpolation.Tetrahedral;
+
     internal float[] Nodes => nodes;
 
     /// <summary>Puts the grid back to the table that changes nothing.</summary>
-    public void Reset()
-    {
-        float last = Size - 1;
-        int index = 0;
-        for (int b = 0; b < Size; b++)
-        {
-            for (int g = 0; g < Size; g++)
-            {
-                for (int r = 0; r < Size; r++)
-                {
-                    nodes[index++] = r / last;
-                    nodes[index++] = g / last;
-                    nodes[index++] = b / last;
-                }
-            }
-        }
-    }
+    public void Reset() => LutComposer.FillIdentity(nodes, Size);
 
     /// <summary>Composes a three-dimensional table onto whatever the grid already holds.</summary>
     /// <param name="lut">The table to apply after the effects already composed.</param>
     /// <exception cref="ArgumentNullException"><paramref name="lut" /> is null.</exception>
-    public void ApplyLut(Lut3D lut)
-    {
-        if (lut == null) throw new ArgumentNullException(nameof(lut));
+    public void ApplyLut(Lut3D lut) => ApplyLut(lut, 100d);
 
-        for (int index = 0; index < nodes.Length; index += 3)
-        {
-            lut.Sample(
-                nodes[index],
-                nodes[index + 1],
-                nodes[index + 2],
-                out float red,
-                out float green,
-                out float blue);
-
-            nodes[index] = red;
-            nodes[index + 1] = green;
-            nodes[index + 2] = blue;
-        }
-    }
+    /// <summary>Composes part of a three-dimensional table onto whatever the grid already holds.</summary>
+    /// <param name="lut">The table to apply after the effects already composed.</param>
+    /// <param name="applyAtPercent">
+    /// How much of it to apply, 0 to 100. Values outside are clamped; 0 changes nothing.
+    /// </param>
+    /// <exception cref="ArgumentNullException"><paramref name="lut" /> is null.</exception>
+    public void ApplyLut(Lut3D lut, double applyAtPercent) =>
+        LutComposer.ApplyLayer(nodes, lut, applyAtPercent, Interpolation);
 
     /// <summary>Composes a set of per-channel curves onto whatever the grid already holds.</summary>
     /// <param name="lut">The curves to apply after the effects already composed.</param>
     /// <exception cref="ArgumentNullException"><paramref name="lut" /> is null.</exception>
-    public void ApplyLut(Lut1D lut)
-    {
-        if (lut == null) throw new ArgumentNullException(nameof(lut));
+    public void ApplyLut(Lut1D lut) => ApplyLut(lut, 100d);
 
-        for (int index = 0; index < nodes.Length; index += 3)
-        {
-            lut.Sample(
-                nodes[index],
-                nodes[index + 1],
-                nodes[index + 2],
-                out float red,
-                out float green,
-                out float blue);
+    /// <summary>Composes part of a set of per-channel curves onto whatever the grid already holds.</summary>
+    /// <param name="lut">The curves to apply after the effects already composed.</param>
+    /// <param name="applyAtPercent">
+    /// How much of them to apply, 0 to 100. Values outside are clamped; 0 changes nothing.
+    /// </param>
+    /// <exception cref="ArgumentNullException"><paramref name="lut" /> is null.</exception>
+    public void ApplyLut(Lut1D lut, double applyAtPercent) =>
+        LutComposer.ApplyLayer(nodes, lut, applyAtPercent, Interpolation);
 
-            nodes[index] = red;
-            nodes[index + 1] = green;
-            nodes[index + 2] = blue;
-        }
-    }
+    /// <summary>Composes one layer of a chain onto whatever the grid already holds.</summary>
+    /// <param name="layer">
+    /// The layer, carrying its own apply-at percentage. Null, or a layer applied at nothing, changes nothing.
+    /// </param>
+    public void ApplyLayer(LutLayer layer) => LutComposer.ApplyLayer(nodes, layer, Interpolation);
 
     /// <summary>Composes an arbitrary colour function onto whatever the grid already holds.</summary>
     /// <param name="transform">The function, called once for every node of the grid.</param>

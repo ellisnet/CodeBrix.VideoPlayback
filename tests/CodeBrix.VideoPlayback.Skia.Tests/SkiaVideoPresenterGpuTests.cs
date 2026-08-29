@@ -1,5 +1,6 @@
 using System;
 using CodeBrix.VideoPlayback.Color;
+using CodeBrix.VideoPlayback.Color.Luts;
 using CodeBrix.VideoPlayback.Decoding;
 using CodeBrix.VideoPlayback.Frames;
 using CodeBrix.VideoPlayback.Skia.Effects;

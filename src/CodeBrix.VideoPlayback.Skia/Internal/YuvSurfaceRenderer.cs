@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using CodeBrix.VideoPlayback.Color.Luts;
 using CodeBrix.VideoPlayback.Decoding;
 using CodeBrix.VideoPlayback.Frames;
 using SkiaSharp;
@@ -28,10 +29,14 @@ internal sealed class YuvSurfaceRenderer : IDisposable
     private static readonly SKSamplingOptions SmoothSampling =
         new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.None);
 
+    private static readonly SKSamplingOptions ExactSampling =
+        new SKSamplingOptions(SKFilterMode.Nearest, SKMipmapMode.None);
+
     private readonly List<SKImage> images = new List<SKImage>(6);
 
     private SKRuntimeEffect plainEffect;
-    private SKRuntimeEffect lookupEffect;
+    private SKRuntimeEffect tetrahedralEffect;
+    private SKRuntimeEffect trilinearEffect;
 
     /// <summary>Draws a frame onto a surface.</summary>
     /// <param name="frame">The frame to draw.</param>
@@ -42,6 +47,10 @@ internal sealed class YuvSurfaceRenderer : IDisposable
     /// </param>
     /// <param name="lookupAtlas">The composed effect atlas, or null when there is no effect chain.</param>
     /// <param name="lookupSize">The number of nodes a side of the atlas, ignored when there is no atlas.</param>
+    /// <param name="interpolation">
+    /// How the atlas is read between its nodes, ignored when there is no atlas. Each way has its own
+    /// compiled shader and its own atlas filter.
+    /// </param>
     /// <exception cref="ArgumentNullException"><paramref name="frame" /> or <paramref name="surface" /> is null.</exception>
     /// <exception cref="CodeBrix.VideoPlayback.VideoPlaybackException">
     /// A shader would not compile, a plane would not upload, or the backend refused the shader.
@@ -51,7 +60,8 @@ internal sealed class YuvSurfaceRenderer : IDisposable
         SKSurface surface,
         GRContext graphicsContext,
         SKImage lookupAtlas,
-        int lookupSize)
+        int lookupSize,
+        LutInterpolation interpolation)
     {
         if (frame == null) throw new ArgumentNullException(nameof(frame));
         if (surface == null) throw new ArgumentNullException(nameof(surface));
@@ -70,7 +80,7 @@ internal sealed class YuvSurfaceRenderer : IDisposable
             SKImage redChroma = monochrome ? luma : PreparePlane(frame.V, "second chroma", graphicsContext);
 
             bool useLookup = lookupAtlas != null;
-            SKRuntimeEffect effect = useLookup ? EnsureLookupEffect() : EnsurePlainEffect();
+            SKRuntimeEffect effect = useLookup ? EnsureLookupEffect(interpolation) : EnsurePlainEffect();
 
             using SKShader lumaShader =
                 luma.ToRawShader(SKShaderTileMode.Clamp, SKShaderTileMode.Clamp, LumaSampling);
@@ -78,8 +88,13 @@ internal sealed class YuvSurfaceRenderer : IDisposable
                 blueChroma.ToRawShader(SKShaderTileMode.Clamp, SKShaderTileMode.Clamp, SmoothSampling);
             using SKShader redShader =
                 redChroma.ToRawShader(SKShaderTileMode.Clamp, SKShaderTileMode.Clamp, SmoothSampling);
+            // The trilinear variant LEANS ON the sampler's filter; the tetrahedral one fetches node values
+            // and a filter would blend them into something that is not a node at all.
             using SKShader lookupShader = useLookup
-                ? lookupAtlas.ToRawShader(SKShaderTileMode.Clamp, SKShaderTileMode.Clamp, SmoothSampling)
+                ? lookupAtlas.ToRawShader(
+                    SKShaderTileMode.Clamp,
+                    SKShaderTileMode.Clamp,
+                    YuvShaderSource.NeedsFilteredAtlas(interpolation) ? SmoothSampling : ExactSampling)
                 : null;
 
             using SKRuntimeEffectUniforms uniforms = new SKRuntimeEffectUniforms(effect);
@@ -135,8 +150,10 @@ internal sealed class YuvSurfaceRenderer : IDisposable
     {
         plainEffect?.Dispose();
         plainEffect = null;
-        lookupEffect?.Dispose();
-        lookupEffect = null;
+        tetrahedralEffect?.Dispose();
+        tetrahedralEffect = null;
+        trilinearEffect?.Dispose();
+        trilinearEffect = null;
     }
 
     private SKImage PreparePlane(in VideoFramePlane plane, string which, GRContext graphicsContext)
@@ -177,21 +194,29 @@ internal sealed class YuvSurfaceRenderer : IDisposable
         return texture;
     }
 
-    private SKRuntimeEffect EnsurePlainEffect() => plainEffect ??= Compile(false);
+    private SKRuntimeEffect EnsurePlainEffect() => plainEffect ??= Compile(YuvShaderSource.Build(), null);
 
-    private SKRuntimeEffect EnsureLookupEffect() => lookupEffect ??= Compile(true);
-
-    private static SKRuntimeEffect Compile(bool withLookupTable)
+    private SKRuntimeEffect EnsureLookupEffect(LutInterpolation interpolation)
     {
-        SKRuntimeEffect effect = SKRuntimeEffect.CreateShader(
-            YuvShaderSource.Build(withLookupTable),
-            out string errors);
+        if (interpolation == LutInterpolation.Trilinear)
+        {
+            return trilinearEffect ??= Compile(YuvShaderSource.Build(interpolation), interpolation);
+        }
+
+        return tetrahedralEffect ??= Compile(YuvShaderSource.Build(interpolation), interpolation);
+    }
+
+    private static SKRuntimeEffect Compile(string source, LutInterpolation? interpolation)
+    {
+        SKRuntimeEffect effect = SKRuntimeEffect.CreateShader(source, out string errors);
 
         if (effect == null)
         {
             throw new VideoPlaybackException(
                 "SkiaSharp would not compile the colour shader"
-                + (withLookupTable ? " with its lookup-table stage" : string.Empty)
+                + (interpolation.HasValue
+                    ? $" with its {interpolation.Value.ToString().ToLowerInvariant()} lookup-table stage"
+                    : string.Empty)
                 + $": {errors}. Set RenderPath to Cpu to use the processor path instead.");
         }
 

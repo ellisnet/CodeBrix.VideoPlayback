@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+
+    <!-- This is the one library in the sample with a public API, so its members carry XML documentation -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <!--
+    THE ONLY PROJECT IN THIS SAMPLE THAT NAMES THE VIDEO LIBRARIES. The .Core project, the shared .UI
+    project and the six heads see nothing but this library's own types, so the same library can be dropped
+    into a WinUI or WPF version of this sample unchanged.
+
+    They are PROJECT references because this sample lives in the repository that builds them - the
+    CodeBrix.VideoPlayback.ConsumerShape sample is the precedent. A standalone application would write:
+        <PackageReference Include="CodeBrix.VideoPlayback.MitLicenseForever" Version="*" />
+        <PackageReference Include="CodeBrix.VideoPlayback.Skia.MitLicenseForever" Version="*" />
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\..\..\src\CodeBrix.VideoPlayback\CodeBrix.VideoPlayback.csproj" />
+    <ProjectReference Include="..\..\..\..\..\src\CodeBrix.VideoPlayback.Skia\CodeBrix.VideoPlayback.Skia.csproj" />
+  </ItemGroup>
+
+  <!--
+    The AV1 decoder and the Opus audio decoder, both registered once in SkiaVideoRuntime.Initialize().
+    Without the first, "av01" has no decoder and nothing plays; without the second, the Opus soundtrack
+    every file in the corpus carries has none either.
+
+    The Dav1d version below comes from a LOCAL package folder - see Directory.Build.props in the sample
+    root, and the README - because that package has not been published yet.
+  -->
+  <ItemGroup>
+    <PackageReference Include="CodeBrix.VideoPlayback.Dav1d.BsdLicenseForever" Version="1.0.241.1201" />
+    <PackageReference Include="CodeBrix.Audio.Opus.BsdLicenseForever" Version="1.0.241.1040" />
+  </ItemGroup>
+</Project>

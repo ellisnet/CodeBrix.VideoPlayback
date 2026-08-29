@@ -4,6 +4,7 @@ using System.Collections.Specialized;
 using System.Diagnostics;
 using System.Threading;
 using CodeBrix.VideoPlayback.Color;
+using CodeBrix.VideoPlayback.Color.Luts;
 using CodeBrix.VideoPlayback.Decoding;
 using CodeBrix.VideoPlayback.Frames;
 using CodeBrix.VideoPlayback.Presentation;
@@ -85,6 +86,8 @@ public sealed class SkiaVideoPresenter : IDisposable
     private bool effectsChainDirty = true;
     private bool effectsActive;
     private int effectLutSize = DefaultEffectLutSize;
+
+    private LutInterpolation effectInterpolation = LutInterpolation.Tetrahedral;
 
     private EffectComposer composer;
     private Lut3D resultantLut;
@@ -262,6 +265,50 @@ public sealed class SkiaVideoPresenter : IDisposable
 
             if (effectLutSize == value) return;
             effectLutSize = value;
+            effectsChainDirty = true;
+        }
+    }
+
+    /// <summary>
+    /// How a colour that falls BETWEEN the nodes of a lookup table is worked out, everywhere in this
+    /// presenter's effect chain.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// It governs three things at once, on purpose, so that one setting means one thing: how each effect's
+    /// own table is sampled while the chain is folded, how the shader reads the resultant table on the
+    /// graphics path, and how <see cref="AllowEffectsOnCpu" /> reads it on the processor path. Both render
+    /// paths therefore always agree with each other.
+    /// </para>
+    /// <para>
+    /// <see cref="LutInterpolation.Tetrahedral" /> is the default. It is what colour-grading tools and
+    /// FFmpeg's <c>lut3d</c> filter do, so a grade shown here and the same grade baked to a ".cube" file for
+    /// an encoding pipeline agree to about one level in 255. It holds the neutral axis exactly - a grey the
+    /// table leaves grey stays grey - and costs four texture fetches a pixel.
+    /// </para>
+    /// <para>
+    /// <see cref="LutInterpolation.Trilinear" /> is what a graphics card's own texture filter does and costs
+    /// two fetches a pixel instead of four. On a smooth grade the two are within a level of each other;
+    /// choose it when the per-pixel cost matters more than agreeing with a grading tool.
+    /// </para>
+    /// <para>Changing this recomposes the chain and repaints.</para>
+    /// </remarks>
+    /// <exception cref="ArgumentOutOfRangeException">The value is not one of the two.</exception>
+    public LutInterpolation EffectInterpolation
+    {
+        get => effectInterpolation;
+        set
+        {
+            if (value != LutInterpolation.Tetrahedral && value != LutInterpolation.Trilinear)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(value),
+                    value,
+                    "A lookup table is read tetrahedrally or trilinearly.");
+            }
+
+            if (effectInterpolation == value) return;
+            effectInterpolation = value;
             effectsChainDirty = true;
         }
     }
@@ -765,7 +812,7 @@ public sealed class SkiaVideoPresenter : IDisposable
         if (!effectsActive || resultantLut == null) return;
 
         WarnOnceAboutEffectsOnCpu();
-        CpuLutApplier.Apply(resultantLut, cpuSurfaceBuffer);
+        CpuLutApplier.Apply(resultantLut, cpuSurfaceBuffer, effectInterpolation);
     }
 
     private void ComposeOnGpu(VideoFrame frame)
@@ -783,7 +830,8 @@ public sealed class SkiaVideoPresenter : IDisposable
                 surface,
                 grContext,
                 useLookup ? lookupAtlasImage : null,
-                useLookup ? composer.Size : 0);
+                useLookup ? composer.Size : 0,
+                effectInterpolation);
         }
         finally
         {
@@ -795,6 +843,8 @@ public sealed class SkiaVideoPresenter : IDisposable
     {
         if (composer == null || composer.Size != effectLutSize) composer = new EffectComposer(effectLutSize);
         else composer.Reset();
+
+        composer.Interpolation = effectInterpolation;
 
         foreach (IVideoFrameEffect effect in effects)
         {

@@ -1,3 +1,6 @@
+using System;
+using CodeBrix.VideoPlayback.Color.Luts;
+
 namespace CodeBrix.VideoPlayback.Skia.Internal;
 
 /// <summary>
@@ -6,9 +9,13 @@ namespace CodeBrix.VideoPlayback.Skia.Internal;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Two variants are built from the same body. The plain one stops at the colour conversion; the other adds
-/// the resultant lookup table. Building two rather than binding an identity table to the plain one saves a
-/// texture sample per pixel in the common case, which is the case that has to be fast.
+/// THREE variants are built from the same body: one that stops at the colour conversion, and one for each
+/// way of reading the resultant lookup table between its nodes. Building separate shaders rather than
+/// binding an identity table to the plain one saves a texture sample per pixel in the common case, and
+/// building one PER INTERPOLATION rather than branching on a uniform keeps the fetch count of each variant
+/// down to what that variant actually needs - two for trilinear, four for tetrahedral - instead of the
+/// larger of the two. The chain changes rarely and the shaders are cached, so compiling one more costs
+/// nothing that is ever measured.
 /// </para>
 /// <para>
 /// <b>The lookup atlas.</b> SkSL has no three-dimensional sampler, so the resultant table is laid out as a
@@ -42,10 +49,22 @@ uniform float3 greenRow;
 uniform float3 blueRow;
 ";
 
-    /// <summary>The lookup-table uniforms and the atlas sampler, added only to the second variant.</summary>
-    private const string LookupPreamble = @"uniform shader lookupTable;
+    /// <summary>The lookup-table uniforms, shared by both lookup variants.</summary>
+    private const string LookupUniforms = @"uniform shader lookupTable;
 uniform float lookupSize;
+";
 
+    /// <summary>
+    /// The TRILINEAR atlas read: two fetches, and the sampler's own filter does red and green.
+    /// </summary>
+    /// <remarks>
+    /// The atlas is bound with a LINEAR filter for this variant, so a fetch part way across a tile already
+    /// comes back blended in red and green; only blue needs mixing, because that axis crosses whole tiles.
+    /// Clamping to 0 to 1 before scaling by <c>n - 1</c> keeps a fetch inside its own tile, so no tile ever
+    /// bleeds into its neighbour. This is what a graphics card's texture unit does natively and it is the
+    /// cheapest correct read there is.
+    /// </remarks>
+    private const string TrilinearLookup = @"
 float3 sampleLookupTable(float3 colour) {
     float nodes = lookupSize;
     float3 position = clamp(colour, 0.0, 1.0) * (nodes - 1.0);
@@ -56,6 +75,80 @@ float3 sampleLookupTable(float3 colour) {
     float3 lower = float3(lookupTable.eval(float2((lowerBlue * nodes) + within.x, within.y)).rgb);
     float3 upper = float3(lookupTable.eval(float2((upperBlue * nodes) + within.x, within.y)).rgb);
     return mix(lower, upper, blueFraction);
+}
+";
+
+    /// <summary>
+    /// The TETRAHEDRAL atlas read: four exact node fetches and the wedge the colour falls in.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The cell the colour lands in is split into six tetrahedra around its black-to-white diagonal. Which
+    /// one the colour is in is decided by the ORDER of the three fractional parts, and the answer is the
+    /// cell's black corner plus three steps taken in that order - so four corners are read, never eight, and
+    /// every weight is non-negative and they sum to one. It is what colour-grading tools and FFmpeg's
+    /// <c>lut3d</c> filter do, and it holds the neutral axis exactly.
+    /// </para>
+    /// <para>
+    /// The atlas is bound with a NEAREST filter for this variant, because these fetches must be the node
+    /// values themselves and not a blend of them. Every coordinate is a texel centre - an integer plus a
+    /// half - which is what makes the fetch exact.
+    /// </para>
+    /// </remarks>
+    private const string TetrahedralLookup = @"
+float3 lookupNode(float red, float green, float blue) {
+    return float3(lookupTable.eval(float2((blue * lookupSize) + red + 0.5, green + 0.5)).rgb);
+}
+
+float3 sampleLookupTable(float3 colour) {
+    float nodes = lookupSize;
+    float3 position = clamp(colour, 0.0, 1.0) * (nodes - 1.0);
+    float3 origin = min(floor(position), nodes - 2.0);
+    float3 fraction = position - origin;
+
+    float3 black = lookupNode(origin.r, origin.g, origin.b);
+    float3 white = lookupNode(origin.r + 1.0, origin.g + 1.0, origin.b + 1.0);
+
+    float3 first;
+    float3 second;
+    float firstWeight;
+    float secondWeight;
+    float thirdWeight;
+
+    if (fraction.r > fraction.g) {
+        if (fraction.g > fraction.b) {
+            first = lookupNode(origin.r + 1.0, origin.g, origin.b);
+            second = lookupNode(origin.r + 1.0, origin.g + 1.0, origin.b);
+            firstWeight = fraction.r; secondWeight = fraction.g; thirdWeight = fraction.b;
+        } else if (fraction.r > fraction.b) {
+            first = lookupNode(origin.r + 1.0, origin.g, origin.b);
+            second = lookupNode(origin.r + 1.0, origin.g, origin.b + 1.0);
+            firstWeight = fraction.r; secondWeight = fraction.b; thirdWeight = fraction.g;
+        } else {
+            first = lookupNode(origin.r, origin.g, origin.b + 1.0);
+            second = lookupNode(origin.r + 1.0, origin.g, origin.b + 1.0);
+            firstWeight = fraction.b; secondWeight = fraction.r; thirdWeight = fraction.g;
+        }
+    } else {
+        if (fraction.b > fraction.g) {
+            first = lookupNode(origin.r, origin.g, origin.b + 1.0);
+            second = lookupNode(origin.r, origin.g + 1.0, origin.b + 1.0);
+            firstWeight = fraction.b; secondWeight = fraction.g; thirdWeight = fraction.r;
+        } else if (fraction.b > fraction.r) {
+            first = lookupNode(origin.r, origin.g + 1.0, origin.b);
+            second = lookupNode(origin.r, origin.g + 1.0, origin.b + 1.0);
+            firstWeight = fraction.g; secondWeight = fraction.b; thirdWeight = fraction.r;
+        } else {
+            first = lookupNode(origin.r, origin.g + 1.0, origin.b);
+            second = lookupNode(origin.r + 1.0, origin.g + 1.0, origin.b);
+            firstWeight = fraction.g; secondWeight = fraction.r; thirdWeight = fraction.b;
+        }
+    }
+
+    return black
+        + (firstWeight * (first - black))
+        + (secondWeight * (second - first))
+        + (thirdWeight * (white - second));
 }
 ";
 
@@ -102,11 +195,35 @@ half4 main(float2 coordinate) {
     /// <summary>The name of the child the resultant lookup atlas is bound to.</summary>
     internal const string LookupChild = "lookupTable";
 
-    /// <summary>Builds the shader source.</summary>
-    /// <param name="withLookupTable">True to include the resultant-lookup-table stage.</param>
+    /// <summary>Builds the shader source for the variant that stops at the colour conversion.</summary>
     /// <returns>SkSL source suitable for <c>SKRuntimeEffect.CreateShader</c>.</returns>
-    internal static string Build(bool withLookupTable) =>
-        withLookupTable
-            ? Preamble + LookupPreamble + Body + LookupTail
-            : Preamble + Body + PlainTail;
+    internal static string Build() => Preamble + Body + PlainTail;
+
+    /// <summary>Builds the shader source for a variant that reads the resultant lookup table.</summary>
+    /// <param name="interpolation">How the table is read between its nodes.</param>
+    /// <returns>SkSL source suitable for <c>SKRuntimeEffect.CreateShader</c>.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">The interpolation is not one this shader knows.</exception>
+    internal static string Build(LutInterpolation interpolation)
+    {
+        string lookup = interpolation switch
+        {
+            LutInterpolation.Tetrahedral => TetrahedralLookup,
+            LutInterpolation.Trilinear => TrilinearLookup,
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(interpolation),
+                interpolation,
+                "The colour shader reads a lookup table tetrahedrally or trilinearly."),
+        };
+
+        return Preamble + LookupUniforms + lookup + Body + LookupTail;
+    }
+
+    /// <summary>Whether a variant needs the atlas bound with a smoothing filter.</summary>
+    /// <param name="interpolation">How the table is read between its nodes.</param>
+    /// <returns>
+    /// True when the sampler's own filter does part of the work - trilinear - and false when the shader
+    /// fetches node values itself and a filter would corrupt them.
+    /// </returns>
+    internal static bool NeedsFilteredAtlas(LutInterpolation interpolation) =>
+        interpolation == LutInterpolation.Trilinear;
 }

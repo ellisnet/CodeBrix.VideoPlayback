@@ -1,0 +1,23 @@
+================================================================================
+tests/assets/LUTs/invalid - INTENTIONALLY BROKEN FILES. DO NOT FIX THEM.
+================================================================================
+
+Every .cube file in THIS folder is malformed ON PURPOSE. They are negative test
+fixtures: the reader is supposed to REFUSE them, and to refuse them with a
+message that says what is wrong and where.
+
+    DO NOT "correct" these files.
+    DO NOT delete the bad rows.
+    DO NOT run a formatter, a linter or a cleanup script over this folder.
+    DO NOT let a test that globs tests/assets/LUTs/**/*.cube expecting success
+        pick this folder up. Tests that walk the corpus must EXCLUDE invalid/,
+        or assert failure for it.
+
+A change to any file here silently destroys the test it exists for, because the
+test would then be asserting that a VALID file is refused.
+
+Both files are real files from other people's open-source projects, downloaded
+with their defects intact - not damaged by anyone here. They are licence-clean:
+one CC0, one MIT. What is wrong with each, where it came from, its hashes and
+the exact errors it must produce are recorded in ../MANIFEST.txt, and the folder
+is explained in ../README.txt.

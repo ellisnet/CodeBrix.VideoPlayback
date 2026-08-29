@@ -89,6 +89,7 @@ KEY NAMESPACES / USINGS
     using CodeBrix.VideoPlayback.Frames;        // VideoFrame, VideoFramePlane, the buffer pool
     using CodeBrix.VideoPlayback.Decoding;      // VideoDecoders, IVideoDecoder, colour metadata
     using CodeBrix.VideoPlayback.Color;         // VideoFrameConverter, BgraFrameBufferPool
+    using CodeBrix.VideoPlayback.Color.Luts;    // Lut3D, Lut1D, CubeLutFile, LutComposer, LutLayer
     using CodeBrix.VideoPlayback.Captions;      // CaptionTrack, CaptionCue, CaptionFiles
     using CodeBrix.VideoPlayback.Chapters;      // Chapter, FfMetadataChapters
     using CodeBrix.VideoPlayback.Sources;       // IMediaSource and the five ways to open one
@@ -199,6 +200,30 @@ VideoFrame (…Frames) - one decoded picture, reference-counted
     static VideoFrame Create(VideoFrameBuffer buffer, in VideoFrameInfo info,
                              IVideoFrameBufferPool pool)
 
+IVideoFrameBufferPool (…Frames) - where frames live
+---------------------------------------------------
+    VideoFrameBuffer Rent(VideoFrameBufferDescriptor descriptor)
+    void Return(VideoFrameBuffer buffer)          // ANY thread; honours a fence in Tag
+    VideoFrame TakeFrame()                        // default: allocates one
+    void ReturnFrame(VideoFrame frame)            // default: keeps none; ANY thread
+
+The session owns a PinnedFrameBufferPool and hands it to every decoder, so most
+applications never implement this. Implement it only to supply memory of your own
+- a graphics upload buffer, say - and honour the layout promises on
+VideoFrameBuffer when you do: 64-byte-aligned planes, strides a multiple of 64,
+both dimensions rounded up to 128 samples, 64 bytes of slack after each plane,
+the chroma planes sharing a stride, and 10-bit and 12-bit samples as
+little-endian 16-bit words justified towards the least significant bit.
+
+The last two members recycle the small VideoFrame OBJECT that describes a buffer,
+as distinct from the buffer itself. They have DEFAULT implementations - allocate
+one, keep none - so an existing implementation compiles and behaves exactly as it
+did. Override them if you care that playback allocates nothing per frame: there
+is one frame object per decoded picture, about 128 bytes, and at sixty frames a
+second that is a steady trickle of short-lived garbage the buffers were pooled
+precisely to avoid. What you get back through ReturnFrame is already cleared, and
+each object comes back at most once, so a plain free list is enough.
+
 VideoFrameConverter (…Color) - planar YUV to BGRA on the CPU
 ------------------------------------------------------------
     static int GetBgraStride(int width)
@@ -211,6 +236,77 @@ VideoFrameConverter (…Color) - planar YUV to BGRA on the CPU
 
     BgraFrameBufferPool: Rent(width, height) / Return(buffer) / Allocations / Pooled
     BgraFrameBuffer: IntPtr Data, int Width/Height/Stride, Span<byte> AsSpan(), GetRow(row)
+
+Colour lookup tables (…Color.Luts) - the LUT engine
+---------------------------------------------------
+Everything about ".cube" lookup tables lives HERE, in the core, with no drawing
+dependency at all - so the same numbers are used when a picture is played back
+and when a grade is baked for the authoring pipeline.
+
+    Lut3D  - a cube of colours. Size 2..129, Values (red fastest), Sample(...),
+             CreateIdentity(size), DomainMinimum/DomainMaximum, HasDefaultDomain
+    Lut1D  - three per-channel curves. Size 2..65536, Red/Green/Blue, Sample(...),
+             CreateIdentity(size), IsMonochrome, the same domain members
+    LutInterpolation.Tetrahedral (the default, and FFmpeg's) | Trilinear
+             The presenter in CodeBrix.VideoPlayback.Skia exposes the same enum
+             as SkiaVideoPresenter.EffectInterpolation, where it governs the
+             folding, the shader's read of the composed atlas and the processor
+             path alike.
+
+    CubeLutFile - the ".cube" format, and the ONLY format supported
+        CubeLut ReadFile(string path)
+        CubeLut Read(Stream stream, string fallbackName = null)
+        CubeLut Parse(string text, string fallbackName = null)
+        void    Write(Lut3D lut, string path, string title = null)
+        void    Write(Lut1D lut, string path, string title = null)
+        void    Write(Lut3D|Lut1D lut, Stream stream, string title = null)
+        string  ToText(Lut3D|Lut1D lut, string title = null)
+        string  Format(float value)   // plain decimal, invariant, reversible
+
+    CubeLut - what a file held: Title, Name, Lut3D, Lut1D, IsThreeDimensional,
+        IsCombined (a shaper AND a table, Resolve's dialect), ToLayer(percent)
+
+    LutLayer - one table in a chain, with how much of it to apply
+        new LutLayer(Lut3D lut, double applyAtPercent = 100, string name = null)
+        new LutLayer(Lut1D lut, double applyAtPercent = 100, string name = null)
+        new LutLayer(Lut1D shaper, Lut3D lut, double applyAtPercent = 100, ...)
+        LutLayer.FromCubeFile(path, applyAtPercent = 100)
+        ApplyAtPercent (clamped 0..100), HasEffect, Size, IsShaped
+
+    LutComposer - the effective-table engine
+        Lut3D Compose(IReadOnlyList<LutLayer> layers)
+        Lut3D Compose(IReadOnlyList<LutLayer> layers, LutComposerOptions options)
+        bool  TryComposeCurves(layers, options, out Lut1D curves)
+        int   GetOutputSize(layers)
+        bool  TryGetChainDomain(layers, out float[] minimum, out float[] maximum)
+        void  FillIdentity(Span<float> lattice, int size)
+        void  ApplyLayer(Span<float> lattice, LutLayer layer, LutInterpolation)
+
+    LutComposerOptions: Interpolation, OutputSize,
+        OutputDomainMinimum, OutputDomainMaximum
+
+How a chain folds, in one line:
+
+    colour = colour + ((layer.Sample(colour) - colour) * (percent / 100))
+
+walked over the nodes of the OUTPUT table, each layer sampled at ITS OWN size
+and over ITS OWN domain. Order matters. A layer at 0 is skipped. The output is
+as many nodes a side as the largest layer, never below 33 and never above 65,
+and its own domain is 0 to 1 unless you ask for another - which is what a
+decoded picture and FFmpeg's raw video both carry.
+
+    Lut3D effective = LutComposer.Compose(new[]
+    {
+        LutLayer.FromCubeFile("film-stock.cube", 70),
+        LutLayer.FromCubeFile("cool-shadows.cube"),
+    });
+
+    CubeLutFile.Write(effective, "effective.cube", "my grade");
+    // then, at authoring time:  ffmpeg -vf lut3d=file=effective.cube ...
+
+The same chain reaches playback through CodeBrix.VideoPlayback.Skia's
+LutEffect, which is composed by this very code - see that package's own
+AGENT-README.txt. There is exactly ONE implementation of this arithmetic.
 
 Sources (…Sources) - five ways in
 ----------------------------------
@@ -625,9 +721,10 @@ WORKING EXAMPLES ON GITHUB
 https://github.com/ellisnet/CodeBrix.VideoPlayback
 
   tools/CodeBrix.VideoPlayback.Tools/
-      cbvinfo, cbvdecode and cbvmux - three headless verbs, and the clearest
-      worked examples of reading a container, driving a decoder by hand, and
-      authoring a .cbv file.
+      cbvinfo, cbvdecode, cbvmux and lutbake - four headless verbs, and the
+      clearest worked examples of reading a container, driving a decoder by
+      hand, authoring a .cbv file, and baking a chain of .cube tables into the
+      one file the authoring pipeline hands to FFmpeg.
   tests/CodeBrix.VideoPlayback.Tests/
       the whole surface exercised against a golden corpus, including an
       uncompressed decoder that shows what implementing IVideoDecoder takes.
@@ -663,6 +760,10 @@ ask whether a codec is playable       VideoDecoders.IsCodecSupported("av01")
 avoid rate conversion                 SharedAudioOutput.Configure(48000) at start-up
 inspect a file without playing        new MatroskaReader(source) / new CbvReader(source)
 author a .cbv                         CbvAuthoring.Write(request)
+read a .cube lookup table             CubeLutFile.ReadFile(path)
+fold several .cube tables into one    LutComposer.Compose(layers)
+  (each with its own strength)        LutLayer.FromCubeFile(path, percent)
+write the result out for FFmpeg       CubeLutFile.Write(effective, path, title)
 find out why it failed                catch VideoPlaybackException, or session.MediaFailed
 
 Signatures worth memorising:
@@ -672,6 +773,8 @@ Signatures worth memorising:
     bool  VideoFramePresenter.TryTakeLatest(out VideoFrame frame)
     VideoFrame VideoFrame.Retain()
     void  VideoFrameConverter.ToBgra32(VideoFrame frame, Span<byte> destination, int stride)
+    Lut3D LutComposer.Compose(IReadOnlyList<LutLayer> layers)
+    void  CubeLutFile.Write(Lut3D lut, string path, string title = null)
     void  VideoDecoders.Register(IVideoDecoderFactory factory)
     bool  AudioDecoders.IsCodecSupported(string codecId)
     CbvAuthoringResult CbvAuthoring.Write(CbvAuthoringRequest request)

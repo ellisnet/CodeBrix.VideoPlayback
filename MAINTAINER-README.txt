@@ -234,8 +234,24 @@ and that was wrong twice over: two sessions handed each other's recycled frame
 objects about, and a test that disposed a frame and then checked that reading it
 throws could have that frame taken off the shared list by another test between
 the two statements - which it did, about once in twenty runs. Per-pool ownership
-removes both, and removes a process-wide lock from the hot path as well. A frame
-created with a null pool, or over a pool that is not this one, simply allocates.
+removes both, and removes a process-wide lock from the hot path as well.
+
+The recycling goes through the POOL CONTRACT rather than through a type test.
+IVideoFrameBufferPool carries TakeFrame() and ReturnFrame(), Create() and
+Dispose() call them, and PinnedFrameBufferPool overrides both onto the internal
+free list it already had. Both are DEFAULT interface methods - allocate one, keep
+none - so no existing implementation had to change.
+
+That indirection is not decoration. Create() used to ask "is this pool a
+PinnedFrameBufferPool?", and for the only real decoder in the family the answer
+is NO, permanently: a decoder that hands its frames to an application must
+interpose a pool of its own between the frame and the session's pool, because
+Dispose() on that pool is the only signal it gets that the application has
+finished with a picture - and it has to turn that signal into a native release
+rather than a return. So the one pool that recycled frame objects was never the
+one a frame was created with, and every decoded picture allocated an object.
+Measured through the dav1d binding: 128 bytes a frame before, zero after.
+A frame created with a null pool still simply allocates.
 
 Fences exist because a graphics device does its work later than the code that
 asked for it. A presenter puts an IVideoFrameFence (or a Func<bool>) in
@@ -643,6 +659,190 @@ P9. A REAL GRAPHICS CONTEXT IS ALSO AVAILABLE HERE, headlessly. Mesa's
     had, the graphics tests skip themselves and say why.
 
 
+THE COLOUR LOOKUP ENGINE, AND THE ONE-COMPOSER RULE
+===================================================
+Added 2026-08-29. Everything about ".cube" lookup tables - the only lookup
+format supported - lives in the CORE package under
+src/CodeBrix.VideoPlayback/Color/Luts/, namespace CodeBrix.VideoPlayback.Color.Luts:
+
+    Lut3D, Lut1D            the tables, with DOMAIN_MIN/DOMAIN_MAX
+    LutInterpolation        Tetrahedral (default) | Trilinear
+    CubeLut, CubeLutFile    the file format, read AND write
+    LutLayer                one table plus its apply-at percentage
+    LutComposer             the effective-table engine
+    LutComposerOptions      interpolation, output size, output domain
+    LutDomain               internal - the domain arithmetic the tables share
+
+THE MOVE. Lut3D, Lut1D and CubeLutFile used to live in
+CodeBrix.VideoPlayback.Skia.Effects. They are pure arithmetic with no drawing in
+them, and the AUTHORING side needs them without any drawing dependency at all -
+so they moved down into the core while both packages were still unpublished, and
+nothing was kept in .Skia for compatibility. What stayed in .Skia is what is
+genuinely Skia's: LutEffect (the chain element), EffectComposer (the chain
+protocol and the grid the atlas is written from), the internal LutAtlas and
+CpuLutApplier. CubeLutFile.ReadFile used to return a LutEffect; it returns a
+CubeLut now, and LutEffect.FromCubeFile is the convenience that wraps one.
+
+THE ONE-COMPOSER RULE. There is exactly ONE implementation of the composition
+arithmetic in this program, LutComposer, and it is in the core.
+EffectComposer.Reset delegates to LutComposer.FillIdentity and every ApplyLut
+overload delegates to LutComposer.ApplyLayer. Do not add a second walk of a
+lattice anywhere. The reason is not tidiness: the picture an application shows
+at playback and the picture the authoring pipeline encodes have to be the same
+picture, and they are only guaranteed to be so while both go through this code.
+
+HOW A CHAIN FOLDS. Walk the nodes of the OUTPUT table. Each node starts as the
+colour it stands for. For each layer in order, sample THAT layer at ITS OWN size
+and over ITS OWN domain - never at the output's - and mix:
+
+    colour += (layerSample(colour) - colour) * (percent / 100)
+
+A layer at 0 per cent is skipped entirely. Order is meaningful.
+
+THE RULES, AND WHY THEY ARE WHAT THEY ARE:
+
+  OUTPUT SIZE   the largest size any APPLIED layer has, floored at 33 and capped
+                at 65 (LutComposer.DefaultMinimum/MaximumOutputSize). 33 is the
+                ".cube" convention and enough for any smooth grade; 65 is where
+                a cube stops buying fidelity and starts costing graphics memory
+                (65 cubed is 274,625 nodes, 1.07 MB as an 8-bit atlas). A 129
+                node layer therefore composes at 65. LutComposerOptions.OutputSize
+                overrides the rule outright.
+
+  OUTPUT DOMAIN 0 to 1, always, unless the caller states another. A layer's OWN
+                domain is honoured where it belongs, on the way in to that
+                layer's lookup, so a table declaring 0..4 handed an ordinary
+                picture uses the bottom quarter of itself - which is what such a
+                table means. Propagating that 0..4 to the OUTPUT instead would
+                spend three quarters of the output's nodes on input values that
+                cannot occur, and leave about eight useful nodes across the range
+                that can. Both render paths and FFmpeg's raw video carry 0-to-1
+                colour, so 0 to 1 is the right output domain for all of them.
+                LutComposer.TryGetChainDomain reports the chain's own domain for
+                a caller that deliberately wants to bake wider, and
+                LutComposerOptions.OutputDomainMinimum/Maximum take it.
+
+  1-D CHAINS    still compose to a Lut3D. A chain of curves only IS exactly
+                per-channel and could be a Lut1D - LutComposer.TryComposeCurves
+                returns one - but the default is a cube because that is what the
+                shader's atlas samples and what FFmpeg's lut3d filter reads;
+                FFmpeg's lut1d is a DIFFERENT filter with a different file, so a
+                baked 1-D file would break the authoring command line. The curve
+                route is opt-in and documented.
+
+  INTERPOLATION Tetrahedral by default EVERYWHERE - LutComposer, EffectComposer,
+                lutbake, the SkSL shader and CpuLutApplier - because it is
+                FFmpeg's lut3d default and the grading tools', and because it
+                holds the neutral axis exactly. Jeremy's ruling, 2026-08-29: the
+                shader's atlas read is tetrahedral by default AND configurable.
+                One consumer knob does all of it - SkiaVideoPresenter.
+                EffectInterpolation, backed by EffectComposer.Interpolation -
+                so the folding, the shader and the processor path can never
+                disagree with each other. Lut3D.Sample WITHOUT an interpolation
+                argument is still TRILINEAR; that overload is the raw-table
+                convenience and every caller inside this repository passes the
+                setting explicitly.
+
+  COMBINED FILES A ".cube" stating BOTH LUT_1D_SIZE and LUT_3D_SIZE is Resolve's
+                shaper-plus-table arrangement and is ACCEPTED: the curves run
+                first and hand their answer to the table, each half keeps its own
+                INPUT_RANGE as its domain, and the pair is ONE LutLayer with ONE
+                percentage - because the two halves are one artistic step and
+                applying each at half strength would be a different picture. The
+                rows are read in the order the two sizes were declared.
+
+  THE WRITER    CubeLutFile.Write emits LF endings, UTF-8 with no byte-order
+                mark, the invariant culture, and numbers in PLAIN DECIMAL - never
+                an exponent, which the format has no form for. The digits are the
+                SHORTEST that read back as the very same float (ToString("R")),
+                expanded into plain notation by shifting the decimal point when
+                the runtime would have chosen an exponent. That is exact rather
+                than merely close: F6 would lose a table's sixth decimal and
+                anything below it. TITLE is written quoted with quotes and
+                control characters stripped; DOMAIN_MIN/DOMAIN_MAX are written
+                only when the domain is not the default.
+
+  PERFORMANCE   NOT parallelised, on measurement: a 65-node table through four
+                layers is 19.6 ms on the development machine (274,625 nodes,
+                1.1 M samples). Composition happens when a chain CHANGES, never
+                per frame, so there is nothing to win and a thread pool to
+                explain. Flat float arrays and spans throughout; no allocation
+                per sample.
+
+THE AUTHORING HOOK is the `lutbake` verb in tools/CodeBrix.VideoPlayback.Tools
+(LutBakeCommand.cs). It uses the core and nothing else, and it writes the file
+whose PATH goes to FFmpeg's lut3d filter. See EXTRAS-README.txt.
+
+THE ATLAS READ IN THE SHADER. SkSL has no three-dimensional sampler and no way
+to ask for a tetrahedron, so the tetrahedral read is written out by hand in
+Internal/YuvShaderSource.cs: four EXACT node fetches (the cell's black corner,
+its white corner, and the two the wedge passes through) and the same six-way
+selection on the order of the three fractional parts that Lut3D.Interpolate-
+Tetrahedral does in the core. THREE shader variants are compiled and cached, not
+one with a uniform branch - plain, lookup-trilinear, lookup-tetrahedral - so each
+carries only the fetches it needs (two for trilinear, four for tetrahedral)
+instead of the larger of the two, and there is no per-pixel branch at all. The
+chain changes rarely and the shaders are cached, so the extra compile is never
+measured. The ATLAS FILTER differs with the variant and must: trilinear binds it
+LINEAR and leans on the sampler for red and green, tetrahedral binds it NEAREST
+because its fetches must be node values and a filter would blend them into
+something that is not a node. YuvShaderSource.NeedsFilteredAtlas says which.
+
+CROSS-STAGE EQUIVALENCE, AND ITS MEASURED TOLERANCE. The claim the engine exists
+to make is that a grade shown at playback and a grade encoded by the pipeline are
+the same grade, and there is a test that measures it:
+tests/CodeBrix.VideoPlayback.Skia.Tests/LutCrossStageEquivalenceTests.cs bakes an
+effective table from two layers with percentages, applies it to the same 64x48
+RGB24 frame through FFmpeg's lut3d filter and through CpuLutApplier, and compares
+byte for byte. Measured against FFmpeg 7.1.5-0+deb13u1 on this machine:
+
+    worst channel difference   1 level of 255
+    mean channel difference    0.490 of a level
+
+and an identity chain round-trips to within 1 level. The pinned bounds are 3 and
+0.8, a little above the measurement.
+
+WHAT THAT RESIDUE ACTUALLY IS - diagnosed 2026-08-29, and NOT what it was first
+assumed to be. It is ROUNDING, not interpolation. FFmpeg is one level LOW on
+about half the differing bytes and one level HIGH on NONE of them, which is the
+signature of truncation against round-half-up: FFmpeg's eight-bit lut3d path
+truncates the interpolated value, CpuLutApplier rounds half up. The test asserts
+that one-directionality (ffmpegHigher <= 2, measured 0) so the diagnosis is
+fenced rather than merely written down. Reading the SAME table both ways with
+FFmpeg out of the picture entirely differs by a mean of 0.00152 of a level, worst
+1 - three hundred times smaller than the rounding gap. So the tetrahedral default
+is right because it is what a lookup MEANS to a grading tool and because it holds
+the neutral axis, NOT because it repaints a smooth 33-node grade. Where the two
+readings genuinely part company is a COARSE table: composing a chain of 17-node
+layers into a 33-node one differs by up to 0.019970 (5.1 levels) with a mean of
+0.000107 - measured in LutComposerTests. Rounding was left alone: half-up is the
+unbiased convention and matching FFmpeg's truncation would make this library
+worse to agree with a quirk.
+
+THE SHADER'S OWN NUMBERS (LutShaderInterpolationTests, one effective 33-node
+table composed once and read two ways, 48x32 synthetic I420 frame):
+    shader vs CpuLutApplier   worst 2, mean 0.2322 tetrahedral / 0.2289 trilinear
+    shader vs FFmpeg lut3d    worst 2, mean 0.4167 tetrahedral / 0.4188 trilinear
+    Mesa device vs raster     worst 1, mean 0.0035 tetrahedral / 0.0043 trilinear
+The first two carry one rounding the product does not - the comparison hands the
+other implementation the shader's ALREADY eight-bit conversion output, while the
+shader grades the float colour before it is ever quantised - so they are ceilings
+on the whole graded pixel rather than a measurement of the read. The third is the
+one that could have gone wrong and did not: the tetrahedral variant's manual node
+fetches land on the same texels on a real graphics device as on the raster
+backend.
+
+FFmpeg is an ORACLE for these tests only; it never enters the product path and
+the tests skip themselves when /usr/bin/ffmpeg is absent.
+
+THE ".cube" CORPUS. tests/assets/LUTs holds twenty-three files - twenty-one that
+must parse and two under invalid/ that must be refused - and LutCorpusTests walks
+all of them, skipping itself when the folder is not in the checkout. Two of them
+decide questions this reader had to answer: generated/domain_test_33.cube
+declares -0.5..1.5 (honoured) and found/smol-cube/shaper_3d.cube is a combined
+shaper-plus-table with two INPUT_RANGE keywords and values up to 13.5 (accepted).
+
+
 BENCHMARKS
 ==========
 Measured 2026-08-28 on a 12th Gen Intel Core i7-12850HX (24 threads), LMDE 7,
@@ -697,6 +897,11 @@ DELIBERATE DIVERGENCES WORTH KNOWING
 - The uncompressed decoder is not shipped. Its source is
   tests/CodeBrix.VideoPlayback.Tests/RawVideoDecoder*.cs and the tools project
   LINKS those two files rather than duplicating them.
+- CubeLutFile.Parse USED to refuse a domain other than 0..1 and to refuse a file
+  stating both LUT_1D_SIZE and LUT_3D_SIZE. Both are now supported (see THE
+  COLOUR LOOKUP ENGINE above). The corpus README.txt and MANIFEST.txt in
+  tests/assets/LUTs were written against the old behaviour and their two
+  descriptions of those files were corrected on 2026-08-29.
 
 
 NOTES

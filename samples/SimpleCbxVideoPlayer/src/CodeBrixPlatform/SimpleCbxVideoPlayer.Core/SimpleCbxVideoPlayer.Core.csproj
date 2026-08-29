@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+
+    <!-- Match the namespace used by the app code -->
+    <RootNamespace>SimpleCbxVideoPlayer</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.11" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.11" />
+    <PackageReference Include="CodeBrix.Platform.ApacheLicenseForever" Version="1.0.231.233" />
+    <PackageReference Include="CodeBrix.Platform.Fonts.Roboto.OflLicenseForever" Version="1.0.240.51" />
+    <!-- SKXamlCanvas - the CPU Skia drawing surface hosted in CodeBrix.Platform XAML -->
+    <PackageReference Include="CodeBrix.Platform.SkiaSharp.Views.MitLicenseForever" Version="4.151.0" />
+    <!--
+      SkiaGLCanvasElement - a GPU-backed Skia surface with the GRContext the video presenter needs for its
+      graphics path. SKXamlCanvas cannot supply one (SKSwapChainPanel is a non-functional placeholder on
+      these heads), so this package is what makes the GPU render path and its colour lookup tables real.
+    -->
+    <PackageReference Include="CodeBrix.Platform.Graphics3DGL.ApacheLicenseForever" Version="1.0.231.233" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\libs\SimpleCbxVideoPlayer.SkiaVideo\SimpleCbxVideoPlayer.SkiaVideo.csproj" />
+  </ItemGroup>
+</Project>

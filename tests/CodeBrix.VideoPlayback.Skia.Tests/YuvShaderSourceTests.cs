@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using CodeBrix.VideoPlayback.Color;
+using CodeBrix.VideoPlayback.Color.Luts;
 using CodeBrix.VideoPlayback.Decoding;
 using CodeBrix.VideoPlayback.Frames;
 using CodeBrix.VideoPlayback.Skia.Internal;
@@ -49,7 +50,7 @@ public class YuvShaderSourceTests
     public void The_plain_shader_compiles()
     {
         //Arrange
-        string source = YuvShaderSource.Build(false);
+        string source = YuvShaderSource.Build();
 
         //Act
         SKRuntimeEffect effect = SKRuntimeEffect.CreateShader(source, out string errors);
@@ -65,7 +66,7 @@ public class YuvShaderSourceTests
     public void The_lookup_shader_compiles_and_declares_the_atlas()
     {
         //Arrange
-        string source = YuvShaderSource.Build(true);
+        string source = YuvShaderSource.Build(LutInterpolation.Tetrahedral);
 
         //Act
         SKRuntimeEffect effect = SKRuntimeEffect.CreateShader(source, out string errors);
@@ -196,7 +197,11 @@ public class YuvShaderSourceTests
         }
     }
 
-    private static byte[] RenderWithShader(VideoFrame frame, SKImage lookupAtlas, int lookupSize)
+    private static byte[] RenderWithShader(
+        VideoFrame frame,
+        SKImage lookupAtlas,
+        int lookupSize,
+        LutInterpolation interpolation = LutInterpolation.Tetrahedral)
     {
         SKImageInfo info =
             new SKImageInfo(frame.Width, frame.Height, SKColorType.Bgra8888, SKAlphaType.Premul);
@@ -204,7 +209,7 @@ public class YuvShaderSourceTests
         using YuvSurfaceRenderer renderer = new YuvSurfaceRenderer();
         using SKSurface surface = SKSurface.Create(info);
 
-        renderer.Render(frame, surface, null, lookupAtlas, lookupSize);
+        renderer.Render(frame, surface, null, lookupAtlas, lookupSize, interpolation);
 
         byte[] pixels = new byte[frame.Width * frame.Height * 4];
         using (SKImage snapshot = surface.Snapshot())

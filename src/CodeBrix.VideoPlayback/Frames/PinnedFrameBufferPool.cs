@@ -148,6 +148,20 @@ public sealed class PinnedFrameBufferPool : IVideoFrameBufferPool, IDisposable
         }
     }
 
+    /// <inheritdoc />
+    /// <remarks>
+    /// Hands back a frame object a previous frame finished with, so that a warm decode loop allocates
+    /// nothing at all - neither the buffer nor the object describing it.
+    /// </remarks>
+    public VideoFrame TakeFrame() => TakeFrameObject();
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// The free list is bounded; once it is full, further objects are simply dropped for the garbage
+    /// collector, which is what keeps a pool that has seen a burst of frames from holding on to all of them.
+    /// </remarks>
+    public void ReturnFrame(VideoFrame frame) => ReturnFrameObject(frame);
+
     /// <summary>
     /// Hands out a recycled <see cref="VideoFrame" /> object, or a new one when there is none to reuse.
     /// </summary>
@@ -157,6 +171,10 @@ public sealed class PinnedFrameBufferPool : IVideoFrameBufferPool, IDisposable
     /// recycled frames about.
     /// </remarks>
     /// <returns>A frame object with no state, ready for <see cref="VideoFrame.Create" /> to fill in.</returns>
+    /// <remarks>
+    /// This is the implementation behind <see cref="TakeFrame" />, kept internal so the pool's own tests
+    /// and the rest of this package can use it without going through the interface.
+    /// </remarks>
     internal VideoFrame TakeFrameObject()
     {
         lock (gate)
@@ -171,9 +189,15 @@ public sealed class PinnedFrameBufferPool : IVideoFrameBufferPool, IDisposable
     }
 
     /// <summary>Takes a released frame object back for reuse.</summary>
-    /// <param name="frame">The frame whose last reference has just dropped.</param>
+    /// <param name="frame">The frame whose last reference has just dropped. A null reference is ignored.</param>
+    /// <remarks>
+    /// This is the implementation behind <see cref="ReturnFrame" />. Safe to call from any thread: the last
+    /// reference to a frame may be dropped by a decoder's worker thread or by a presenter.
+    /// </remarks>
     internal void ReturnFrameObject(VideoFrame frame)
     {
+        if (frame == null) return;
+
         lock (gate)
         {
             if (frameObjectCount >= FrameObjectCapacity) return;

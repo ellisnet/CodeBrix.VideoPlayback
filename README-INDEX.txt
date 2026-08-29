@@ -36,8 +36,9 @@ MAINTAINER AND EXTRAS
       clock, seeking, audio trimming and pre-roll, HTTP behaviour, the
       presenter's two render paths and its shader, and the benchmark numbers.
   EXTRAS-README.txt
-      The headless tools (cbvinfo, cbvdecode, cbvmux), the consumer-shape
-      sample, the golden test-asset corpus and the scripts that regenerate it.
+      The headless tools (cbvinfo, cbvdecode, cbvmux), the sample-video corpus
+      generator, the consumer-shape sample, the golden test-asset corpus and the
+      scripts and tools that regenerate both corpora.
 
 FORMAT SPECIFICATIONS
 ---------------------

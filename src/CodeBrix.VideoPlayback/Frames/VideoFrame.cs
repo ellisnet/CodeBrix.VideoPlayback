@@ -56,17 +56,20 @@ public sealed class VideoFrame : IDisposable
     /// <returns>A frame with a reference count of one, which the caller must dispose.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="buffer" /> is null.</exception>
     /// <remarks>
-    /// Frame objects are recycled by the pool they belong to, so calling this in a decode loop allocates
-    /// nothing once the loop is warm. Two sessions never share recycled frames, because they never share a
-    /// pool.
+    /// The frame OBJECT comes from the pool too, through
+    /// <see cref="IVideoFrameBufferPool.TakeFrame" />, so a pool that recycles them makes a decode loop
+    /// allocate nothing at all once it is warm. Two sessions never share recycled frames, because they
+    /// never share a pool.
     /// </remarks>
     public static VideoFrame Create(VideoFrameBuffer buffer, in VideoFrameInfo info, IVideoFrameBufferPool pool)
     {
         if (buffer == null) throw new ArgumentNullException(nameof(buffer));
 
-        VideoFrame frame = pool is PinnedFrameBufferPool pinned
-            ? pinned.TakeFrameObject()
-            : new VideoFrame();
+        // A pool that answers null is breaking its contract; allocating is a better answer than throwing,
+        // because the frame that would be lost is a picture somebody is waiting for.
+        VideoFrame frame = pool == null ? null : pool.TakeFrame();
+        if (frame == null) frame = new VideoFrame();
+
         frame.buffer = buffer;
         frame.info = info;
         frame.owningPool = pool;
@@ -197,8 +200,16 @@ public sealed class VideoFrame : IDisposable
             owningPool = null;
             info = default;
 
-            if (pool != null && released != null) pool.Return(released);
-            if (pool is PinnedFrameBufferPool pinned) pinned.ReturnFrameObject(this);
+            if (pool != null)
+            {
+                if (released != null) pool.Return(released);
+
+                // The object itself goes back as well, cleared. Buffer first, then object: a pool that
+                // hands the object straight out again must not be able to see it before the buffer it
+                // described has been accounted for.
+                pool.ReturnFrame(this);
+            }
+
             return;
         }
     }

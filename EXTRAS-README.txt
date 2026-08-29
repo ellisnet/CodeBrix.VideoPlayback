@@ -7,10 +7,10 @@ package
 
 tools/CodeBrix.VideoPlayback.Tools
 ==================================
-One console executable carrying three verbs. It is not packable and never
+One console executable carrying four verbs. It is not packable and never
 ships; it exists so that a build can be checked on a machine with no display and
-no sound device, and so that the bespoke container can be authored and inspected
-from a shell.
+no sound device, so that the bespoke container can be authored and inspected from
+a shell, and so that a colour grade can be baked for the authoring pipeline.
 
     dotnet run --project tools/CodeBrix.VideoPlayback.Tools -c Release -- <verb> ...
 
@@ -106,6 +106,78 @@ nothing has to be told what the video is.
 all. That is how tests/assets/raw-synthetic.cbv is made.
 
 
+lutbake
+-------
+    lutbake --lut <file.cube>[@<percent>] [--lut ...] [--size <n>]
+            [--interp tetrahedral|trilinear] [--domain <min> <max>]
+            [--title <text>] -o <effective.cube>
+
+Folds one or more ".cube" lookup tables into ONE effective table and writes it as
+a ".cube" file. This is the AUTHORING HOOK: the file it writes is what the
+authoring pipeline hands to FFmpeg.
+
+    lutbake --lut film-stock.cube@70 --lut cool-shadows.cube -o effective.cube
+    ffmpeg -i in.mov -vf lut3d=file=effective.cube ... out.mkv
+
+Each --lut may carry "@<percent>" saying how much of that table to apply, 0 to
+100; the DEFAULT IS 100, the whole table. The tables are applied IN ORDER, each
+sampled at its own size and over its own declared domain, so swapping two of them
+gives a different table. A table at 0 is skipped.
+
+    --size    nodes a side of the result. The default is the largest size any of
+              the tables has, never below 33 and never above 65.
+    --interp  how each table is sampled between its own nodes. Tetrahedral is the
+              default and is what FFmpeg's lut3d filter does; trilinear is what a
+              graphics card's texture filter does.
+    --domain  the input range of the RESULT. The default is 0 to 1, which is what
+              a decoded picture and FFmpeg's raw video both carry. A table
+              declaring some wider domain of its own is honoured either way, on
+              the way in to ITS lookup.
+    --title   the TITLE the written file states.
+
+It uses the CORE package and nothing else - no drawing, no codec, no FFmpeg - and
+it calls exactly the code the playback presenter calls to compose its own effect
+chain, which is what makes the graded picture an application shows and the graded
+video the pipeline encodes the same grade. Exit code 0 when the file was written,
+1 when it could not be, 2 for a command line it did not understand.
+
+
+tools/CodeBrix.VideoPlayback.AssetAuthoring
+==========================================
+    dotnet run --project tools/CodeBrix.VideoPlayback.AssetAuthoring -c Release
+
+The second console executable, also not packable. It regenerates the SAMPLE-VIDEO
+corpus under tests/assets/authoring - eighteen files derived from two
+Public-Domain phone recordings - and writes the manifest that describes them.
+
+It is the counterpart to generate-assets.sh, and the difference is the point.
+That script drives ffmpeg from a shell for the golden corpus. This tool builds
+every command line through the CodeBrix.VideoProcessing LIBRARY
+(CodeBrix.VideoProcessing.MitLicenseForever), which launches the host's ffmpeg as
+a child process on its behalf; the tool never invokes ffmpeg itself. That makes
+the library usage in CorpusEncoder.cs a WORKING PROTOTYPE of the authoring helper
+this program's own library will eventually expose, rather than a sketch of one,
+and the Mode1 layout - the one line that moves the cues to the front - is
+exercised on real video every time the corpus is rebuilt.
+
+    --dry-run              print every command line and produce nothing
+    --only <folder>        rebuild only MKV, WebM or CodeBrix-Mode1 (the manifest is then
+                           left alone, because it describes the whole corpus)
+    --skip-profile-check   do not run cbvinfo over each finished file
+    --authoring-root <p>   use a folder other than the repository's own
+
+Every finished file is probed back through the library's own FFProbe.Analyse and
+checked against the plan - codecs, exact dimensions, frame rate, duration, and
+that no rotation side data survived - and then handed to this repository's cbvinfo
+for the streamable-profile report. Both results go into the manifest, and a failure
+of either makes the tool exit non-zero.
+
+It needs ffmpeg and ffprobe on the PATH, built with libsvtav1 and libopus. It
+downloads nothing and installs nothing. Build the solution first so that cbvinfo
+exists; without it the profile check is recorded as "not run" and the encoding
+still happens.
+
+
 tests/assets
 ============
 The golden corpus: small synthetic media files, committed, that the whole test
@@ -183,6 +255,45 @@ which is the whole point of the bespoke format: authoring it requires nothing
 that is not either an encoder or CodeBrix code.
 
 
+tests/assets/authoring
+======================
+The SAMPLE-VIDEO corpus, and the one place in this repository that holds real
+recordings rather than synthetic ones. It is not part of the golden corpus and no
+byte-level assertion is made against it.
+
+    MP4/     the two originals: a 4K landscape clip and a 4K portrait clip,
+             created by Jeremy Ellis on his phone and placed by him in the Public
+             Domain on 2026-08-29. Everything derived from them is Public Domain
+             too. The portrait clip is stored LANDSCAPE with a -90 degree rotation
+             in its metadata, which is what phones do and what players get wrong.
+    MKV/     six off-the-shelf Matroska derivatives - AV1 + Opus, three
+             resolutions by two orientations, muxed the way anything on the
+             internet is muxed, cues at the END
+    WebM/    the same six as WebM
+    CodeBrix-Mode1/   the same six again as "CodeBrix Video Mode1" .cbv files: plain WebM
+             with the cues moved to the FRONT, which is what the streamable
+             profile is built around
+
+The portrait derivatives have TRUE portrait pixels - taller than they are wide,
+with no rotation left for a player to apply. The generator asserts that and so do
+the tests.
+
+READ README.txt AND MANIFEST.txt in that folder before changing anything there.
+README.txt is the Public-Domain declaration and the description of the four
+folders; MANIFEST.txt is the per-file record, rewritten on every run.
+
+The twelve off-the-shelf files are the NEGATIVE CONTROL for the profile: cbvinfo
+fails them on "cues sit before the first cluster" and passes them on everything
+else, which is exactly the difference the Mode1 layout makes.
+
+tests/CodeBrix.VideoPlayback.Tests/AuthoringCorpusTests.cs reads all eighteen with
+this repository's own Matroska reader - track codecs, frame sizes, declared
+duration, seek index, cues-before-first-cluster - and decodes nothing, because
+there is no AV1 decoder in this repository's tests. Those tests skip themselves,
+naming the folder and the command that fills it, on a checkout that has not
+generated the corpus.
+
+
 samples/CodeBrix.VideoPlayback.ConsumerShape
 ===========================================
     dotnet run --project samples/CodeBrix.VideoPlayback.ConsumerShape -c Release -- <out.png> [<in.cbv>]
@@ -243,4 +354,40 @@ There is no opt-in gate here: the whole suite is device-free, because Skia's
 runtime effects compile and run on its raster backend, so the colour shader is
 measured against the core's own converter with no graphics device in the picture
 at all.
+
+
+tests/assets/LUTs
+=================
+The .cube colour lookup tables the LUT effect is measured against, and the looks
+the samples draw with. Twenty-three files, about 17.3 MB, none of which reaches any
+NuGet package: they are data, read as text at run time.
+
+    found/       nine tables from six open-source projects, every one CC0, a
+                 public-domain dedication, or MIT, with the licence read at its
+                 source and each file's own origin traced to the author of the
+                 repository holding it.
+    generated/   twelve tables written for this repository and placed in the
+                 PUBLIC DOMAIN - identities at 17, 33 and 65, warm, cool, sepia,
+                 an S curve, a deliberately unsubtle teal-and-orange for
+                 screenshots, an exact inversion, a 1024-point 1D gamma curve,
+                 a non-default-domain file and a CRLF-with-comments file.
+    invalid/     two files that are broken ON PURPOSE and must be REFUSED. Do
+                 not "fix" them; read invalid/DO-NOT-FIX.txt first.
+
+LutCorpusTests walks every file in the folder - the valid ones to prove they
+parse and survive a write-and-read round trip, the invalid ones to prove they are
+refused by name - and skips itself when the folder is not in the checkout.
+
+    python3 tests/assets/LUTs/generate-luts.py [output-folder]
+
+That script writes everything in generated/. Python 3 standard library only -
+nothing to install - and its output is deterministic and locale-independent, so
+re-running it rewrites byte-identical files.
+
+READ FIRST if you are adding a file here: tests/assets/LUTs/README.txt sets out
+the licence bar, names every candidate that was REJECTED and why, and explains
+why this program reads .cube and nothing else. MANIFEST.txt carries the per-file
+provenance, hashes and validation results; LICENSES/ carries the verbatim licence
+text of all six upstream projects.
+
 ================================================================================

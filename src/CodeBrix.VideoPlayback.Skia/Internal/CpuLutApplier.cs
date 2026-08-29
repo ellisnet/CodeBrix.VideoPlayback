@@ -1,6 +1,6 @@
 using System;
 using CodeBrix.VideoPlayback.Color;
-using CodeBrix.VideoPlayback.Skia.Effects;
+using CodeBrix.VideoPlayback.Color.Luts;
 
 namespace CodeBrix.VideoPlayback.Skia.Internal;
 
@@ -9,17 +9,19 @@ namespace CodeBrix.VideoPlayback.Skia.Internal;
 /// </summary>
 /// <remarks>
 /// This is the slow road, taken only when an application has asked for it with
-/// <c>AllowEffectsOnCpu</c>. Every pixel costs a trilinear interpolation of eight grid nodes, which is
-/// roughly what the whole colour conversion costs - so a frame with effects on the processor takes about
-/// twice as long as one without.
+/// <c>AllowEffectsOnCpu</c>. Every pixel costs an interpolation of the grid, which is roughly what the whole
+/// colour conversion costs - so a frame with effects on the processor takes about twice as long as one
+/// without. It reads the table the SAME WAY the shader does, so the two render paths produce the same
+/// picture from the same chain.
 /// </remarks>
 internal static class CpuLutApplier
 {
     /// <summary>Applies a table to every pixel of a surface, in place.</summary>
     /// <param name="lut">The resultant table.</param>
     /// <param name="surface">The BGRA surface to transform.</param>
+    /// <param name="interpolation">How the table is read between its nodes - the shader's own setting.</param>
     /// <exception cref="ArgumentNullException"><paramref name="lut" /> or <paramref name="surface" /> is null.</exception>
-    internal static unsafe void Apply(Lut3D lut, BgraFrameBuffer surface)
+    internal static unsafe void Apply(Lut3D lut, BgraFrameBuffer surface, LutInterpolation interpolation)
     {
         if (lut == null) throw new ArgumentNullException(nameof(lut));
         if (surface == null) throw new ArgumentNullException(nameof(surface));
@@ -38,6 +40,7 @@ internal static class CpuLutApplier
                     pixel[2] * Inverse,
                     pixel[1] * Inverse,
                     pixel[0] * Inverse,
+                    interpolation,
                     out float red,
                     out float green,
                     out float blue);

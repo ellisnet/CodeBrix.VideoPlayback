@@ -20,6 +20,7 @@
     <Project Path="samples/CodeBrix.VideoPlayback.ConsumerShape/CodeBrix.VideoPlayback.ConsumerShape.csproj" />
   </Folder>
   <Folder Name="/Tools/">
+    <Project Path="tools/CodeBrix.VideoPlayback.AssetAuthoring/CodeBrix.VideoPlayback.AssetAuthoring.csproj" />
     <Project Path="tools/CodeBrix.VideoPlayback.Tools/CodeBrix.VideoPlayback.Tools.csproj" />
   </Folder>
   <Project Path="src/CodeBrix.VideoPlayback/CodeBrix.VideoPlayback.csproj" />

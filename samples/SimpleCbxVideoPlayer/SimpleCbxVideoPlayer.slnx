@@ -1,0 +1,18 @@
+<Solution>
+  <Folder Name="/CodeBrixPlatform/">
+  <Project Path="src/CodeBrixPlatform/SimpleCbxVideoPlayer.UI/SimpleCbxVideoPlayer.UI.shproj" />
+  <Project Path="src/CodeBrixPlatform/SimpleCbxVideoPlayer.Core/SimpleCbxVideoPlayer.Core.csproj" />
+  <Project Path="src/CodeBrixPlatform/SimpleCbxVideoPlayer.LinuxX11/SimpleCbxVideoPlayer.LinuxX11.csproj" />
+  <Project Path="src/CodeBrixPlatform/SimpleCbxVideoPlayer.LinuxWayland/SimpleCbxVideoPlayer.LinuxWayland.csproj" />
+  <Project Path="src/CodeBrixPlatform/SimpleCbxVideoPlayer.LinuxFrameBuffer/SimpleCbxVideoPlayer.LinuxFrameBuffer.csproj" />
+  <Project Path="src/CodeBrixPlatform/SimpleCbxVideoPlayer.MacOS/SimpleCbxVideoPlayer.MacOS.csproj" />
+  <Project Path="src/CodeBrixPlatform/SimpleCbxVideoPlayer.Win32Skia/SimpleCbxVideoPlayer.Win32Skia.csproj" />
+  <Project Path="src/CodeBrixPlatform/SimpleCbxVideoPlayer.WinWpfSkia/SimpleCbxVideoPlayer.WinWpfSkia.csproj" />
+  </Folder>
+  <Folder Name="/Libraries/">
+    <Project Path="src/libs/SimpleCbxVideoPlayer.SkiaVideo/SimpleCbxVideoPlayer.SkiaVideo.csproj" />
+  </Folder>
+  <Folder Name="/Tests/">
+    <Project Path="tests/libs/SimpleCbxVideoPlayer.SkiaVideo.Tests/SimpleCbxVideoPlayer.SkiaVideo.Tests.csproj" />
+  </Folder>
+</Solution>

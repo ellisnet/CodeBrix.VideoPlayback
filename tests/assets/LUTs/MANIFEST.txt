@@ -1,0 +1,554 @@
+==============================================================================
+MANIFEST: tests/assets/LUTs
+Every .cube file in this folder, where it came from, and how it validates.
+==============================================================================
+
+Retrieval / generation date: 2026-08-29
+Validator: every file below was parsed and checked. The checks are listed in README.txt.
+
+Files       : 23 in total
+              9 found and valid, 12 generated and valid, 2 INTENTIONALLY INVALID
+Total bytes : 18155021 (17.31 MB)
+Largest file: generated/identity_65.cube (7415102 bytes, 7.07 MB)
+Result      : the 21 valid files all parse (21 PASS, 0 FAIL); the 2 files in invalid/ are all correctly
+              refused (2 refused, 0 wrongly parsed). 0 problems.
+
+
+==============================================================================
+PART 1 - FOUND FILES
+==============================================================================
+
+Nine files from six independent projects. Each was accepted only after its
+licence was read AT ITS SOURCE and the file's own origin was traced; the
+licence text of every one of the six is captured verbatim under LICENSES/.
+Rejected candidates, and the reason each was rejected, are recorded in
+README.txt.
+
+------------------------------------------------------------------------------
+PACK: smol-cube   (aras-p/smol-cube)
+------------------------------------------------------------------------------
+  Author  : Aras Pranckevičius
+  Licence : MIT OR Unlicense (the Unlicense arm is a public-domain dedication)
+  Text    : LICENSES/smol-cube.txt
+  Source  : https://github.com/aras-p/smol-cube
+  Verified:
+    license.txt at the repository root states both licences in full, at the
+    author's choice. The file taken lives in tests/luts/synthetic/ - it is
+    hand-written test data with no outside origin, and it credits nobody
+    else.
+
+  found/smol-cube/shaper_3d.cube
+    upstream path : tests/luts/synthetic/shaper_3d.cube
+    raw URL       : https://raw.githubusercontent.com/aras-p/smol-cube/main/tests/luts/synthetic/shaper_3d.cube
+    retrieved     : 2026-08-29
+    git blob sha1 : 0d8e2fddae63ec8bc06cc31a5626da4284f6f5e5  (verified against the downloaded bytes)
+    sha256        : 322c04153d3b94024e32f583297b1677c65266d15306ff6d141c87779953f36d
+    size          : 354 bytes
+    table         : combined 1D+3D, size 1D 3 + 3D 2, 11 data rows
+    header        : TITLE none | domain [0.0927061729, 0.0927061729, 0.0927061729] .. [1.0196260353, 1.0196260353, 1.0196260353] | 2 comment line(s) | LF endings
+    validator     : PASS  (with warnings)
+      WARNING: 10 value(s) outside the declared domain; first at line 10 (0.01234 not in [0.0927062, 1.01963])
+    why it is here:
+      A COMBINED file: a 1D shaper table AND a 3D table in one, the
+      arrangement Resolve's dialect allows. Comments, blank lines,
+      LUT_1D_INPUT_RANGE and LUT_3D_INPUT_RANGE, and values well outside the
+      declared domain (up to 13.5). The single most demanding fixture in the
+      corpus. NOTE: as of 2026-08-29 CodeBrix.VideoPlayback's own reader
+      ACCEPTS it - the curves are read as a shaper that runs before the table,
+      each half keeps its own INPUT_RANGE as its domain, and the pair becomes
+      ONE layer of a composed chain - so it is a POSITIVE fixture.
+
+------------------------------------------------------------------------------
+PACK: cube-lut-factory.js   (diegoinacio/cube-lut-factory.js)
+------------------------------------------------------------------------------
+  Author  : Diego Inácio
+  Licence : MIT
+  Text    : LICENSES/cube-lut-factory.js.txt
+  Source  : https://github.com/diegoinacio/cube-lut-factory.js
+  Verified:
+    LICENSE at the repository root is the MIT text. Both files carry their
+    own copyright header naming the author and pointing back at this very
+    repository, so the origin is the repository itself.
+
+  found/cube-lut-factory.js/1DLUT.cube
+    upstream path : test/1DLUT.cube
+    raw URL       : https://raw.githubusercontent.com/diegoinacio/cube-lut-factory.js/master/test/1DLUT.cube
+    retrieved     : 2026-08-29
+    git blob sha1 : bf5360a402d580b73296f1e2d932adf3eed9a442  (verified against the downloaded bytes)
+    sha256        : 14f3672af9dea484ff7442116bfd5295b59b15e4bd86947005f691e305ebafce
+    size          : 370 bytes
+    table         : 1D, size 4, 4 data rows
+    header        : TITLE '1D Identity Cube LUT" # comment here' | domain [0.0, 0.0, 0.0] .. [1.0, 1.0, 1.0] | 6 comment line(s) | LF endings
+    validator     : PASS
+    why it is here:
+      LUT_1D_SIZE 4. Comment lines before and between the keywords, a TITLE
+      with a trailing '#' comment on the same line, and an explicit default
+      domain.
+
+  found/cube-lut-factory.js/3DLUT.cube
+    upstream path : test/3DLUT.cube
+    raw URL       : https://raw.githubusercontent.com/diegoinacio/cube-lut-factory.js/master/test/3DLUT.cube
+    retrieved     : 2026-08-29
+    git blob sha1 : aa837bc15bf3e5b4c64b2b458404ef0fcbf5a8c8  (verified against the downloaded bytes)
+    sha256        : 98df3d367ab4eac70580587d569a8e9803f04df094c72ed9cd2a5cb88207e97c
+    size          : 1615 bytes
+    table         : 3D, size 4, 64 data rows
+    header        : TITLE '3D Identity Cube LUT' | domain [0.0, 0.0, 0.0] .. [1.0, 1.0, 1.0] | 6 comment line(s) | LF endings
+    validator     : PASS
+    why it is here:
+      LUT_3D_SIZE 4 identity, same header shape as its 1D sibling.
+
+------------------------------------------------------------------------------
+PACK: dart-lut   (NiKoTron/dart-lut)
+------------------------------------------------------------------------------
+  Author  : Nickolai Simonov
+  Licence : MIT
+  Text    : LICENSES/dart-lut.txt
+  Source  : https://github.com/NiKoTron/dart-lut
+  Verified:
+    LICENSE at the repository root is the MIT text (Copyright (c) 2018
+    Nickolai Simonov). The files are the library's own hand-written fixtures
+    - one of them states the arithmetic it encodes in its first comment - and
+    credit nobody else.
+  Also from this pack:
+    A FOURTH file from this same repository, under the same MIT licence, is
+    in invalid/ - bad_cube.cube, the library's own deliberately-malformed
+    fixture. LICENSES/dart-lut.txt covers it too.
+
+  found/dart-lut/exmp.cube
+    upstream path : test/asserts/exmp.cube
+    raw URL       : https://raw.githubusercontent.com/NiKoTron/dart-lut/master/test/asserts/exmp.cube
+    retrieved     : 2026-08-29
+    git blob sha1 : fb89116a290d8739bbddd2f3babb7d539818acce  (verified against the downloaded bytes)
+    sha256        : cbf5093f822a79c571df20c3409298b18f8ed42d24ba81585cd71acc73e5ef6d
+    size          : 200 bytes
+    table         : 3D, size 2, 8 data rows
+    header        : TITLE 'example' | domain [0.0, 0.0, 0.0] .. [1.0, 1.0, 1.0] | 1 comment line(s) | LF endings
+    validator     : PASS
+    why it is here:
+      LUT_3D_SIZE 2 with a TITLE that is NOT quoted, an explicit default
+      domain, and blank lines between groups of rows.
+
+  found/dart-lut/exmp-example.cube
+    upstream path : example/asserts/luts/exmp.cube
+    raw URL       : https://raw.githubusercontent.com/NiKoTron/dart-lut/master/example/asserts/luts/exmp.cube
+    retrieved     : 2026-08-29
+    git blob sha1 : 89d156d61202c08848b683d645bde9d8dcaff53d  (verified against the downloaded bytes)
+    sha256        : 46424c9023ea31d33bccfad44defc693463b4b9f0ac69821e34a1efc8ba271ca
+    size          : 138 bytes
+    table         : 3D, size 2, 8 data rows
+    header        : TITLE none | domain default 0..1 | 1 comment line(s) | LF endings | NO trailing newline
+    validator     : PASS
+    why it is here:
+      The same table with no TITLE and no domain, and - deliberately kept -
+      NO TRAILING NEWLINE: the last row ends at end of file. RENAMED on the
+      way in (from exmp.cube to exmp-example.cube) only because its sibling
+      above already claims that name; the bytes are untouched.
+
+  found/dart-lut/exmp_linear.cube
+    upstream path : example/asserts/luts/exmp_linear.cube
+    raw URL       : https://raw.githubusercontent.com/NiKoTron/dart-lut/master/example/asserts/luts/exmp_linear.cube
+    retrieved     : 2026-08-29
+    git blob sha1 : 265381aedfe22ff5743a561ecf028341da02cb2f  (verified against the downloaded bytes)
+    sha256        : dc5f4f45b837bdfa542cfdff9ceced827c208e1c4b809ff4589cc31222e54a3f
+    size          : 379 bytes
+    table         : 3D, size 3, 27 data rows
+    header        : TITLE 'linear cubi cube' | domain default 0..1 | 2 comment line(s) | LF endings
+    validator     : PASS
+    why it is here:
+      LUT_3D_SIZE 3 - an odd small size between the 2s and the 4s - with a
+      quoted TITLE.
+
+------------------------------------------------------------------------------
+PACK: cameraluts   (cgardev/cameraluts)
+------------------------------------------------------------------------------
+  Author  : cgardev
+  Licence : MIT
+  Text    : LICENSES/cameraluts.txt
+  Source  : https://github.com/cgardev/cameraluts
+  Verified:
+    LICENSE at the repository root is the MIT text (Copyright (c) 2026
+    cgardev). The tables are PROCEDURALLY GENERATED by Go programs committed
+    in the same repository (scripts/gen_a7iii/main.go and its README, which
+    sets out the transfer functions and matrices used). The README states
+    plainly that the project exists so that nobody has to buy or hunt down
+    manufacturer LUTs, i.e. it is computed mathematics rather than a
+    redistributed vendor file. The variant taken here is the 'Standard' one -
+    the straight colour-space transform. The 'Filmic' and 'Cine4' variants
+    were NOT taken: the same README calls them approximations of looks whose
+    formulas the manufacturer does not publish.
+
+  found/cameraluts/Sony_A7III_SLog3_SGamut3Cine_To_Rec709_Standard.cube
+    upstream path : luts/sony/a7iii/Sony_A7III_SLog3_SGamut3Cine_To_Rec709_Standard.cube
+    raw URL       : https://raw.githubusercontent.com/cgardev/cameraluts/main/luts/sony/a7iii/Sony_A7III_SLog3_SGamut3Cine_To_Rec709_Standard.cube
+    retrieved     : 2026-08-29
+    git blob sha1 : c11616f1951618dbb07f94536942b2446b1635f6  (verified against the downloaded bytes)
+    sha256        : 8a1750e54d5361cdebbc11c3644e948c800c52e8743a4e86c55d0072c864c696
+    size          : 970476 bytes
+    table         : 3D, size 33, 35937 data rows
+    header        : TITLE 'Sony A7 III S-Log3 / S-Gamut3.Cine (PP8 - Anti-banding curve) Standard' | domain [0.0, 0.0, 0.0] .. [1.0, 1.0, 1.0] | 1 comment line(s) | LF endings
+    validator     : PASS
+    why it is here:
+      A real 33-cubed colour-space transform (S-Log3/S-Gamut3.Cine to
+      Rec.709) with a leading comment, a long quoted TITLE and an explicit
+      default domain. Six-decimal values. The camera and profile names in the
+      filename and TITLE are the manufacturer's trademarks and appear for
+      identification only.
+
+------------------------------------------------------------------------------
+PACK: opensource-luts   (darkyboys/opensource-luts)
+------------------------------------------------------------------------------
+  Author  : darkyboys
+  Licence : CC0 1.0 Universal (public domain dedication)
+  Text    : LICENSES/opensource-luts.txt
+  Source  : https://github.com/darkyboys/opensource-luts
+  Verified:
+    LICENSE at the repository root is the full CC0 1.0 legal code, and the
+    repository's own description on its hosting page reads 'Completely open
+    source and public domain luts made by me'. Each .cube sits beside a .json
+    holding the curve, temperature and saturation parameters it was built
+    from - the project file of the author's own generator (the same account
+    publishes xlut.gen-web, an open-source LUT generator) - which
+    corroborates the authorship claim.
+  Also from this pack:
+    A SECOND file from this same pack, under the same CC0 dedication, is in
+    invalid/ - 'GTG Channel Cooler.cube', which contains a NaN row.
+    LICENSES/opensource-luts.txt covers it too.
+
+  found/opensource-luts/GTG Look LUT (Cold Vs Warm).cube
+    upstream path : GTG Look LUT (Cold Vs Warm).cube
+    raw URL       : https://raw.githubusercontent.com/darkyboys/opensource-luts/main/GTG%20Look%20LUT%20(Cold%20Vs%20Warm).cube
+    retrieved     : 2026-08-29
+    git blob sha1 : 9c4d6af17a80ae40905d362f5ff6eddb97a5ca41  (verified against the downloaded bytes)
+    sha256        : ae995ab35f67f1f06355cf14ce354106ce52610c5a8565ecdbecbd8cc9313151
+    size          : 282394 bytes
+    table         : 3D, size 17, 4913 data rows
+    header        : TITLE none | domain default 0..1 | 0 comment line(s) | LF endings | NO trailing newline
+    validator     : PASS
+    why it is here:
+      A creative look, LUT_3D_SIZE 17. NO header beyond the size keyword - no
+      TITLE, no domain, no comment - and values printed at full double
+      precision (17 significant digits) with bare '0' and '1' mixed in.
+      SPACES IN THE FILENAME, which is normal for this format and worth
+      having in the corpus.
+
+------------------------------------------------------------------------------
+PACK: gtgluts   (darkyboys/gtgluts)
+------------------------------------------------------------------------------
+  Author  : darkyboys
+  Licence : CC0 1.0 Universal (public domain dedication)
+  Text    : LICENSES/gtgluts.txt
+  Source  : https://github.com/darkyboys/gtgluts
+  Verified:
+    LICENSE at the repository root is the full CC0 1.0 legal code, and the
+    repository's own description on its hosting page reads 'The open source &
+    public domain luts i made for my usage'. The same .json sibling files are
+    present here as in opensource-luts, from the same generator.
+
+  found/gtgluts/GTG Skin Warmer V2.cube
+    upstream path : GTG Skin Warmer V2.cube
+    raw URL       : https://raw.githubusercontent.com/darkyboys/gtgluts/main/GTG%20Skin%20Warmer%20V2.cube
+    retrieved     : 2026-08-29
+    git blob sha1 : 8bc19439646adae6dc4440d1c8f05e268b17a661  (verified against the downloaded bytes)
+    sha256        : d544c7e0933d16e256cfddc8faaf01c06e7c9d7ef6bc5f62a07a135b533194f8
+    size          : 284348 bytes
+    table         : 3D, size 17, 4913 data rows
+    header        : TITLE none | domain default 0..1 | 0 comment line(s) | LF endings | NO trailing newline
+    validator     : PASS
+    why it is here:
+      A second creative look from the same author's other CC0 pack, same
+      shape as the one above.
+
+
+==============================================================================
+PART 2 - GENERATED FILES
+==============================================================================
+
+Twelve files written by generate-luts.py in this folder. Jeremy Ellis and
+contributors place these files, and the script that writes them, in the
+PUBLIC DOMAIN (CC0 1.0 Universal). No rights are reserved and no attribution
+is required.
+
+The generator uses the Python 3 standard library only, and its output is
+DETERMINISTIC: every number is written with '%.6f' formatting, which is
+locale-independent, so the bytes are the same on every machine. This was
+checked by running it twice, and again under a German locale, and comparing
+SHA-256 sums.
+
+Rows are ordered as the format requires: red changes fastest, then green,
+then blue. The grid point at index i on an axis of size N is i/(N-1). At six
+decimals that is EXACT for the 17, 33 and 65 grids (1/16, 1/32 and 1/64 all
+terminate in binary and in six decimal places), so identity tables hold exact
+values, not rounded ones. The 1024 point 1D grid is 1/1023 and does round.
+
+The 'definition' line of each entry below is the contract: it is repeated in
+the file's own comment header and in the DEFINITIONS dictionary in
+generate-luts.py, and a test may assert computed values against it.
+
+------------------------------------------------------------------------------
+  generated/identity_33.cube
+    definition    :
+      out = in. Row i of each axis holds i/32. States the default domain
+      explicitly.
+    size          : 970640 bytes
+    table         : 3D, size 33, 35937 data rows
+    header        : TITLE 'Identity 33' | domain [0.0, 0.0, 0.0] .. [1.0, 1.0, 1.0] | 4 comment line(s) | LF endings
+    sha256        : be3d485c97ef85114283fea86bebba3111f9a5c24991053bef7a6520c0ca79c0
+    validator     : PASS
+    note          :
+      The everyday identity. States the default domain EXPLICITLY, so the
+      reader's DOMAIN_MIN/DOMAIN_MAX path is exercised on a file it must
+      accept.
+
+------------------------------------------------------------------------------
+  generated/identity_17.cube
+    definition    :
+      out = in. Row i of each axis holds i/16. Minimal header: no TITLE, no
+      DOMAIN lines.
+    size          : 132901 bytes
+    table         : 3D, size 17, 4913 data rows
+    header        : TITLE none | domain default 0..1 | 4 comment line(s) | LF endings
+    sha256        : 56f852a6b53b8af05aacb005ef5afc3f0cbfd1d9d48bbf572b782c9ea933ed01
+    validator     : PASS
+    note          :
+      Minimal header: LUT_3D_SIZE and nothing else but comments.
+
+------------------------------------------------------------------------------
+  generated/identity_65.cube
+    definition    :
+      out = in. Row i of each axis holds i/64.
+    size          : 7415102 bytes
+    table         : 3D, size 65, 274625 data rows
+    header        : TITLE 'Identity 65' | domain default 0..1 | 4 comment line(s) | LF endings
+    sha256        : cc40590acbe99313999569a86603a9fe9e9516a6d8903c825881a76e7a70c33f
+    validator     : PASS
+    note          :
+      The largest grid in common use. THE BIGGEST FILE IN THE CORPUS by a
+      wide margin - see the note at the end of this manifest.
+
+------------------------------------------------------------------------------
+  generated/warm_33.cube
+    definition    :
+      out = clamp(in * (1.06, 1.00, 0.94)) per channel.
+    size          : 970527 bytes
+    table         : 3D, size 33, 35937 data rows
+    header        : TITLE 'Warm 33' | domain default 0..1 | 4 comment line(s) | LF endings
+    sha256        : 9e1ff33b3e29f18b0e4848dea2977d3ef90b632f83e46170dd38dd80178af3c1
+    validator     : PASS
+    note          :
+      A gentle white-balance shift towards warm.
+
+------------------------------------------------------------------------------
+  generated/cool_33.cube
+    definition    :
+      out = clamp(in * (0.94, 1.00, 1.06)) per channel.
+    size          : 970527 bytes
+    table         : 3D, size 33, 35937 data rows
+    header        : TITLE 'Cool 33' | domain default 0..1 | 4 comment line(s) | LF endings
+    sha256        : 8d098db8faccb01dc8ccc11ec858cb440f52441f5577accd407025996904e29b
+    validator     : PASS
+    note          :
+      The same shift towards cool. warm and cool are exact mirrors of each
+      other in the red and blue factors.
+
+------------------------------------------------------------------------------
+  generated/sepia_33.cube
+    definition    :
+      out = clamp(M * in), M =
+      [[0.393,0.769,0.189],[0.349,0.686,0.168],[0.272,0.534,0.131]].
+    size          : 970567 bytes
+    table         : 3D, size 33, 35937 data rows
+    header        : TITLE 'Sepia 33' | domain default 0..1 | 4 comment line(s) | LF endings
+    sha256        : db400eaa3b7d32faa00210f952c72dd77c126f01746feb0b6aac17e5270f5d04
+    validator     : PASS
+    note          :
+      The classic sepia matrix, clamped.
+
+------------------------------------------------------------------------------
+  generated/contrast_s_curve_33.cube
+    definition    :
+      out = smoothstep(in) per channel, smoothstep(x) = x*x*(3 - 2*x).
+    size          : 970566 bytes
+    table         : 3D, size 33, 35937 data rows
+    header        : TITLE 'Contrast S Curve 33' | domain default 0..1 | 4 comment line(s) | LF endings
+    sha256        : 1685ece1dcd9b514baf700a5d7265cbf132cb2ad8f3b2f40df9e7848e8246e5a
+    validator     : PASS
+    note          :
+      A per-channel S curve.
+
+------------------------------------------------------------------------------
+  generated/teal_orange_strong_33.cube
+    definition    :
+      luma = 0.2126*r + 0.7152*g + 0.0722*b (Rec.709); shift = (luma - 0.5) *
+      2; out = clamp(r + 0.25*shift, g + 0.05*shift, b - 0.25*shift).
+    size          : 970645 bytes
+    table         : 3D, size 33, 35937 data rows
+    header        : TITLE 'Teal and Orange Strong 33' | domain default 0..1 | 4 comment line(s) | LF endings
+    sha256        : 276e143a644d30e3139f1928f8a0178caffa9253d9649916582fcd12eb2e6c6e
+    validator     : PASS
+    note          :
+      Deliberately unsubtle, for demonstration screenshots: shadows go teal,
+      highlights go orange.
+
+------------------------------------------------------------------------------
+  generated/invert_33.cube
+    definition    :
+      out = 1 - in per channel, exactly. No clamping is needed and none is
+      applied.
+    size          : 970559 bytes
+    table         : 3D, size 33, 35937 data rows
+    header        : TITLE 'Invert 33' | domain default 0..1 | 4 comment line(s) | LF endings
+    sha256        : f1538bb6a4e3220acc84de457c203425ae72150eeb9352addd3b3b8a099853a1
+    validator     : PASS
+    note          :
+      Exact mathematical inversion. No rounding is involved at six decimals,
+      so a test may assert equality rather than tolerance.
+
+------------------------------------------------------------------------------
+  generated/gamma_2_2_1d_1024.cube
+    definition    :
+      1D table, 1024 points. Point i holds x^(1/2.2) on all three channels, x
+      = i/1023.
+    size          : 27932 bytes
+    table         : 1D, size 1024, 1024 data rows
+    header        : TITLE 'Gamma 2.2 Encode 1D' | domain default 0..1 | 4 comment line(s) | LF endings
+    sha256        : bad966d08455aa659b026d4b0e553f5716c6f358c8afca5bb554784c13c203e0
+    validator     : PASS
+    note          :
+      The 1D fixture, and the longest single table by row count after
+      identity_65.
+
+------------------------------------------------------------------------------
+  generated/domain_test_33.cube
+    definition    :
+      DOMAIN_MIN -0.5, DOMAIN_MAX 1.5. The table clamps that declared domain
+      into 0..1: row i of each axis holds clamp(-0.5 + 2.0*i/32, 0, 1).
+    size          : 970707 bytes
+    table         : 3D, size 33, 35937 data rows
+    header        : TITLE 'Domain Test 33' | domain [-0.5, -0.5, -0.5] .. [1.5, 1.5, 1.5] | 4 comment line(s) | LF endings
+    sha256        : 92605e849fb169dc6b934aea536d15384ceb00e51b87f538c6321e5149d9c32d
+    validator     : PASS
+    note          :
+      A NON-DEFAULT domain. NOTE: as of 2026-08-29 CodeBrix.VideoPlayback's own
+      reader (CubeLutFile.Parse, now in the core package) HONOURS a domain other
+      than 0..1 - it normalises the input through it before the lookup - so for
+      this repository this file is a POSITIVE fixture: a test parses it and
+      checks that input 0 and input 1 land where the declared -0.5..1.5 domain
+      says they do.
+
+------------------------------------------------------------------------------
+  generated/crlf_variant_33.cube
+    definition    :
+      out = in, numerically identical to identity_33.cube. Differs only in
+      its bytes: CRLF line endings, extra comment lines and a TITLE.
+    size          : 1006728 bytes
+    table         : 3D, size 33, 35937 data rows
+    header        : TITLE 'CRLF Variant Identity 33' | domain default 0..1 | 8 comment line(s) | CRLF endings
+    sha256        : e862b245a0667788d6eee6523758da956b525f458cf48d510143f63179c4f7e4
+    validator     : PASS
+    note          :
+      CRLF line endings throughout, extra comment lines including an empty
+      comment, and a TITLE. Numerically identical to identity_33.cube, so a
+      test can assert that the two parse to the same table.
+
+
+==============================================================================
+PART 3 - INTENTIONALLY INVALID FILES (invalid/)
+==============================================================================
+
+EVERY FILE IN invalid/ IS MALFORMED ON PURPOSE AND MUST NEVER BE FIXED. They
+are negative fixtures: the reader is supposed to REFUSE them, and to refuse
+them with a message naming what is wrong and where. Correcting one of these
+files does not improve the corpus - it silently inverts the test that depends
+on it, which would then be asserting that a VALID file is refused.
+invalid/DO-NOT-FIX.txt says the same thing beside the files themselves.
+
+Neither file was damaged by anyone here. Both are real files taken intact
+from open-source projects already vetted for Part 1, under the same licences,
+and both were verified against their upstream git blob SHA-1 exactly as the
+valid downloads were. One is defective by ACCIDENT (its author's generator
+produced a NaN), the other by DESIGN (its author ships it as their own
+should-not-parse fixture). Having one of each is the point: a reader must
+survive both the deliberate garbage and the plausible-looking file with one
+bad row in the middle.
+
+A test that walks the corpus must EXCLUDE invalid/, or assert failure for it.
+
+------------------------------------------------------------------------------
+  invalid/GTG Channel Cooler.cube
+    pack          : opensource-luts   (darkyboys/opensource-luts)
+    author        : darkyboys
+    licence       : CC0 1.0 Universal (public domain dedication)
+    licence text  : LICENSES/opensource-luts.txt  (the same file that covers this pack's valid entries)
+    upstream path : GTG Channel Cooler.cube
+    raw URL       : https://raw.githubusercontent.com/darkyboys/opensource-luts/main/GTG%20Channel%20Cooler.cube
+    retrieved     : 2026-08-29
+    git blob sha1 : 58255d86925a28ff4e89f4b408379def16d6572f  (verified against the downloaded bytes)
+    sha256        : d0c2598d59ffaa7d0dbe8ac4e39054b364820d5eb1f82f083846f8d0e5da696c
+    size          : 267185 bytes
+    states        : 3D, size 17; 4913 readable data rows against 4913 promised
+    what is wrong :
+      Line 274 of the file is literally 'NaN NaN NaN'. Everything else about
+      it is a well-formed LUT_3D_SIZE 17 table with the correct 4913 rows,
+      which is what makes it valuable: the defect is ONE row in the middle of
+      an otherwise perfectly ordinary file, exactly the shape of the problem
+      that slips past a reader which only checks structure. The author's
+      generator emitted it; the file is defective at its source and was
+      downloaded with the defect intact.
+    a reader must :
+      Refuse the file, naming line 274. A reader that returns a table here
+      has produced one with a NaN in it, which will propagate silently
+      through interpolation into every pixel the table touches.
+    validator     : FAIL - correctly refused. Errors raised:
+      line 274: value is NaN or infinity
+      line 274: value is NaN or infinity
+      line 274: value is NaN or infinity
+
+------------------------------------------------------------------------------
+  invalid/bad_cube.cube
+    pack          : dart-lut   (NiKoTron/dart-lut)
+    author        : Nickolai Simonov
+    licence       : MIT
+    licence text  : LICENSES/dart-lut.txt  (the same file that covers this pack's valid entries)
+    upstream path : example/asserts/luts/bad_cube.cube
+    raw URL       : https://raw.githubusercontent.com/NiKoTron/dart-lut/master/example/asserts/luts/bad_cube.cube
+    retrieved     : 2026-08-29
+    git blob sha1 : 3caeacc3ee40b73835a45cf0e4c16b9d38312b81  (verified against the downloaded bytes)
+    sha256        : 611f3fca3d6a9ecb6ed3cc13377d8bc3c7a3d20532dd60cb6a304f595fd68a02
+    size          : 161 bytes
+    states        : 3D, size 2; 6 readable data rows against 8 promised
+    what is wrong :
+      Deliberately malformed by its author - the repository ships it as its
+      own should-not-parse fixture, and its first comment line says 'just bad
+      cube in table'. Line 10 reads '1.0 0.sd75 0.0' and line 12 reads '0.x0
+      0.25 1.0': three tokens each, but two of them are not numbers. It also
+      states LUT_3D_SIZE 2, so it promises 8 rows and delivers 6 readable
+      ones, and carries a value of 1.75 outside the default domain.
+    a reader must :
+      Refuse the file. Ideally naming the FIRST bad line (10) rather than
+      only complaining about the row count, because the row count is a
+      consequence and the token is the cause.
+    validator     : FAIL - correctly refused. Errors raised:
+      line 10: expected three numbers, got '1.0 0.sd75 0.0'
+      line 12: expected three numbers, got '0.x0 0.25 1.0'
+      expected 8 data rows, found 6
+      (warning) 1 value(s) outside the declared domain; first at line 9 (1.75 not in [0, 1])
+
+
+==============================================================================
+SIZE
+==============================================================================
+
+The corpus is 17.31 MB, and 7.07 MB of that is one file:
+generated/identity_65.cube, the 65-cubed identity, which is 274,625 rows of
+text. The nine 33-cubed tables cost about 0.95 MB each. If this folder is
+ever felt to be too heavy for the repository, the levers, in the order that
+costs the least, are: drop identity_65.cube (-7.07 MB) and let
+generate-luts.py make it on demand; then drop identity_33.cube, which
+crlf_variant_33.cube duplicates numerically (-0.93 MB). Nothing else in the
+folder is large: all nine found files together come to 1.47 MB, and six of
+them are under two kilobytes, and the two files in invalid/ add 0.26 MB.
+
+==============================================================================
+END OF MANIFEST
+==============================================================================

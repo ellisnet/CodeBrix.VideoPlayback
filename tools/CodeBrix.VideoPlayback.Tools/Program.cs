@@ -4,7 +4,8 @@ using CodeBrix.VideoPlayback;
 namespace CodeBrix.VideoPlayback.Tools;
 
 /// <summary>
-/// The entry point of the headless diagnostics tools: <c>cbvinfo</c> and <c>cbvdecode</c>.
+/// The entry point of the headless tools: <c>cbvinfo</c>, <c>cbvdecode</c>, <c>cbvmux</c> and
+/// <c>lutbake</c>.
 /// </summary>
 /// <remarks>
 /// Both verbs live in one executable so there is one build, one set of dependencies and one place to look.
@@ -12,6 +13,7 @@ namespace CodeBrix.VideoPlayback.Tools;
 /// <code>
 /// dotnet run --project tools/CodeBrix.VideoPlayback.Tools -- cbvinfo clip.cbv
 /// dotnet run --project tools/CodeBrix.VideoPlayback.Tools -- cbvdecode --headless clip.cbv
+/// dotnet run --project tools/CodeBrix.VideoPlayback.Tools -- lutbake --lut grade.cube -o out.cube
 /// </code>
 /// </remarks>
 public static class Program
@@ -46,6 +48,9 @@ public static class Program
                 case "cbvmux":
                 case "mux":
                     return CbvMuxCommand.Run(rest);
+
+                case "lutbake":
+                    return LutBakeCommand.Run(rest);
 
                 case "-h":
                 case "--help":
@@ -89,5 +94,7 @@ public static class Program
         Console.Error.WriteLine("         [--audio-name <name>] [--video-name <name>]");
         Console.Error.WriteLine("         [--captions <path>:<bcp47>[:<name>[:default+forced+sdh]]] ...");
         Console.Error.WriteLine("      Builds a bespoke .cbv file from an encoder's IVF and Ogg output.");
+        Console.Error.WriteLine();
+        LutBakeCommand.WriteUsage();
     }
 }

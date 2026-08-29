@@ -1,0 +1,27 @@
+<Project>
+
+  <!--
+    TEMPORARY, and the only reason this file exists: the AV1 decoder package this sample needs
+    (CodeBrix.VideoPlayback.Dav1d.BsdLicenseForever) has not been published yet, so it is packed locally
+    from its own repository and restored from a folder:
+
+        dotnet pack ~/GitHome/CodeBrix.VideoPlayback.Dav1d/src/CodeBrix.VideoPlayback.Dav1d/CodeBrix.VideoPlayback.Dav1d.csproj \
+            -c Release -o ~/ClaudeHome/localfeed_codebrix_videoplayback_2026-08-29/
+
+    RestoreAdditionalProjectSources ADDS that folder to the sources NuGet already has, so the machine's
+    own NuGet configuration is untouched and no nuget.config is committed with this sample. Every project
+    in the solution needs it, because a transitive package dependency is resolved with the sources of the
+    project being restored - hence a Directory.Build.props rather than a line in one csproj.
+
+    DELETE THIS FILE, and pin the published version in SimpleCbxVideoPlayer.SkiaVideo.csproj, as soon as
+    the decoder package is on nuget.org.
+  -->
+  <PropertyGroup>
+    <SimpleCbxVideoPlayerLocalFeed>$([System.IO.Path]::Combine($([System.Environment]::GetFolderPath(SpecialFolder.UserProfile)), 'ClaudeHome', 'localfeed_codebrix_videoplayback_2026-08-29'))</SimpleCbxVideoPlayerLocalFeed>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="Exists('$(SimpleCbxVideoPlayerLocalFeed)')">
+    <RestoreAdditionalProjectSources>$(RestoreAdditionalProjectSources);$(SimpleCbxVideoPlayerLocalFeed)</RestoreAdditionalProjectSources>
+  </PropertyGroup>
+
+</Project>

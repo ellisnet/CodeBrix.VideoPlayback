@@ -92,12 +92,13 @@ public class VideoPlaybackSessionTests
         string path = WriteClip("play-to-end", frameCount: 25, frameRate: 50);
         using VideoPlaybackSession session = NewSession();
         int ended = 0;
-        session.PlaybackEnded += (s, e) => ended++;
+        session.PlaybackEnded += (s, e) => Interlocked.Increment(ref ended);
         session.Open(path);
 
         //Act
         session.Play();
-        bool finished = WaitFor(() => session.State == VideoPlaybackState.Ended);
+        bool finished = WaitFor(
+            () => session.State == VideoPlaybackState.Ended && Volatile.Read(ref ended) > 0);
 
         //Assert
         finished.Should().BeTrue();
@@ -555,12 +556,13 @@ public class VideoPlaybackSessionTests
         using VideoPlaybackSession session = NewSession();
 
         int ended = 0;
-        session.PlaybackEnded += (s, e) => ended++;
+        session.PlaybackEnded += (s, e) => Interlocked.Increment(ref ended);
 
         //Act
         session.Open(path);
         session.Play();
-        bool finished = WaitFor(() => session.State == VideoPlaybackState.Ended);
+        bool finished = WaitFor(
+            () => session.State == VideoPlaybackState.Ended && Volatile.Read(ref ended) > 0);
 
         //Assert
         finished.Should().BeTrue();
@@ -587,12 +589,13 @@ public class VideoPlaybackSessionTests
         using VideoPlaybackSession session = NewSession();
 
         int ended = 0;
-        session.PlaybackEnded += (s, e) => ended++;
+        session.PlaybackEnded += (s, e) => Interlocked.Increment(ref ended);
 
         //Act
         session.Open(path);
         session.Play();
-        bool finished = WaitFor(() => session.State == VideoPlaybackState.Ended);
+        bool finished = WaitFor(
+            () => session.State == VideoPlaybackState.Ended && Volatile.Read(ref ended) > 0);
 
         //Assert
         finished.Should().BeTrue();

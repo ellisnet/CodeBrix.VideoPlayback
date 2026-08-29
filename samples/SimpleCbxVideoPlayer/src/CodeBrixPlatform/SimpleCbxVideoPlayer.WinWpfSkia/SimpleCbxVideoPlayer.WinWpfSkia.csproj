@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+  </PropertyGroup>
+
+  <!-- Tell MSBuild to treat .xaml files as CodeBrix.Platform XAML pages -->
+  <ItemGroup>
+    <Page Include="**\*.xaml" Exclude="bin\**\*.xaml;obj\**\*.xaml" />
+    <None Remove="**\*.xaml" />
+  </ItemGroup>
+
+  <!-- Shared UI files (App.xaml + Views) -->
+  <Import Project="..\SimpleCbxVideoPlayer.UI\SimpleCbxVideoPlayer.UI.projitems" Label="Shared" />
+  <ItemGroup>
+    <ProjectReference Include="..\SimpleCbxVideoPlayer.Core\SimpleCbxVideoPlayer.Core.csproj" />
+  </ItemGroup>
+
+  <!-- EXACTLY ONE platform head package; all other packages come from SimpleCbxVideoPlayer.Core -->
+  <ItemGroup>
+    <PackageReference Include="CodeBrix.Platform.Runtime.Skia.Wpf.ApacheLicenseForever" Version="1.0.231.233" />
+  </ItemGroup>
+</Project>

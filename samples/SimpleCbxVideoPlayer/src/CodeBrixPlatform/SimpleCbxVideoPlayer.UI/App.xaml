@@ -1,0 +1,19 @@
+<Application x:Class="SimpleCbxVideoPlayer.App"
+     xmlns="clr-namespace:Microsoft.UI.Xaml;assembly=CodeBrix.Platform.UI"
+     xmlns:m="clr-namespace:Microsoft.UI.Xaml.Media;assembly=CodeBrix.Platform.UI"
+     xmlns:c="clr-namespace:Microsoft.UI.Xaml.Controls;assembly=CodeBrix.Platform.UI.FluentTheme"
+     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+  <Application.Resources>
+    <ResourceDictionary>
+      <ResourceDictionary.MergedDictionaries>
+        <!-- Load WinUI resources -->
+        <c:XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
+      </ResourceDictionary.MergedDictionaries>
+      <!-- Roboto font - reference the .ttf file directly (the Fonts.xaml
+           merge does not work on Skia targets) -->
+      <m:FontFamily x:Key="RobotoFont">ms-appx:///CodeBrix.Platform.Fonts.Roboto/Fonts/Roboto.ttf</m:FontFamily>
+    </ResourceDictionary>
+  </Application.Resources>
+
+</Application>

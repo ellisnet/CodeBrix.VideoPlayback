@@ -98,8 +98,10 @@ KEY NAMESPACES / USINGS
                                                     //   the statistics
     using CodeBrix.VideoPlayback.Skia.Composition;  // IVideoLayer, VideoCompositionContext,
                                                     //   VideoComposingEventArgs
-    using CodeBrix.VideoPlayback.Skia.Effects;      // IVideoFrameEffect, LutEffect, Lut3D,
-                                                    //   Lut1D, EffectComposer, CubeLutFile
+    using CodeBrix.VideoPlayback.Skia.Effects;      // IVideoFrameEffect, LutEffect,
+                                                    //   EffectComposer
+    using CodeBrix.VideoPlayback.Color.Luts;        // Lut3D, Lut1D, CubeLutFile, LutLayer,
+                                                    //   LutComposer - all in the CORE package
 
 And, from the playback library and Skia itself:
 
@@ -168,6 +170,7 @@ Effects
     ObservableCollection<IVideoFrameEffect> Effects { get; }
     bool EffectsActive { get; }
     bool AllowEffectsOnCpu { get; set; }            false by default
+    LutInterpolation EffectInterpolation { get; set; }   Tetrahedral by default
     int EffectLutSize { get; set; }                 33 by default
     Lut3D GetResultantLut()
 
@@ -237,19 +240,61 @@ IVideoLayer and VideoCompositionContext
   FrameNumber, Backend and EffectsActive. The canvas is saved and restored
   around your call, so transform and clip it freely.
 
-IVideoFrameEffect, LutEffect, Lut3D, Lut1D, EffectComposer
------------------------------------------------------------
+IVideoFrameEffect, LutEffect, EffectComposer
+--------------------------------------------
     interface IVideoFrameEffect { string Name; void Compose(EffectComposer c); }
 
     new LutEffect(Lut3D table)         new LutEffect(Lut3D table, string name)
+    new LutEffect(Lut3D table, string name, double applyAtPercent)
     new LutEffect(Lut1D curves)        new LutEffect(Lut1D curves, string name)
+    new LutEffect(Lut1D curves, string name, double applyAtPercent)
+    new LutEffect(LutLayer layer)
 
-    Lut3D.CreateIdentity(int size)     new Lut3D(int size, float[] values)
-    Lut1D.CreateIdentity(int size)     new Lut1D(float[] curve)
-                                        new Lut1D(float[] red, float[] green, float[] blue)
+    LutEffect.FromCubeFile(string path)
+    LutEffect.FromCubeFile(string path, double applyAtPercent)
+    LutEffect.FromCube(CubeLut cube, double applyAtPercent = 100)
 
-    CubeLutFile.ReadFile(string path)  reads a ".cube" file as a LutEffect
-    CubeLutFile.Parse(string text, string fallbackName)
+    double ApplyAtPercent { get; }     100 by default - the whole table.
+                                       50 lands half way between the colour as
+                                       it reached this effect and what the table
+                                       makes of it; 0 leaves it alone and costs
+                                       nothing. The blend happens ONCE, when the
+                                       chain is composed, never per pixel.
+    LutLayer Layer { get; }            Lut3D / Lut1D pass through to it
+
+    EffectComposer: Size, NodeCount, Interpolation, Reset(), ApplyLut(lut),
+        ApplyLut(lut, applyAtPercent), ApplyLayer(LutLayer), Apply(transform),
+        GetNode(...), ToLut3D()
+
+  THE TABLES THEMSELVES LIVE IN THE CORE PACKAGE, in
+  CodeBrix.VideoPlayback.Color.Luts: Lut3D, Lut1D, CubeLutFile (read AND write),
+  CubeLut, LutLayer, LutComposer, LutComposerOptions, LutInterpolation. The core
+  has no drawing dependency, so the very same engine runs at authoring time in
+  the `lutbake` tool - see the core's AGENT-README.txt. There is exactly ONE
+  implementation of the composition arithmetic, and EffectComposer calls it.
+
+  SkiaVideoPresenter.EffectInterpolation is the ONE knob for how a colour that
+  falls BETWEEN a table's nodes is worked out. It is Tetrahedral by default and
+  it governs three things at once, on purpose: how each effect's own table is
+  sampled while the chain is folded, how the SHADER reads the resultant table on
+  the graphics path, and how AllowEffectsOnCpu reads it on the processor path -
+  so the two render paths always agree with each other, and the default agrees
+  with what colour-grading tools and FFmpeg's lut3d filter mean by a lookup.
+
+      presenter.EffectInterpolation = LutInterpolation.Trilinear;   // 2 fetches
+      presenter.EffectInterpolation = LutInterpolation.Tetrahedral; // 4, default
+
+  Tetrahedral holds the neutral axis exactly - a grey the table leaves grey stays
+  grey - and costs four texture fetches a pixel. Trilinear is what a graphics
+  card's texture filter does natively and costs two. On a smooth composed grade
+  the two pictures differ by well under one level in 255; choose trilinear when
+  the per-pixel cost matters more than agreeing with a grading tool. Changing it
+  recomposes the chain. EffectComposer.Interpolation is the same setting seen
+  from the composer's side.
+
+  The composed grid always runs over 0 to 1, because that is the range a decoded
+  frame's colour arrives in; a table declaring some other domain is still
+  honoured, on the way in to its own lookup, where it belongs.
 
   A Lut3D's values are size*size*size triplets with RED changing fastest - the
   order ".cube" files use, so a parsed file's numbers go straight in.
@@ -365,12 +410,13 @@ COMPLETE EXAMPLES
 
     using CodeBrix.VideoPlayback.Skia.Effects;
 
-    presenter.Effects.Add(CubeLutFile.ReadFile("teal-and-orange.cube"));
-    presenter.Effects.Add(new LutEffect(Lut1D.CreateIdentity(256), "no-op"));
+    presenter.Effects.Add(LutEffect.FromCubeFile("teal-and-orange.cube"));
+    presenter.Effects.Add(LutEffect.FromCubeFile("film-stock.cube", 60));
 
     // The two are composed into ONE table at the next frame, and cost one
     // texture sample per pixel between them. Order matters: the second sees
-    // what the first produced.
+    // what the first produced. The second is applied at 60 percent - the grade
+    // dialled back, without re-exporting the file.
 
 6. Write an effect that is not a file.
 
@@ -651,9 +697,11 @@ Insist on the graphics device         RenderPath = VideoRenderPath.GpuNoFallback
 Force the processor                   RenderPath = VideoRenderPath.Cpu
 Ask what is running                   presenter.ActiveRenderPath
 Be told when it changes               presenter.RenderPathChanged
-Add a colour grade                    Effects.Add(CubeLutFile.ReadFile(path))
+Add a colour grade                    Effects.Add(LutEffect.FromCubeFile(path))
+Dial a grade back                     Effects.Add(LutEffect.FromCubeFile(path, 60))
 Add a grade of your own               Effects.Add(new LutEffect(new Lut3D(size, values)))
 Apply grades without a graphics card  AllowEffectsOnCpu = true
+Trade grade accuracy for speed        EffectInterpolation = LutInterpolation.Trilinear
 Ask whether grades are applied        presenter.EffectsActive
 See the composed grade                presenter.GetResultantLut()
 Draw over the video                   Layers.Add(myLayer) / Composing += handler
