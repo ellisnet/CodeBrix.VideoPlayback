@@ -17,9 +17,21 @@ namespace CodeBrix.VideoPlayback.Tests;
 /// package that supplies it - not with "unsupported".
 /// </summary>
 /// <remarks>
+/// <para>
 /// These messages are contractual. An application shows them to a developer who has to work out which NuGet
 /// package to add, and the words are the whole point.
+/// </para>
+/// <para>
+/// Every test here needs a PROCESS-WIDE registry to be in a particular state - the video decoder registry
+/// empty, and the Opus packet codec unregistered. <see cref="VideoDecodersTests" /> fills the video registry
+/// with factories serving 'av01' and clears it again, and the opt-in audible tests register the Opus packet
+/// codec for the rest of the process. Classes in different collections run in parallel, so all of them share
+/// the one collection: without it, an av01 file opened here can find one of those factories and succeed, and
+/// the refusal these tests are about never happens. That was a real intermittent failure, not a theoretical
+/// one.
+/// </para>
 /// </remarks>
+[Collection("Process-wide registries")]
 public class VideoPlaybackFailureTests
 {
     [Fact]

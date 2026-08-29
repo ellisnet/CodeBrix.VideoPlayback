@@ -96,6 +96,9 @@ public sealed class VideoPlaybackSession : IDisposable
 
     private TimeSpan clockBase;
     private TimeSpan audioClockCorrection;
+    private int audioTrailingTrimFrames;
+    private TimeSpan lastAudioDiscardPadding;
+    private bool audioTrailingTrimArmed;
     private TimeSpan duration;
     private long frameNumber;
     private int seekGeneration;
@@ -183,6 +186,37 @@ public sealed class VideoPlaybackSession : IDisposable
 
     /// <summary>The audio track being played, or null when the file has none or audio is switched off.</summary>
     public MediaTrackInfo AudioTrack => audioTrack;
+
+    /// <summary>
+    /// How much of the end of the audio track the audio player has been told to discard, for tests and
+    /// diagnostics. Zero when there is no audio player or the container states no trim.
+    /// </summary>
+    internal TimeSpan AudioTrailingTrim
+    {
+        get
+        {
+            PacketAudioPlayer player = audioPlayer;
+            return player == null ? TimeSpan.Zero : player.TrailingTrim;
+        }
+    }
+
+    /// <summary>
+    /// How much audio the packet player has actually handed to the device, for tests and diagnostics.
+    /// </summary>
+    /// <remarks>
+    /// This is the audio player's own clock, WITHOUT the pre-skip correction the session applies to
+    /// <see cref="Position" />, and it stops advancing once everything has been delivered - so read after the
+    /// sound has finished it is exactly how much audio was heard. Trimmed frames are never handed over, so
+    /// they never count towards it, which is what makes a trim measurable from outside.
+    /// </remarks>
+    internal TimeSpan AudioPlayerPosition
+    {
+        get
+        {
+            PacketAudioPlayer player = audioPlayer;
+            return player == null ? TimeSpan.Zero : player.Position;
+        }
+    }
 
     /// <summary>
     /// Things the container reader stepped over and thought worth mentioning - a subtitle format it cannot
@@ -749,6 +783,16 @@ public sealed class VideoPlaybackSession : IDisposable
     {
         if (audioTrack == null) return;
 
+        // ASK FIRST, AND ASK THE ONE THING THAT STARTS NOTHING. CreatePacketDecoder below opens the audio
+        // device, because the audio package's codec registry lives on the running engine - so a file whose
+        // codec has no decoder would otherwise open a device only to be refused a moment later. The probe
+        // reads the same registry without starting anything, which is what lets the refusal below be
+        // produced on a machine with no sound hardware at all.
+        if (!AudioDecoders.IsCodecSupported(audioTrack.CodecId))
+        {
+            throw new VideoPlaybackException(DescribeMissingAudioDecoder(audioTrack.CodecId));
+        }
+
         if (options.AudioSampleRate > 0)
         {
             try
@@ -768,6 +812,9 @@ public sealed class VideoPlaybackSession : IDisposable
         }
         catch (NotSupportedException ex)
         {
+            // The probe said the codec was served, so reaching here means the factory declined this
+            // particular track. The message is the same one, because the answer is the same: the package
+            // that can play it is not present.
             throw new VideoPlaybackException(DescribeMissingAudioDecoder(audioTrack.CodecId), ex);
         }
 
@@ -780,6 +827,88 @@ public sealed class VideoPlaybackSession : IDisposable
         audioClockCorrection = preSkip > 0 && rate > 0
             ? TimeSpan.FromTicks((long)preSkip * TimeSpan.TicksPerSecond / rate)
             : TimeSpan.Zero;
+
+        audioTrailingTrimFrames = ResolveTrailingTrimFrames(audioTrack, audioDecoder.SampleRate);
+        lastAudioDiscardPadding = TimeSpan.Zero;
+        audioTrailingTrimArmed = false;
+        ApplyContainerTrailingTrim();
+    }
+
+    /// <summary>
+    /// Converts a track header's trailing trim into the frames-per-channel the audio player counts in.
+    /// </summary>
+    /// <param name="track">The audio track.</param>
+    /// <param name="decoderSampleRate">The decoder's own output rate, or zero when it does not say.</param>
+    /// <returns>Frames per channel to discard from the very end of the track, or zero.</returns>
+    /// <remarks>
+    /// The bespoke container states the trim in samples per channel at the TRACK's rate, and the audio
+    /// player counts in frames per channel at the DECODER's rate. They are the same number for every codec
+    /// this library reads, because a packet codec decodes at the rate its own header declares - but the two
+    /// are different questions, so the conversion is done rather than assumed.
+    /// </remarks>
+    internal static int ResolveTrailingTrimFrames(MediaTrackInfo track, int decoderSampleRate)
+    {
+        if (track == null) return 0;
+
+        int frames = track.TrailingTrimSamples;
+        if (frames <= 0) return 0;
+
+        int trackRate = track.SampleRate;
+        if (decoderSampleRate <= 0 || trackRate <= 0 || decoderSampleRate == trackRate) return frames;
+
+        return (int)((long)frames * decoderSampleRate / trackRate);
+    }
+
+    /// <summary>
+    /// Gives the audio player the trim the CONTAINER states for the track, which is the exact instrument.
+    /// </summary>
+    /// <remarks>
+    /// The bespoke container states it once, in the track header, so it is known before a single packet has
+    /// been read and is applied here. Matroska states it per block instead, so there is nothing to apply
+    /// yet - the padding travels on the packets themselves and the track-level value is armed later, by
+    /// <see cref="ArmTrailingTrimFromLastAudioPacket" />, once the reader has proved which block was the
+    /// last. Setting zero is the audio player's untouched path, not a cost.
+    /// </remarks>
+    private void ApplyContainerTrailingTrim()
+    {
+        PacketAudioPlayer player = audioPlayer;
+        if (player == null) return;
+
+        if (audioTrailingTrimFrames > 0) player.SetTrailingTrimFrames(audioTrailingTrimFrames);
+        else player.SetTrailingTrim(TimeSpan.Zero);
+    }
+
+    /// <summary>
+    /// Applies the discard padding the container put on the audio track's LAST block, once the reader has
+    /// proved that block really was the last.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The padding of every audio packet is passed to the audio player on the packet itself, which is enough
+    /// whenever the padding is smaller than the packet it rides on - the player holds back the larger of the
+    /// track-level trim and the most recent packet's padding, so the value on the last packet is the one
+    /// still raised when the stream ends. That route is BEST-EFFORT, because a value is only learned when
+    /// its packet arrives and can therefore only hold back what is still in hand plus what that packet
+    /// decodes to.
+    /// </para>
+    /// <para>
+    /// So the same value is also set as the track-level trim here, which is exact: it applies from this
+    /// moment on and the demultiplexer is normally a queue's worth of packets ahead of the audio thread, so
+    /// it is armed well before the tail is decoded. It is only ever raised, never lowered, so a container
+    /// that stated an exact trim in its track header keeps it.
+    /// </para>
+    /// <para>Called on the demultiplexing thread only, which is also the only thread that records the value.</para>
+    /// </remarks>
+    private void ArmTrailingTrimFromLastAudioPacket()
+    {
+        if (audioTrailingTrimArmed) return;
+        audioTrailingTrimArmed = true;
+
+        PacketAudioPlayer player = audioPlayer;
+        if (player == null || lastAudioDiscardPadding <= TimeSpan.Zero) return;
+        if (lastAudioDiscardPadding <= player.TrailingTrim) return;
+
+        player.SetTrailingTrim(lastAudioDiscardPadding);
     }
 
     private void ChooseDefaultCaptionTrack()
@@ -837,6 +966,13 @@ public sealed class VideoPlaybackSession : IDisposable
                     videoSupplyFinished = false;
                     videoParking?.Clear();
                     audioParking?.Clear();
+
+                    // The end of the track moved, so a padding read off the block that used to be the last
+                    // one no longer says anything. The container's own trim - which belongs to the track
+                    // rather than to a position in it - is put back.
+                    lastAudioDiscardPadding = TimeSpan.Zero;
+                    audioTrailingTrimArmed = false;
+                    ApplyContainerTrailingTrim();
                 }
 
                 // Anything parked goes out FIRST, so a track's packets reach its queue in exactly the order
@@ -897,6 +1033,10 @@ public sealed class VideoPlaybackSession : IDisposable
                         audioSource.SetEndOfStream(false);
                         audioPlayer.Seek(packet.Timestamp, preRoll);
                     }
+
+                    // Remember what THIS packet said, padding or none, so that the value in hand when the
+                    // track is declared finished is the one on its last block and not on some earlier one.
+                    lastAudioDiscardPadding = packet.DiscardPadding;
 
                     Deliver(audioQueue, audioParking, packet, packet.DiscardPadding, generation);
                 }
@@ -972,6 +1112,11 @@ public sealed class VideoPlaybackSession : IDisposable
     {
         if (audioTrack != null && audioParkingEmpty && (audioTrackExhausted || demuxFinished))
         {
+            // The last block for this track has now been handed over, so its discard padding - if the
+            // container put one there - is the track's trailing trim. Arm it BEFORE the end of stream is
+            // published, because the player discards what it is holding the moment it hears the stream has
+            // ended.
+            ArmTrailingTrimFromLastAudioPacket();
             audioSource?.SetEndOfStream(true);
         }
 
@@ -1248,6 +1393,10 @@ public sealed class VideoPlaybackSession : IDisposable
 
         if (audioPlayer != null && !audioEnded)
         {
+            // The container's stated Duration is the OUTER BOUND, and it covers the picture as well as the
+            // sound. The encoder's tail padding is no longer cut here - the audio player trims it out of the
+            // audio itself, exactly, from the container's stated trim - so this is a backstop for a file
+            // whose sound simply runs past what it declared, not the trimming mechanism.
             if (duration > TimeSpan.Zero && now >= duration) return true;
             return false;
         }
@@ -1450,6 +1599,9 @@ public sealed class VideoPlaybackSession : IDisposable
         duration = TimeSpan.Zero;
         clockBase = TimeSpan.Zero;
         audioClockCorrection = TimeSpan.Zero;
+        audioTrailingTrimFrames = 0;
+        lastAudioDiscardPadding = TimeSpan.Zero;
+        audioTrailingTrimArmed = false;
         frameNumber = 0;
         demuxFinished = false;
         videoDrained = false;

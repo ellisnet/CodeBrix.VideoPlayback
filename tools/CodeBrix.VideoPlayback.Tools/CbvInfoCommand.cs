@@ -189,6 +189,14 @@ public static class CbvInfoCommand
                     if (track.SeekPreRoll > TimeSpan.Zero) Console.WriteLine($"       seek pre-roll {Format(track.SeekPreRoll)}");
                     if (track.PreSkipSamples > 0) Console.WriteLine($"       pre-skip      {track.PreSkipSamples} samples");
                     if (track.TrailingTrimSamples > 0) Console.WriteLine($"       trailing trim {track.TrailingTrimSamples} samples");
+
+                    // Asked, never started: AudioDecoders forwards to the shared audio output's non-starting
+                    // probe, so this line costs no audio device and this tool still runs on a machine that
+                    // has none.
+                    Console.WriteLine(
+                        "       decoder available: "
+                        + (AudioDecoders.IsCodecSupported(track.CodecId) ? "yes" : "no")
+                        + " (via the shared audio output)");
                     break;
 
                 case MediaTrackKind.Caption:

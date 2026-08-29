@@ -71,6 +71,11 @@ public static class SyntheticMedia
     /// <param name="audioOggPath">An Ogg file whose packets become the audio track, or null for no audio.</param>
     /// <param name="captions">Caption tracks to store in the header, or null for none.</param>
     /// <param name="chapters">Chapters to store in the header, or null for none.</param>
+    /// <param name="audioTrailingTrimSamples">
+    /// The trailing trim to record in the audio track's header, in samples per channel, or null to record
+    /// whatever the Ogg source itself reports. Ogg Vorbis reports none, so a test that wants a non-zero trim
+    /// states one here.
+    /// </param>
     /// <returns>The path that was written.</returns>
     public static string WriteRawCbv(
         string path,
@@ -79,7 +84,8 @@ public static class SyntheticMedia
         int keyFrameInterval = 10,
         string audioOggPath = null,
         IReadOnlyList<CaptionTrack> captions = null,
-        IReadOnlyList<Chapter> chapters = null)
+        IReadOnlyList<Chapter> chapters = null,
+        int? audioTrailingTrimSamples = null)
     {
         TimeSpan frameDuration = TimeSpan.FromSeconds(1.0 / frameRate);
 
@@ -124,7 +130,7 @@ public static class SyntheticMedia
                     audio.SampleRate,
                     audio.Channels,
                     audio.PreSkipSamples,
-                    audio.TrailingTrimSamples,
+                    audioTrailingTrimSamples ?? audio.TrailingTrimSamples,
                     TimeSpan.Zero,
                     string.Equals(audio.CodecId, VideoCodecIds.Opus, StringComparison.Ordinal)
                         ? TimeSpan.FromMilliseconds(80)

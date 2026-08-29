@@ -25,10 +25,12 @@ namespace CodeBrix.VideoPlayback.Tests;
 /// </para>
 /// <para>
 /// They run one at a time: the shared output is a process-wide singleton, and two sessions fighting over it
-/// tells you nothing.
+/// tells you nothing. They share their collection with every other class that depends on a process-wide
+/// registry, because these tests START the shared output and REGISTER the Opus packet codec for the rest of
+/// the process, and the tests that check a refusal need neither to have happened yet.
 /// </para>
 /// </remarks>
-[Collection("Shared audio output")]
+[Collection("Process-wide registries")]
 public class VideoPlaybackSessionAudioTests
 {
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(30);
@@ -275,6 +277,154 @@ public class VideoPlaybackSessionAudioTests
         session.Duration.Should().Be(TimeSpan.FromSeconds(3));
         reached.Should().BeGreaterThan(TimeSpan.FromSeconds(2.9));
         session.Notices.Should().NotContain(notice => notice.Contains("parking budget"));
+    }
+
+    [Fact]
+    public void A_bespoke_files_trailing_trim_is_applied_by_the_audio_engine_and_the_clip_still_ends_at_its_duration()
+    {
+        //Arrange - two seconds of picture over a second of sound, with a tenth of a second of the sound's own
+        // tail declared as encoder padding in the track header. The audio engine holds those frames back and
+        // discards them; the container's Duration is unchanged and is still the outer bound.
+        SkipUnlessAudioIsEnabled();
+        string path = SyntheticMedia.ScratchPath("audio-trailing-trim", "clip.cbv");
+        SyntheticMedia.WriteRawCbv(
+            path,
+            frameCount: 50,
+            frameRate: 25,
+            keyFrameInterval: 10,
+            audioOggPath: TestAssets.Path("vorbis-audio.ogg"),
+            audioTrailingTrimSamples: 4800);
+
+        using VideoPlaybackSession session = NewSession();
+        int ended = 0;
+        session.PlaybackEnded += (s, e) => ended++;
+
+        //Act
+        session.Open(path);
+        TimeSpan trimAtOpen = session.AudioTrailingTrim;
+        session.Play();
+        bool finished = WaitFor(() => session.State == VideoPlaybackState.Ended);
+        TimeSpan reached = session.Position;
+
+        //Assert - the trim reaches the player BEFORE anything is heard (the header states it, so the session
+        // does not have to wait for the last packet to learn it), and 4800 frames at 48 kHz is 100 ms.
+        trimAtOpen.Should().Be(TimeSpan.FromMilliseconds(100));
+        finished.Should().BeTrue();
+        ended.Should().Be(1);
+        session.Duration.Should().Be(TimeSpan.FromSeconds(2));
+        reached.Should().BeGreaterThan(TimeSpan.FromSeconds(1.9));
+    }
+
+    [Fact]
+    public void The_trimmed_frames_are_never_handed_to_the_device()
+    {
+        //Arrange - the same clip twice: once with a tenth of a second declared as encoder padding, once with
+        // none. What is measured is the audio player's own clock after the sound has finished, which counts
+        // only what actually reached the mixer.
+        SkipUnlessAudioIsEnabled();
+        string untrimmedPath = SyntheticMedia.ScratchPath("audio-untrimmed", "clip.cbv");
+        string trimmedPath = SyntheticMedia.ScratchPath("audio-trimmed", "clip.cbv");
+
+        SyntheticMedia.WriteRawCbv(
+            untrimmedPath,
+            frameCount: 50,
+            frameRate: 25,
+            keyFrameInterval: 10,
+            audioOggPath: TestAssets.Path("vorbis-audio.ogg"),
+            audioTrailingTrimSamples: 0);
+
+        SyntheticMedia.WriteRawCbv(
+            trimmedPath,
+            frameCount: 50,
+            frameRate: 25,
+            keyFrameInterval: 10,
+            audioOggPath: TestAssets.Path("vorbis-audio.ogg"),
+            audioTrailingTrimSamples: 4800);
+
+        //Act
+        TimeSpan untrimmed = PlayAndMeasureDeliveredAudio(untrimmedPath);
+        TimeSpan trimmed = PlayAndMeasureDeliveredAudio(trimmedPath);
+
+        //Assert - 4800 frames at 48 kHz is exactly 100 ms, and Vorbis has no pre-skip to complicate it. The
+        // millisecond of slack is the audio player's own rounding to a whole frame at the device rate.
+        TimeSpan difference = untrimmed - trimmed;
+        (difference >= TimeSpan.FromMilliseconds(99)).Should().BeTrue();
+        (difference <= TimeSpan.FromMilliseconds(101)).Should().BeTrue();
+    }
+
+    [Fact]
+    public void A_trim_longer_than_the_sound_leaves_nothing_to_hear_and_still_reaches_the_end()
+    {
+        //Arrange - the degenerate case, which is the one that would hang if the trim were applied by stopping
+        // the clock rather than by holding audio back: the whole sound track is padding.
+        SkipUnlessAudioIsEnabled();
+        string path = SyntheticMedia.ScratchPath("audio-trim-everything", "clip.cbv");
+        SyntheticMedia.WriteRawCbv(
+            path,
+            frameCount: 50,
+            frameRate: 25,
+            keyFrameInterval: 10,
+            audioOggPath: TestAssets.Path("vorbis-audio.ogg"),
+            audioTrailingTrimSamples: 480000);
+
+        using VideoPlaybackSession session = NewSession();
+        int ended = 0;
+        session.PlaybackEnded += (s, e) => ended++;
+
+        //Act
+        session.Open(path);
+        session.Play();
+        bool finished = WaitFor(() => session.State == VideoPlaybackState.Ended);
+
+        //Assert
+        session.AudioTrailingTrim.Should().Be(TimeSpan.FromSeconds(10));
+        finished.Should().BeTrue();
+        ended.Should().Be(1);
+        session.Duration.Should().Be(TimeSpan.FromSeconds(2));
+    }
+
+    [Fact]
+    public void A_matroska_files_discard_padding_becomes_the_tracks_trailing_trim()
+    {
+        //Arrange - Matroska states the trim on the LAST block rather than in the track header, so the session
+        // cannot know it in advance; it arms it the moment the reader proves that block was the last.
+        SkipUnlessAudioIsEnabled();
+        CodeBrixAudioOpus.Register();
+
+        string path = TestAssets.Path("raw-opus.mkv");
+
+        using VideoPlaybackSession session = NewSession();
+        int ended = 0;
+        session.PlaybackEnded += (s, e) => ended++;
+
+        //Act
+        session.Open(path);
+        session.Play();
+        bool finished = WaitFor(() => session.State == VideoPlaybackState.Ended);
+        TimeSpan trimAtEnd = session.AudioTrailingTrim;
+
+        //Assert - 13.5 ms is what the authoring tool wrote on the last Opus block of this file. The track
+        // header states nothing, which is pinned device-free by
+        // AudioTrailingTrimTests.A_matroska_file_states_its_trim_as_discard_padding_on_the_last_block_of_the_track;
+        // there is deliberately no assertion here about the trim at Open, because this file is half a second
+        // long and the demultiplexing thread can reach its end before Open has even returned.
+        trimAtEnd.Should().Be(TimeSpan.FromTicks(135_000));
+        finished.Should().BeTrue();
+        ended.Should().Be(1);
+    }
+
+    /// <summary>
+    /// Plays a clip to its end and reports how much audio the packet player actually handed to the device.
+    /// </summary>
+    /// <param name="path">The clip to play.</param>
+    /// <returns>The audio player's own position once the sound has finished.</returns>
+    private static TimeSpan PlayAndMeasureDeliveredAudio(string path)
+    {
+        using VideoPlaybackSession session = NewSession();
+        session.Open(path);
+        session.Play();
+        WaitFor(() => session.State == VideoPlaybackState.Ended);
+        return session.AudioPlayerPosition;
     }
 
     private static VideoPlaybackSession NewSession()

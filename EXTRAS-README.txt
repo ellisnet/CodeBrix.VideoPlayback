@@ -34,6 +34,16 @@ For an AV1 track it also parses the av1C record and prints the sequence header's
 own view of the stream, which is the quickest way to see whether a file's
 container metadata and its bitstream agree.
 
+For an AUDIO track it adds one line saying whether anything in this process could
+actually decode it:
+
+    decoder available: yes (via the shared audio output)
+
+That is asked with AudioDecoders.IsCodecSupported, which reads CodeBrix.Audio's
+packet-codec registry WITHOUT starting the shared output, so cbvinfo still opens
+no audio device and still runs on a machine with no sound card. An Opus track
+reads "no" unless the tool's host has called CodeBrixAudioOpus.Register().
+
 It finishes with the streamable profile report - the rules a file must meet to
 open instantly over a network:
 

@@ -44,6 +44,15 @@ naming the package to add. Nothing is guessed at and nothing is reflected on.
   video "raw"      uncompressed video: no decoder ships for it either (it is a
                    test and diagnostics codec)
 
+ASKING IN ADVANCE, WITHOUT OPENING ANYTHING. Both questions can be asked before
+a file is opened, and neither starts a decoder, a device or a thread:
+
+    VideoDecoders.IsCodecSupported("av01")     // the process-wide video registry
+    AudioDecoders.IsCodecSupported("opus")     // the shared audio output
+
+That is what a file browser or a preflight check wants, and it is what makes a
+headless run honest: the audio question no longer needs a sound card to answer.
+
 
 INSTALLATION
 ============
@@ -222,6 +231,17 @@ Decoder registration (…Decoding)
     VideoDecoders.RegisteredFactories                        // highest priority first
     session.RegisterDecoderFactory(factory)                  // this session only, tried first
     VideoCodecIds.Av1 / Opus / Vorbis / WebVtt / SubRip / Ass / Raw
+
+    AudioDecoders.IsCodecSupported("opus")                   // asks, starts NOTHING
+    AudioDecoders.SupportedCodecIds                          // asks, starts NOTHING
+
+Audio decoders are not registered here - they live on CodeBrix.Audio's shared
+output, where Vorbis is built in and Opus arrives with CodeBrixAudioOpus.Register().
+AudioDecoders only ASKS, and asking opens no audio device, so a session built with
+PlayAudio = false, a thumbnail extractor or a machine with no sound hardware can
+still say "this file needs the Opus package". Building a decoder - which is what
+happens when a session really is going to play sound - DOES open the device, so
+never use that as the question.
 
 Containers, for reading a file without playing it
 --------------------------------------------------
@@ -473,6 +493,15 @@ example 1.
 
 PERFORMANCE TIPS
 ================
+- THE ENCODER'S TAIL PADDING IS TRIMMED FOR YOU, AND YOU NEED DO NOTHING. Every
+  encoder pads the end of what it encodes, and the CONTAINER records how much: a
+  .cbv track header states it once, Matroska states it as a DiscardPadding on
+  the track's last block. The session passes both to CodeBrix.Audio - the block
+  value on the packet itself, and the track-level value through
+  PacketAudioPlayer.SetTrailingTrim - so those frames are held back and never
+  reach the mixer. A file whose container states no padding is played whole,
+  which is also correct.
+
 - CALL SharedAudioOutput.Configure(48000) AT START-UP. Media carries 48 kHz, it
   is the only rate Opus decodes at, and when the device runs at the media's rate
   no rate conversion happens at all. An application that has already played a
@@ -629,6 +658,8 @@ list chapters                         session.Chapters; session.TitleFor(chapter
 jump a chapter                        session.NextChapter() / SeekToChapter(i)
 play AV1                              VideoDecoders.Register(<decoder package factory>)
 play Opus                             CodeBrixAudioOpus.Register()
+ask whether a codec is playable       VideoDecoders.IsCodecSupported("av01")
+  (without opening anything)          AudioDecoders.IsCodecSupported("opus")
 avoid rate conversion                 SharedAudioOutput.Configure(48000) at start-up
 inspect a file without playing        new MatroskaReader(source) / new CbvReader(source)
 author a .cbv                         CbvAuthoring.Write(request)
@@ -642,11 +673,12 @@ Signatures worth memorising:
     VideoFrame VideoFrame.Retain()
     void  VideoFrameConverter.ToBgra32(VideoFrame frame, Span<byte> destination, int stride)
     void  VideoDecoders.Register(IVideoDecoderFactory factory)
+    bool  AudioDecoders.IsCodecSupported(string codecId)
     CbvAuthoringResult CbvAuthoring.Write(CbvAuthoringRequest request)
     bool  IMediaContainerReader.TryReadPacket(out MediaPacket packet)
     bool  IMediaContainerReader.IsTrackExhausted(int trackId)
 
-Eight rules:
+Nine rules:
 
   1. Register the decoder packages your files need; failures name what is missing.
   2. Call SharedAudioOutput.Configure(48000) before the first sound.
@@ -656,4 +688,6 @@ Eight rules:
   6. Check CanSeek before offering a scrubber.
   7. Watch the pool's Allocations and the presenter's Late count, not the frame rate.
   8. A "notice" is information, not a failure.
+  9. To ASK whether a codec can be played, use IsCodecSupported - never build a
+     decoder to find out, because building an audio one opens the device.
 ================================================================================

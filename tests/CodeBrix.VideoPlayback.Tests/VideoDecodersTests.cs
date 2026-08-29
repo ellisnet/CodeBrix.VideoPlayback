@@ -13,11 +13,13 @@ namespace CodeBrix.VideoPlayback.Tests;
 /// first, a factory that declines lets the next one try, and a factory that throws does not end the search.
 /// </summary>
 /// <remarks>
-/// The registry is process-wide, so every test here clears it first and clears it again afterwards. That is
-/// safe because nothing else in the suite registers a process-wide video decoder - sessions get theirs
-/// through <see cref="VideoPlaybackSession.RegisterDecoderFactory" /> instead.
+/// The registry is process-wide, so every test here clears it first and clears it again afterwards. Nothing
+/// else in the suite REGISTERS a process-wide video decoder - sessions get theirs through
+/// <see cref="VideoPlaybackSession.RegisterDecoderFactory" /> instead - but
+/// <see cref="VideoPlaybackFailureTests" /> READS the registry and needs it empty, so every class that
+/// depends on a process-wide registry shares the one collection and none of them run at the same time.
 /// </remarks>
-[Collection("VideoDecoders registry")]
+[Collection("Process-wide registries")]
 public class VideoDecodersTests : IDisposable
 {
     public VideoDecodersTests() => VideoDecoders.Clear();

@@ -18,6 +18,25 @@ namespace CodeBrix.VideoPlayback.Audio;
 /// ready this instant": the player fills the gap with silence and keeps the voice alive, ready for the packets
 /// that follow.
 /// </para>
+/// <para>
+/// Every packet carries the container's per-block discard padding through
+/// <see cref="AudioPacket.DiscardPadding" />. The audio player applies the LARGER of that and the track-level
+/// trim the session set with <c>SetTrailingTrim</c>, so a container that states its padding per block and one
+/// that states it once in a track header are both honoured. The per-packet value is best-effort - it can only
+/// hold back what is still in the player's hand plus what that packet decodes to - which is why the session
+/// also sets the track-level trim, the exact instrument. See the audio package's AGENT-README, TRIMMING THE
+/// END OF A TRACK.
+/// </para>
+/// <para>
+/// <b>The loss seam.</b> A file source never loses a packet: a byte range either reads or throws, so nothing
+/// here ever produces <see cref="AudioPacket.Loss(System.TimeSpan, System.Nullable{System.TimeSpan})" />. A
+/// future source that CAN see a gap - a live stream, a lossy transport - reports it by handing the player a
+/// loss packet of the gap's own length, and the decoder conceals it when its
+/// <c>SupportsLossConcealment</c> says it can and the player fills the rest with silence. Either way the gap
+/// comes out the length it really was, so the audio after it keeps its position. A moment when this session's
+/// reader has merely not kept up is NOT a loss: it is the false-with-no-end-of-stream answer above, which
+/// consumes none of the timeline.
+/// </para>
 /// </remarks>
 internal sealed class SessionAudioPacketSource : IAudioPacketSource
 {
@@ -54,7 +73,10 @@ internal sealed class SessionAudioPacketSource : IAudioPacketSource
         }
 
         holding = true;
-        packet = new AudioPacket(queued.Data, queued.Timestamp);
+
+        // A struct, built from values the ring already holds - no allocation on the audio thread, which is
+        // the whole point of the ring sitting between the two.
+        packet = new AudioPacket(queued.Data, queued.Timestamp, queued.DiscardPadding);
         return true;
     }
 

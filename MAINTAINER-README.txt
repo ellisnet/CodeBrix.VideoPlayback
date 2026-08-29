@@ -102,6 +102,32 @@ Run one class at a time with `--filter-class "CodeBrix.VideoPlayback.Tests.<Name
 Passing several class names separated by a bar reports "zero tests ran" on this
 SDK; run them one at a time or run the whole suite.
 
+THE "Process-wide registries" COLLECTION. Four classes share it and therefore
+never run at the same time: VideoDecodersTests (which REGISTERS process-wide video
+factories serving 'av01' and clears the registry), VideoPlaybackFailureTests and
+AudioDecoderProbeTests (which READ those registries and need them empty), and
+VideoPlaybackSessionAudioTests (which starts the shared audio output and registers
+the Opus packet codec for the rest of the process). Without that, an av01 file
+opened by a refusal test could find one of the fake factories and open
+successfully, and the refusal being tested never happens - a real intermittent
+failure, seen and fixed here, not a theoretical one.
+
+One consequence, and it is honest rather than hidden: in the opt-in run, whichever
+of the Opus-refusal tests happens to be scheduled after the audible tests SKIPS,
+because once CodeBrixAudioOpus.Register() has run the missing-decoder path cannot
+be reached in that process. Both of those tests run in full in the default,
+device-free run.
+
+THE TEST PROJECT'S OPUS PIN. tests/CodeBrix.VideoPlayback.Tests references
+CodeBrix.Audio.Opus.BsdLicenseForever so the Opus path can be proved once an
+application registers it; the LIBRARY never does. Bumping that pin is OPTIONAL. A
+newer Opus package overrides IPacketSoundDecoder.ConcealLoss and reports
+SupportsLossConcealment true, which would let a packet-loss gap be concealed by
+real Opus PLC rather than filled with silence - but nothing in THIS library ever
+reports a loss (see REPORTED PACKET LOSS above), so bumping it changes nothing that
+these tests can observe. Bump it when a streaming source lands, or simply to keep
+the corpus current.
+
 The suite depends on the golden corpus under tests/assets. When it is missing,
 the tests that need it SKIP rather than fail - see EXTRAS-README.txt for how to
 regenerate it.
@@ -287,14 +313,108 @@ imperfect. Measured elsewhere in the family: 80 ms of pre-roll leaves about 7 pe
 cent relative error on a pure sweep, 240 ms leaves none. A player that wants a
 seek to be inaudible should land further back.
 
-KNOWN GAP: Matroska's DiscardPadding - the trim on the LAST packet of a track -
-cannot be applied through the audio package's public surface today. There is no
-per-packet trim on PacketAudioPlayer and no Drain on IPacketSoundDecoder. The
-session works around it by ending playback when the clock reaches the container's
-stated Duration, which cuts the encoder's tail padding at the right moment. A
-`PacketAudioPlayer.SetTrailingTrim(TimeSpan)` or a `DiscardPadding` field on
-AudioPacket would let it be exact; that is an addition for the audio package, not
-a change here.
+TRAILING TRIM: THE ENCODER'S TAIL PADDING, AND WHO CUTS IT.
+The audio package grew both of the shapes this library asked for, and the session
+now uses both. There is no workaround here any more: the padding is trimmed out of
+the AUDIO, by the audio engine, rather than being hidden by stopping the clock.
+
+  BESPOKE .cbv - EXACT, AND KNOWN BEFORE A PACKET IS READ.
+  The track header carries trailing_trim_samples, in samples per channel at the
+  track's rate. CreateAudioPlayer converts it to frames at the DECODER's rate
+  (VideoPlaybackSession.ResolveTrailingTrimFrames - the same number for every
+  codec we read, but they are different questions) and calls
+  PacketAudioPlayer.SetTrailingTrimFrames before Open. The frames form is the
+  exact instrument: it applies from the first sample, so the whole trim is
+  honoured however large it is.
+
+  MATROSKA - PER BLOCK, THEN ARMED WHEN THE LAST BLOCK IS KNOWN.
+  Nothing in a Matroska track header says where the sound stops; the padding is a
+  DiscardPadding on the last block of the track. Two routes carry it, and both are
+  used:
+    * every audio packet's padding travels on the packet, through the
+      AudioPacket(data, timestamp, discardPadding) constructor in
+      SessionAudioPacketSource. The audio player holds back the LARGER of the
+      track-level trim and the padding of the most recent packet, so the value on
+      the last block is the one still raised when the stream ends. This route is
+      BEST-EFFORT: a value is only learned when its packet arrives, so it can hold
+      back only what is still in the player's hand plus what that packet decodes
+      to. A padding bigger than one packet is therefore not fully honoured by this
+      route alone.
+    * so the same value is ALSO set as the track-level trim, which is exact.
+      ArmTrailingTrimFromLastAudioPacket does it from PublishTrackExhaustion, at
+      the moment the reader proves the track is finished and before the end of
+      stream is published - the demultiplexer is normally a whole queue ahead of
+      the audio thread, so the trim is in place well before the tail is decoded.
+      It is only ever RAISED, never lowered, so a .cbv's exact header value is
+      never clobbered by a stray block padding.
+  A seek puts it back: the demultiplexing loop notices the generation change,
+  forgets the padding it had seen and re-applies the container's own trim, because
+  the end of the track has moved and a padding read off the block that used to be
+  the last one says nothing about the new one.
+
+  THE DURATION STOP IS STILL THERE, AS THE OUTER BOUND, and it is correct: it
+  covers the PICTURE as well as the sound, and it is what stops a file whose media
+  runs past what it declared. It is no longer the trimming mechanism, and
+  HasReachedEnd says so in a comment.
+
+  ALLOCATION. The per-packet route allocates nothing - AudioPacket is a struct
+  built from values PacketRing already holds. SetTrailingTrimFrames allocates the
+  audio package's hold-back ring once, on the calling thread (Open's, or the
+  demultiplexing thread's), never on the audio thread. The steady state is
+  unchanged.
+
+  TESTS. Device-free: AudioTrailingTrimTests (the .cbv header round-trip, the
+  frames conversion including a mismatched decoder rate, the Matroska last-block
+  fact, the packet source carrying the padding, and a trimmed clip still playing to
+  its Duration). Audible, opt-in: VideoPlaybackSessionAudioTests - a .cbv whose
+  header states 4800 frames (100 ms) reaching the player before anything is heard,
+  a trim longer than the whole sound track still reaching the end, and
+  raw-opus.mkv's 13.5 ms last-block padding becoming the track's trim.
+
+ASKING WHETHER AN AUDIO CODEC CAN BE PLAYED, WITHOUT OPENING A DEVICE.
+SharedAudioOutput.CreatePacketDecoder starts the shared output - the codec registry
+lives on the running engine - so it must never be used as a QUESTION. The audio
+package's SharedAudioOutput.IsPacketCodecSupported answers without starting
+anything, and CodeBrix.VideoPlayback.Decoding.AudioDecoders is the thin forwarder
+this library exposes so a consumer does not have to reach past it into the audio
+package.
+
+  CreateAudioPlayer asks it FIRST and throws the contractual missing-decoder
+  message before Configure or CreatePacketDecoder is reached, so the whole refusal
+  path is device-free. The try/catch around CreatePacketDecoder stays as a
+  backstop: the probe answers for the seam, and a factory can still decline one
+  particular track's codec-private data.
+
+  cbvinfo prints "decoder available: yes/no (via the shared audio output)" for
+  every audio track, which is why that tool still runs on a machine with no sound
+  card.
+
+  Phase B1's G2 caveat - "a device-free test of the missing-Opus-decoder message
+  cannot exist" - is WITHDRAWN. AudioDecoderProbeTests contains exactly that test,
+  and it watches SharedAudioOutput.IsRunning across the call to prove no device was
+  opened.
+
+REPORTED PACKET LOSS: A SEAM, NOT A FEATURE, TODAY.
+A file source cannot lose a packet - a byte range either reads or throws - so
+nothing in this library ever produces AudioPacket.Loss, and the audio player never
+sees one from here. The seam is documented because a future source CAN see a gap: a
+live stream, or a lossy transport behind a custom IMediaSource. Such a source
+reports the gap's LENGTH with AudioPacket.Loss(TimeSpan) or Loss(int frames), the
+decoder conceals it when its IPacketSoundDecoder.SupportsLossConcealment says it
+can, and the player fills whatever the decoder cannot with silence - so the gap
+always comes out the length it really was and the audio after it keeps its
+position. What must NOT be reported as a loss is an underrun: a moment when the
+demultiplexer has not kept up is TryReadPacket returning false with EndOfStream
+still false, which consumes none of the timeline. SessionAudioPacketSource's own
+documentation says both.
+
+  CHECKED, NOT ASSUMED: nothing in the session's audio path would mishandle a loss
+  packet if one ever appeared. AudioPacket is a readonly struct that carries the
+  loss members itself, PacketRing stores a zero-length payload without complaint,
+  and SessionAudioPacketSource only ever constructs the ordinary three-argument
+  form. AudioTrailingTrimTests pins all of that
+  (The_audio_packet_source_never_reports_a_loss and
+  A_loss_packet_from_a_future_source_would_travel_the_queue_intact).
 
 HTTP behaviour
 --------------
