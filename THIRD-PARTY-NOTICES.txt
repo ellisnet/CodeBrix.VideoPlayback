@@ -1,0 +1,22 @@
+THIRD-PARTY SOFTWARE NOTICES AND INFORMATION
+
+CodeBrix.VideoPlayback is a video playback library for .NET: it reads WebM/MKV
+and .cbv containers carrying AV1 video with Opus or Vorbis audio, exposes a
+codec-neutral decoder seam, and presents frames through a Skia companion
+package. CodeBrix.VideoPlayback does not incorporate any third-party source
+code into its own assemblies: its container readers are written from the
+published specifications (RFC 8794, RFC 9559, the WebM Container Guidelines
+and the AV1/Opus/Vorbis-in-Matroska mappings).
+
+Jeremy Ellis and contributors license the CodeBrix.VideoPlayback project
+to you under the terms set forth in the LICENSE file, which is located at
+the root of this repository.
+
+If you have any questions about any third-party code or services referenced
+here, or if you believe that any third-party code has been included in
+CodeBrix.VideoPlayback in error, please open a new issue at:
+https://github.com/ellisnet/CodeBrix.VideoPlayback/issues
+
+================================================================================
+
+END OF THIRD-PARTY SOFTWARE NOTICES AND INFORMATION
