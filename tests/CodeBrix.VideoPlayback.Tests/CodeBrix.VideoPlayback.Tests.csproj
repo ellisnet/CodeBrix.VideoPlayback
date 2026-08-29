@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.9.0" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="4.0.0">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="xunit.v3" Version="4.0.0" />
+    <PackageReference Include="SilverAssertions.ApacheLicenseForever" Version="1.0.237.1200" />
+    <!--
+      The TEST project may reference the Opus package - it proves the Opus path works once an
+      application registers it. The LIBRARY never does; see MAINTAINER-README.txt.
+    -->
+    <PackageReference Include="CodeBrix.Audio.Opus.BsdLicenseForever" Version="1.0.241.98" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\CodeBrix.VideoPlayback\CodeBrix.VideoPlayback.csproj" />
+  </ItemGroup>
+
+  <!--
+    Golden container assets live under tests/assets and are copied next to the test assembly.
+    They are generated locally by tests/assets/generate-assets.sh from FFmpeg's synthetic lavfi
+    sources - see tests/assets/ASSETS.txt - never third-party media.
+  -->
+  <ItemGroup>
+    <Content Include="..\assets\*.webm;..\assets\*.mkv;..\assets\*.cbv;..\assets\*.json;..\assets\*.vtt;..\assets\*.srt;..\assets\*.ffmeta;..\assets\*.ivf;..\assets\*.ogg;..\assets\*.opus;..\assets\*.txt">
+      <Link>assets\%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+</Project>

@@ -1,12 +1,84 @@
 THIRD-PARTY SOFTWARE NOTICES AND INFORMATION
 
-CodeBrix.VideoPlayback is a video playback library for .NET: it reads WebM/MKV
-and .cbv containers carrying AV1 video with Opus or Vorbis audio, exposes a
-codec-neutral decoder seam, and presents frames through a Skia companion
-package. CodeBrix.VideoPlayback does not incorporate any third-party source
-code into its own assemblies: its container readers are written from the
-published specifications (RFC 8794, RFC 9559, the WebM Container Guidelines
-and the AV1/Opus/Vorbis-in-Matroska mappings).
+CodeBrix.VideoPlayback is a video playback library for .NET: it reads WebM,
+Matroska and .cbv containers carrying AV1 video with Opus or Vorbis audio,
+exposes a codec-neutral decoder seam, pools decoded frames, presents them to
+whatever draws, and converts them to BGRA on the CPU when no graphics device is
+doing it. This repository also produces CodeBrix.VideoPlayback.Skia, which draws
+those frames through SkiaSharp.
+
+NEITHER ASSEMBLY THIS REPOSITORY PRODUCES INCORPORATES ANY THIRD-PARTY SOURCE
+CODE. Nothing is vendored, ported or adapted. Every line of both was written for
+this repository from the published specifications listed below, and no other
+implementation of any of these formats was read while writing them.
+
+The specifications used, all of them public documents:
+
+  RFC 8794     Extensible Binary Meta Language (EBML)
+  RFC 9559     Matroska Media Container Format Specifications
+  RFC 3533     The Ogg Encapsulation Format Version 0
+  RFC 7845     Ogg Encapsulation for the Opus Audio Codec
+               (the identification header, the pre-skip field and the granule
+               position's meaning)
+  ISO/IEC 23091-2  Coding-independent code points - video
+               (the colour primaries, transfer characteristics and matrix
+               coefficient values, which are the numbers on the wire)
+  ITU-T H.273  Coding-independent code points, the ITU text of the same
+               material - the definitions of chroma sample siting the CPU
+               converter and the shader both implement
+  AV1 Bitstream & Decoding Process Specification, Alliance for Open Media
+               (the open bitstream unit framing and the sequence header only -
+               nothing about decoding)
+  AV1 Codec ISO Media File Format Binding, Alliance for Open Media
+               (the AV1CodecConfigurationRecord, "av1C")
+  WebM Container Guidelines, the WebM Project
+  AV1 in Matroska / WebM, Opus in Matroska and Vorbis in Matroska - the codec
+               mapping documents for the three codecs this library carries
+  Vorbis I specification, Xiph.Org Foundation
+               (the identification header's fields and the Xiph lacing of the
+               three setup headers)
+  IVF: the simple frame container written by the libvpx and AV1 encoding tools,
+               as documented publicly alongside them
+
+The uncompressed video format this library defines for its own test and
+diagnostics use is described in CBV-FORMAT.txt and in the XML documentation of
+CodeBrix.VideoPlayback.Codecs.RawVideoFormat. The bespoke ".cbv" container is
+likewise this project's own design, documented in full in CBV-FORMAT.txt.
+
+The one NuGet package CodeBrix.VideoPlayback depends on,
+CodeBrix.Audio.MitLicenseForever, is MIT-licensed and carries its own
+third-party notices.
+
+CodeBrix.VideoPlayback.Skia, the presenter package this repository also
+produces, depends on CodeBrix.VideoPlayback and on SkiaSharp (MIT), which is
+Mono's managed binding to Google's Skia graphics library (BSD-3-Clause). BOTH
+ARE PACKAGE DEPENDENCIES AND NEITHER IS INCORPORATED: no Skia or SkiaSharp
+source is vendored, ported or adapted into this repository, and each package
+ships its own licence and notices. CodeBrix.VideoPlayback.Skia deliberately does
+NOT depend on any SkiaSharp.NativeAssets package; an application chooses the
+native binary that suits the platforms it ships on.
+
+The test projects additionally reference CodeBrix.Audio.Opus.BsdLicenseForever
+(BSD-3-Clause) and SilverAssertions.ApacheLicenseForever (Apache-2.0) so that the
+Opus playback path can be proved to work once an application registers it, and
+SkiaSharp.NativeAssets.Linux (MIT) so that Skia actually runs on the machine the
+tests run on. The consumer-shape sample under samples/ references the same native
+asset package, because it is an application. None of the three is a dependency of
+either shipped package.
+
+CodeBrix.VideoPlayback.Skia contains no ported or adapted shader, atlas layout or
+colour-conversion code either: its SkSL shader, its lookup-table atlas and its
+render paths were written for this repository from ITU-T H.273 and ISO/IEC
+23091-2, from SkiaSharp's public API documentation, and from the same
+specifications the core converter was written from.
+
+The media files committed under tests/assets were generated on the development
+machine from FFmpeg's own synthetic sources (testsrc2, sine, anoisesrc) and
+remuxed with mkvtoolnix. They contain no third-party recorded material of any
+kind. tests/assets/ASSETS.txt records exactly how each one was made. Neither
+FFmpeg nor mkvtoolnix is a dependency of this library, of its tests, or of any
+application using it: the files they produced are committed, and the scripts that
+regenerate them are a maintainer's convenience.
 
 Jeremy Ellis and contributors license the CodeBrix.VideoPlayback project
 to you under the terms set forth in the LICENSE file, which is located at

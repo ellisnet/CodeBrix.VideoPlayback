@@ -1,0 +1,15 @@
+1
+00:00:00,000 --> 00:00:00,250
+Bar pattern, top left.
+
+2
+00:00:00,250 --> 00:00:00,500
+Colour ramp sweeps right.
+
+3
+00:00:00,500 --> 00:00:00,750
+Timecode digits roll over.
+
+4
+00:00:00,750 --> 00:00:01,000
+End of the synthetic clip.

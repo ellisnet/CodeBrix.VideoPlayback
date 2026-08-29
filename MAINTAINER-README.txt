@@ -10,52 +10,593 @@ in this file is needed to use the package.
 
 PURPOSE AND SCOPE
 =================
-This repository will produce one NuGet package:
+This repository produces TWO NuGet packages:
 
   CodeBrix.VideoPlayback.MitLicenseForever
       License:       MIT
       Consumer doc:  AGENT-README.txt (repo root)
+      Dependency:    CodeBrix.Audio.MitLicenseForever, and nothing else
 
-Video playback for .NET: WebM/MKV and .cbv containers carrying AV1 video with Opus or Vorbis audio, a codec-neutral decoder seam, and a Skia presenter companion package.
+  CodeBrix.VideoPlayback.Skia.MitLicenseForever
+      License:       MIT
+      Consumer doc:  src/CodeBrix.VideoPlayback.Skia/AGENT-README.txt
+      Dependencies:  CodeBrix.VideoPlayback.MitLicenseForever (same version) and
+                     plain SkiaSharp, and nothing else
 
-STATUS (2026-08-28): repository created; the library source has not been
-scaffolded yet. The standard repository files (this file, EXTRAS-README.txt,
-README-INDEX.txt, AGENT-README.txt, the eight AI-agent pointer stubs,
-icon-codebrix-128.png, global.json, THIRD-PARTY-NOTICES.txt) are in place so
-the scaffold lands into a repository that already follows the family
-conventions.
+The first is the Skia-free core of a video-playback family: containers, a
+playback session, a frame-buffer pool, a frame presenter, a CPU colour converter
+and an authoring muxer. It contains no video codec and no drawing surface, on
+purpose.
 
-PLANNED PACKAGES IN THIS REPOSITORY: the core package above, a Skia presenter
-companion (CodeBrix.VideoPlayback.Skia.MitLicenseForever) and a .cbv authoring
-package that drives FFmpeg through CodeBrix.VideoProcessing; the core never
-references Skia, FFmpeg, or the Opus/AV1 codec packages.
+The second draws what the first decodes, and is THE ONE SANCTIONED EXCEPTION to
+the family's "no Skia outside the platform library" rule. It is a separate
+package precisely so that the rule holds everywhere else: an application that
+draws frames itself, or on a platform Skia does not reach, takes the core alone.
+
+Both projects carry the SAME date-stamped version block, so one pack run stamps
+both with one version and the dependency the presenter declares on the core is
+that same number. They are published together.
+
+Planned siblings, elsewhere:
+
+  an AV1 decoder package                          a separate repository, with a
+      different licence and native binaries. It implements this library's
+      IVideoDecoderFactory / IVideoDecoder and registers itself.
+  a platform video-player element                 a separate repository, built on
+      the Skia presenter.
+
+
+HARD RULES FOR THIS REPOSITORY
+==============================
+1. THE CORE REFERENCES CodeBrix.Audio.MitLicenseForever AND NOTHING ELSE. Not
+   the Opus package, not a codec package, not SkiaSharp, not any drawing library.
+   The test project may reference the Opus package - and does, to prove the Opus
+   path works once an application registers it - but the library must not.
+1a. THE PRESENTER REFERENCES THE CORE AND PLAIN SkiaSharp, AND NOTHING ELSE.
+   Never SkiaSharp.Views.*, never a windowing toolkit, and NEVER a
+   SkiaSharp.NativeAssets.* package: the application picks the native asset that
+   suits the platforms it ships on, and a library that picks one for it breaks
+   every other platform. The Skia test project and the sample DO reference
+   SkiaSharp.NativeAssets.Linux, because they are things that run here.
+2. NO CODEC. There is no video decoding in src/. The uncompressed "raw" codec is
+   a FORMAT (RawVideoFormat) in the library; its DECODER lives with the tests and
+   is linked into the tools project.
+3. NRT IS OFF. No `?` on a reference type anywhere, and no `!` operator. Nullable
+   value types are fine.
+4. XML DOC COMMENTS ON EVERY PUBLIC MEMBER. CS1591 is fixed at source, never
+   suppressed, and no <NoWarn> is ever added. Release must build with zero
+   warnings.
+5. CLEAN-ROOM CONTAINERS. The EBML, Matroska, Ogg, IVF and AV1 readers are
+   written from published specifications only. No code from any other
+   implementation has been read or copied. See THIRD-PARTY-NOTICES.txt, which
+   says so and must stay true.
+6. NOTHING PER FRAME IN THE STEADY STATE. The demultiplexer, the packet queues,
+   the frame pool, the presenter and the converter all allocate nothing once
+   playback is warm, and there are tests that fail if that stops being true.
+
 
 BUILDING
 ========
-Nothing to build yet. When the scaffold lands: dotnet build <solution>.slnx.
+    dotnet build CodeBrix.VideoPlayback.slnx -c Release
+
+Five projects: the two libraries, their two test projects, the headless tools,
+and the consumer-shape sample. `global.json` selects the
+Microsoft.Testing.Platform runner, matching the rest of the family.
+
+The tools project and the sample set AllowUnsafeBlocks because the uncompressed
+decoder they link in writes through plane pointers. Both libraries set it for the
+same reason - the converter and the plane uploads work in pointers throughout.
+
 
 TESTING
 =======
-Nothing to test yet. global.json already selects the Microsoft.Testing.Platform
-runner (xunit.v3), matching the rest of the family.
+    dotnet test CodeBrix.VideoPlayback.slnx -c Release
+
+Two suites are opt-in, and both are skipped by default:
+
+    CODEBRIX_AUDIO_RUN_PLAYBACK_TESTS=1      opens the audio device and makes a
+                                             noise (VideoPlaybackSessionAudioTests)
+    CODEBRIX_VIDEOPLAYBACK_RUN_BENCHMARKS=1  runs the colour-conversion benchmark
+
+Run one class at a time with `--filter-class "CodeBrix.VideoPlayback.Tests.<Name>"`.
+Passing several class names separated by a bar reports "zero tests ran" on this
+SDK; run them one at a time or run the whole suite.
+
+The suite depends on the golden corpus under tests/assets. When it is missing,
+the tests that need it SKIP rather than fail - see EXTRAS-README.txt for how to
+regenerate it.
+
+The Skia suite is a second test project, tests/CodeBrix.VideoPlayback.Skia.Tests.
+It references SkiaSharp.NativeAssets.Linux so that Skia actually runs here, and
+its graphics-path tests use a headless surfaceless-EGL context (see P9 below).
+Where no such context can be had they skip themselves and name the reason; the
+shader itself is still measured against the core converter on Skia's raster
+backend, which works everywhere.
+
 
 PACKAGING / PUBLISHING
 ======================
-Jeremy packs and publishes; the package id and license are fixed above. The
-csproj will pack AGENT-README.txt, README.md, icon-codebrix-128.png, LICENSE
-and THIRD-PARTY-NOTICES.txt at the package root, as every family package does.
+Jeremy packs and publishes. The csproj carries the family's canonical
+date-stamped version block, PackageId CodeBrix.VideoPlayback.MitLicenseForever,
+PackageLicenseExpression MIT, and pack lines putting README.md, AGENT-README.txt,
+icon-codebrix-128.png, THIRD-PARTY-NOTICES.txt and LICENSE at the package root.
+
+Verify a pack with:
+
+    dotnet pack src/CodeBrix.VideoPlayback/CodeBrix.VideoPlayback.csproj -c Release -o <folder>
+    unzip -l <folder>/CodeBrix.VideoPlayback.MitLicenseForever.<version>.nupkg
+
+The package must carry exactly one dependency, CodeBrix.Audio.MitLicenseForever.
+A second dependency appearing is a defect, not a decision.
+
+The presenter packs the same way, with its own AGENT-README from
+src/CodeBrix.VideoPlayback.Skia/ landing at the package ROOT:
+
+    dotnet pack src/CodeBrix.VideoPlayback.Skia/CodeBrix.VideoPlayback.Skia.csproj -c Release -o <folder>
+    unzip -l <folder>/CodeBrix.VideoPlayback.Skia.MitLicenseForever.<version>.nupkg
+
+It must carry exactly two dependencies: CodeBrix.VideoPlayback.MitLicenseForever
+at the version being packed, and SkiaSharp. A SkiaSharp.NativeAssets.* entry
+appearing there is a defect - see hard rule 1a. The core must appear as a
+DEPENDENCY and not as a bundled assembly; there is one lib/net10.0 folder in each
+package and it holds one assembly.
+
+Pack both in ONE run so they agree on a version:
+
+    dotnet pack CodeBrix.VideoPlayback.slnx -c Release -o <folder>
+
 
 PROVENANCE / VENDORED SOURCES
 =============================
-See THIRD-PARTY-NOTICES.txt at the repository root; it is the authoritative
-record of what came from where.
+Nothing is vendored. Every line here was written for this repository from the
+published specifications:
+
+  RFC 8794    EBML
+  RFC 9559    Matroska
+  RFC 3533    Ogg framing
+  RFC 7845    Ogg Opus (the identification header and pre-skip)
+  the WebM Container Guidelines
+  the AV1 bitstream specification (the sequence header and unit framing only)
+  the AV1 codec ISO Media File Format binding (the av1C configuration record)
+  the AV1-in-Matroska, Opus-in-Matroska and Vorbis-in-Matroska mappings
+  ISO/IEC 23091-2 (the colour primaries, transfer and matrix code points)
+
+See THIRD-PARTY-NOTICES.txt.
+
+
+DESIGN NOTES
+============
+
+The buffer pool contract
+------------------------
+PinnedFrameBufferPool hands out 64-byte-aligned unmanaged memory with strides a
+multiple of 64 bytes, dimensions rounded up to a multiple of 128 samples, 64
+bytes of slack after each plane, the two chroma planes sharing a stride, and
+10-bit and 12-bit samples as little-endian 16-bit words justified towards the
+least significant bit.
+
+That is not an arbitrary choice. It is the contract a frame-threaded software
+video decoder asks of a host allocator, and it is simultaneously what a graphics
+upload wants to read. Meeting it means a decoder can write STRAIGHT into the
+memory a presenter will upload from, with no copy anywhere between the two - and
+that no reformatting step can ever creep in.
+
+Unmanaged rather than a pinned managed array, deliberately: the memory must stay
+at one address while a native decoder writes into it and a driver reads out of
+it, and a block the garbage collector never sees cannot fragment the heap the
+way a long-lived pinned array does. Allocation is NativeMemory.AlignedAlloc with
+a 64-byte alignment; release is NativeMemory.AlignedFree.
+
+Generations. Buffers are pooled by frame shape. When the shape changes, the pool
+increments its generation, frees the buffers of the old shape as they come back,
+and settles again. A frame still on screen across the change stays valid, because
+the buffer it holds is only freed when its last reference drops.
+
+Reference counting and fences
+-----------------------------
+A VideoFrame is reference-counted because more than one part of the system
+genuinely holds one at the same time: a video decoder keeps decoded pictures
+alive as prediction references for LATER frames while a presenter is still
+reading the same picture. One owner cannot express that.
+
+Create() takes the first reference; Retain() adds one and returns THE SAME
+object; Dispose() removes one; at zero the buffer goes back to the pool and the
+frame OBJECT is recycled too, so a decode loop allocates nothing at all.
+
+The frame free list belongs to the POOL, not to the process. It was static once,
+and that was wrong twice over: two sessions handed each other's recycled frame
+objects about, and a test that disposed a frame and then checked that reading it
+throws could have that frame taken off the shared list by another test between
+the two statements - which it did, about once in twenty runs. Per-pool ownership
+removes both, and removes a process-wide lock from the hot path as well. A frame
+created with a null pool, or over a pool that is not this one, simply allocates.
+
+Fences exist because a graphics device does its work later than the code that
+asked for it. A presenter puts an IVideoFrameFence (or a Func<bool>) in
+VideoFrameBuffer.Tag before it starts an upload; the pool refuses to reuse a
+buffer whose fence has not signalled, parks it, and re-examines every parked
+buffer on each rent and return, and on PumpFences(). A buffer with no fence in
+its tag returns immediately, which is what the CPU path does.
+
+Session threading
+-----------------
+Two threads of the session's own, plus the audio engine's.
+
+  demux thread   reads the container and copies packets into two bounded rings
+  decode thread  drives IVideoDecoder and posts frames to the presenter
+  clock thread   raises PositionChanged, updates the active cues and the current
+                 chapter, and decides when playback has ended
+  audio thread   the engine's own; it PULLS packets out of the audio ring through
+                 IAudioPacketSource, and must never block
+
+The rings (Internal/PacketRing) reuse their slot buffers forever, so demuxing
+allocates nothing. One short lock covers a whole enqueue including the payload
+copy - a few kilobytes a few hundred times a second, which costs nothing and
+removes every question about what a Clear does to a packet a consumer is holding.
+Clear KEEPS the in-flight packet and drops the rest, and every packet also
+carries a seek generation the consumer checks, so a stale packet is skipped
+rather than decoded.
+
+Close() stops the threads BEFORE taking the lock that the demux thread uses. The
+other order deadlocks, and did once.
+
+The clock
+---------
+When there is an audio track, the clock IS PacketAudioPlayer.Position - the
+position of the audio actually handed to the mixer - because that is what a
+listener hears and everything else has to follow it. With no audio it is a
+Stopwatch based at the last seek.
+
+One correction is applied. PacketAudioPlayer discards the codec's own priming
+(Opus's pre-skip) at Open and lets those discarded samples advance Position,
+because they are media time. Presentation time is therefore Position minus the
+priming duration until the first seek; after a seek the player re-bases to the
+timestamp we hand it and the correction is zero. The session tracks that in
+audioClockCorrection. For Opus it is about 6.5 milliseconds - below any A/V sync
+threshold, but free to get right.
+
+Clock policy: a frame later than LateFrameTolerance is dropped rather than shown
+at the wrong time, and counted in the presenter's Late statistic (which is a
+different number from Superseded - see the type's own documentation). After
+ConsecutiveLateFramesBeforeSkip late frames in a row, the decode thread discards
+packets until the next key frame and flushes, rather than trying to catch up
+frame by frame.
+
+Seeking
+-------
+Seek asks the container reader to land on the key frame at or before the target,
+clears both rings, bumps the seek generation, and sets the reported position
+immediately so a scrubber does not lag. In Exact mode the decode thread then
+throws frames away until it reaches the target and presents that one at once,
+even while paused - which is what makes scrubbing show the right picture. In
+KeyFrameOnly mode the landing point is the target.
+
+Audio trimming and pre-roll
+---------------------------
+Matroska's CodecDelay is the codec's own priming and is handled by
+PacketAudioPlayer through the decoder's PreSkipSamples; the session does not
+apply it twice.
+
+On a seek, the session calls PacketAudioPlayer.Seek(firstPacketTimestamp,
+preRoll) at the moment it enqueues the FIRST audio packet of the new generation,
+with preRoll = target - firstPacketTimestamp. That decodes and discards the audio
+between the landing point and the target, which is both the correct trim and the
+pre-roll a lapped codec needs. Opus wants about 80 milliseconds; when the landing
+point is closer than that, it gets less, and the first few milliseconds are
+imperfect. Measured elsewhere in the family: 80 ms of pre-roll leaves about 7 per
+cent relative error on a pure sweep, 240 ms leaves none. A player that wants a
+seek to be inaudible should land further back.
+
+KNOWN GAP: Matroska's DiscardPadding - the trim on the LAST packet of a track -
+cannot be applied through the audio package's public surface today. There is no
+per-packet trim on PacketAudioPlayer and no Drain on IPacketSoundDecoder. The
+session works around it by ending playback when the clock reaches the container's
+stated Duration, which cuts the encoder's tail padding at the right moment. A
+`PacketAudioPlayer.SetTrailingTrim(TimeSpan)` or a `DiscardPadding` field on
+AudioPacket would let it be exact; that is an addition for the audio package, not
+a change here.
+
+HTTP behaviour
+--------------
+HttpMediaSource probes with a one-byte Range request. A 206 answer, or an
+Accept-Ranges header, means ranges are available: the source then seeks freely,
+serves small reads out of a 256 KB read-ahead window, and turns a single large
+read into a single request - which is what makes a file whose index is at the END
+open in one extra request rather than a download. Otherwise it falls back to one
+progressive response body, reports CanSeek false, and throws a message saying so
+if anybody seeks. RequestCount is exposed so a test can prove the window works.
+
+The .cbv format
+---------------
+CBV-FORMAT.txt at the repository root is the authority, and its last section
+lists every deviation from the draft layout in the program plan and why. In
+short: byte-packed with no padding, an index and every caption cue in front of
+the media data, a per-track entry length so an unknown track kind can be stepped
+over, colour metadata on video tracks (without which an uncompressed track cannot
+be interpreted at all), and two CRC-32 checksums with their coverage stated
+exactly.
+
+Two CRC-32 variants are in play and they are NOT the same one. Matroska and the
+.cbv header use CRC-32/ISO-HDLC (reflected, 0xEDB88320, inverted at both ends);
+Ogg uses the direct form (0x04C11DB7, no inversion). Feeding a page to the wrong
+one produces a plausible number that never matches.
+
+Timestamps in Ogg audio
+-----------------------
+Opus states a packet's duration in its first byte, so Opus timestamps are exact.
+Vorbis does not: a packet's length depends on a mode number that can only be read
+after the setup header's codebooks have been decoded, which is a decoder's job.
+So Vorbis packets are timed from the page granule positions, which ARE exact, and
+share their page's duration equally within the page. Page boundaries are exact;
+the intra-page error is bounded by one page. It affects only where a seek lands,
+never the audio, because the audio clock counts samples the mixer actually
+received.
+
+
+PER-TRACK EXHAUSTION, AND THE DEADLOCK IT PREVENTS
+==================================================
+E1. THE DEADLOCK, AS IT WAS. A clip whose sound ends before its picture does -
+    a silent tail, music shorter than the footage - used to stop the player
+    dead. Every link in the chain was individually correct:
+
+      the audio player's Position stops advancing once its queue has drained
+        -> the clock, which follows the audio player, freezes
+        -> the decode thread holds a frame it may not present yet
+        -> the video packet queue stops draining and fills
+        -> the demultiplexer blocks trying to enqueue into it
+        -> the end of the FILE is never reached
+        -> the audio source is never told that no more packets are coming
+        -> the audio player never reports its end
+        -> the clock never moves off it.
+
+    Position froze, State stayed Playing, and PlaybackEnded never fired.
+
+E2. THE CONTRACT. IMediaContainerReader gained two members:
+
+        bool IsTrackExhausted(int trackId)
+        TimeSpan? GetTrackEndTimestamp(int trackId)
+
+    IsTrackExhausted may return true ONLY when the reader can prove no further
+    packet for that track exists between where it stands and the end of the
+    media. False means "not proven", which covers both "there is more" and "I
+    cannot tell yet". A track the file does not declare reads as exhausted, and
+    a reader repositioned by Seek answers for its NEW position. A false negative
+    costs latency; a false positive truncates somebody's media, so every reader
+    here is written that way round.
+
+E3. WHAT EACH READER CAN ACTUALLY PROVE.
+
+    CbvReader        EXACT, AND EARLY. The index at the front of the file names
+                     the track of every chunk in it, so the reader works out
+                     where each track's last chunk sits while it is opening the
+                     file and then answers from the read cursor alone - a second
+                     and a half before the end of the file, for the clip above.
+                     GetTrackEndTimestamp is exact for every track. A file with
+                     no index yields this reader no packets at all, so every
+                     track of one reads as exhausted immediately, which is true.
+
+    MatroskaReader   EXACT ONLY AT THE END OF THE FILE, for every track at once.
+                     Nothing in Matroska records where a track stops. Cues are
+                     the obvious candidate and do not answer the question: a cue
+                     point marks a KEY FRAME, so the last cue for a track is
+                     followed by however many non-key frames the encoder chose,
+                     and in practice a WebM file's cues index the video track
+                     alone and say nothing about the audio. Cues CAN refute
+                     exhaustion - a cue beyond the read position proves a track
+                     continues - but refuting is not proving, and treating "past
+                     the last cue and quiet since" as an ending would truncate
+                     ordinary files. So it waits until it is certain.
+                     GetTrackEndTimestamp is null until then.
+
+E4. WHAT THE SESSION DOES WITH IT. The demultiplexer asks the reader after every
+    read. The audio source is told EndOfStream as soon as the AUDIO track is
+    exhausted, and the decode thread learns the VIDEO track is exhausted and
+    drains - both independently of the container as a whole. Neither signal is
+    published until that track's parking is empty, because the reader knowing a
+    track is finished is not the same as this session having handed over
+    everything it had for it; publishing early would cut the tail off.
+
+    PlaybackEnded now fires at the LATER of the two ends. The video side is
+    finished when the reader has no more video, the queue and parking are empty
+    and the decoder has been drained; the audio side when the packet player says
+    so. A picture that outlasts its sound plays to its own end with the
+    stopwatch clock taking over at the sound's end; a sound that outlasts its
+    picture is heard out with the last frame still on screen.
+
+E5. THE DEMULTIPLEXER CANNOT STARVE A TRACK ANY MORE. Two changes:
+
+    (a) The old pre-check refused to read at all while EITHER queue was full, so
+        a full audio queue stopped video being demultiplexed and vice versa.
+        That was its own defect and it is gone: each track is judged separately.
+
+    (b) A packet whose queue has no room is PARKED - held aside, in order - and
+        the demultiplexer carries on reading. Parked packets always go back into
+        the queue before any newer packet of the same track, so a track's
+        sequence is exactly what the file stored. Parking is bounded by
+        VideoPlaybackOptions.MaxTrackParkingBytes, 32 MB per track by default,
+        and the demultiplexer waits only when a track can take nothing at all -
+        queue full AND parking at budget. Hitting the budget adds a Notice
+        naming the option rather than failing silently.
+
+    WHY A BOUNDED PARKING LIST RATHER THAN A ONE-PACKET SLOT: one slot buys one
+    packet, and the skew that matters here is a whole track's tail - fifty
+    packets in the corpus's own no-cues file. Why not bounded waits with
+    re-check: the wait is not the problem, the not-reading is; a demultiplexer
+    that is asleep learns nothing, and for Matroska the only way to learn that a
+    track has ended is to reach the end of the file. Nothing is parked at all
+    while a file interleaves its tracks normally, so this costs nothing.
+
+E6. WHICH MECHANISM CARRIES WHICH FILE - measured, by turning each off:
+
+                                   exhaustion ON        exhaustion OFF
+      parking ON (32 MB)           both complete        both complete
+      parking OFF (budget 0)       .cbv completes,      BOTH HANG at 1.015 s
+                                   .mkv HANGS           (the original defect)
+
+    The two are independent and both are needed: the index carries the bespoke
+    container, and the parking carries Matroska, which has no index to carry it.
+
+E7. WHAT IS STILL TRUE. A Matroska file whose one-track skew exceeds the parking
+    budget will still make the demultiplexer wait, and with it the discovery
+    that another track has ended. 32 MB is roughly two minutes of 1080p video at
+    a few megabits a second, which is far more skew than any ordinary file has;
+    the Notice says when it has been hit and which option to raise. A container
+    that could answer IsTrackExhausted early would not need the budget at all,
+    which is exactly what the bespoke format does.
+
+
+THE PRESENTER: TWO RENDER PATHS, ONE SHADER, ONE OFF-SCREEN SURFACE
+===================================================================
+P1. THE COMPOSITION SURFACE IS THE FRAME'S CODED SIZE, and the display aspect
+    ratio is applied at the BLIT. That keeps the shader's coordinates at exact
+    luma texel centres - a 1:1 mapping, no resampling of the source - which is
+    what lets the shader be compared with the CPU converter pixel for pixel. A
+    layer therefore draws in video pixels and is scaled and letterboxed along
+    with the picture, which is almost always what a layer wants.
+
+P2. THE PROCESSOR PATH HAS NO COPY IN IT. The composition surface is created
+    with SKSurface.Create(info, pixels, rowBytes) over a BgraFrameBuffer rented
+    from the core's pool, and the converter writes STRAIGHT INTO those pixels.
+    Layers then draw onto the same memory through the surface's canvas, and Draw
+    blits with SKSurface.Draw - no snapshot, no image object, nothing allocated.
+    Verified on 4.151.0: a raster-direct surface's Snapshot() COPIES rather than
+    sharing, so a snapshot taken while the buffer is later overwritten does not
+    change under the caller and no copy-on-write ever moves the surface off our
+    memory. Both facts are load-bearing; re-check them if the Skia pin moves.
+
+P3. THE GRAPHICS PATH UPLOADS WITH SKImage.FromPixels(SKPixmap) FOLLOWED BY
+    SKImage.ToTextureImage(GRContext). FromPixels BORROWS the plane's memory
+    rather than copying it, so the samples the decoder wrote reach the driver
+    from where they already are; ToTextureImage is the only public SkiaSharp
+    call that uploads host pixels to a texture. Planes go up as R8Unorm for
+    8-bit content and R16Unorm for 10- and 12-bit, and the shader multiplies by
+    255 or 65535 accordingly. SkiaSharp offers no way to REFILL an existing
+    texture from host memory, so the graphics path allocates a handful of small
+    wrapper objects per frame; the pixels are still never copied. If a future
+    SkiaSharp exposes a texture write, that is the allocation to remove.
+
+P4. ONE SkSL SHADER, IN TWO VARIANTS. Internal/YuvShaderSource builds the source
+    with and without the lookup-table stage; building two rather than binding an
+    identity table to the plain one saves a texture sample per pixel in the
+    common case. Internal/YuvShaderUniforms computes the matrix rows, the sample
+    offsets and the chroma-siting flags, and MIRRORS the CPU converter's
+    ConversionConstants exactly, in floating point rather than fixed point.
+
+P5. CHROMA SITING IN THE SHADER IS THE COORDINATE, NOT A BRANCH. A luma
+    coordinate maps to a chroma coordinate one of three ways per axis: straight
+    through when the axis is not subsampled; snapped to the covering texel's
+    centre when the chroma sample sits ON the luma sample; and simply HALVED
+    when it sits between two, because a pixel centre at x + 0.5 becomes
+    x/2 + 0.25 - a quarter of a chroma texel from the near centre, which is
+    exactly the 3:1 blend the specification asks for and which the sampler's own
+    linear filter then performs for free. Vertical siting means co-sited
+    HORIZONTALLY and halfway VERTICALLY; reading it the other way inverts the
+    upsampling, and there is a test named for it.
+
+P6. THE RESULTANT LOOKUP TABLE IS A STRIP, NOT A CUBE. SkSL has no
+    three-dimensional sampler, so the composed grid is laid out as size tiles of
+    size-by-size pixels side by side: the node (r, g, b) is at
+    x = b * size + r, y = g, in RGBA one byte per channel with alpha 255. Red
+    and green interpolate in the sampler; the shader interpolates between two
+    tiles itself for blue. Clamping the input to 0..1 before scaling by size - 1
+    is what keeps every sample inside its own tile, so no tile bleeds into its
+    neighbour. Eight bits a channel is the same quantum as the output surface,
+    so nothing is lost; a float atlas was tried and buys nothing here.
+
+P7. THE FENCE IS INSTALLED AND SIGNALLED AROUND THE WHOLE DRAW. SkiaGpuUploadFence
+    goes into VideoFrameBuffer.Tag before the upload and is signalled after
+    GRContext.Flush() and Submit(false) - the point at which Skia no longer
+    references the host memory. The pool parks the buffer until then.
+
+P8. THE SHADER IS TESTED WITHOUT A GRAPHICS DEVICE. SKRuntimeEffect compiles AND
+    RUNS on Skia's raster backend, so Internal/YuvSurfaceRenderer takes a null
+    GRContext and draws the very same shader with the very same bindings onto a
+    software surface. YuvShaderSourceTests then compares it with the core
+    converter for ten layout/siting/range/matrix combinations and for six real
+    decoded frames: worst channel difference 2, mean under half a level. That is
+    the correctness proof for the graphics path, and it needs no display.
+
+P9. A REAL GRAPHICS CONTEXT IS ALSO AVAILABLE HERE, headlessly. Mesa's
+    EGL_MESA_platform_surfaceless gives a display with no window behind it, and
+    tests/CodeBrix.VideoPlayback.Skia.Tests/HeadlessGraphicsContext.cs reaches it
+    through four P/Invokes to libEGL - nothing is installed. Where it cannot be
+    had, the graphics tests skip themselves and say why.
+
+
+BENCHMARKS
+==========
+Measured 2026-08-28 on a 12th Gen Intel Core i7-12850HX (24 threads), LMDE 7,
+.NET 10.0.400, Release, 20 warm-up plus 200 timed iterations:
+
+  CPU colour conversion, 1080p 8-bit 4:2:0 BT.709 limited range to BGRA32
+      Vector256 (the default here)   3.006 ms/frame     332.7 frames per second
+      Vector128 only                 3.55  ms/frame     282   frames per second
+      scalar fallback               22.42  ms/frame      44.6 frames per second
+
+  Uncompressed decode through the whole container and pool path, 64x36 4:2:0
+      0.037 ms/frame mean over 60 frames (cbvdecode on tests/assets/raw-synthetic.cbv)
+
+The converter benchmark lives in VideoFrameConverterTests and prints its own
+numbers; re-run it with CODEBRIX_VIDEOPLAYBACK_RUN_BENCHMARKS=1 rather than
+trusting these.
+
+
+ASSET REGENERATION
+==================
+tests/assets holds the golden corpus. Two scripts rebuild it:
+
+  generate-assets.sh       needs FFmpeg and mkvmerge. Rebuilds every .webm, .mkv,
+                           .ivf and .ogg file, their ffprobe oracles, and
+                           ASSETS.txt.
+  generate-cbv-assets.sh   needs only the .NET SDK. Rebuilds the .cbv samples
+                           through this repository's own muxer.
+
+The FFmpeg-produced files are NOT byte-reproducible (FFmpeg picks random track
+UIDs and Ogg serial numbers); the mkvmerge ones are. ASSETS.txt records the
+SHA-256 of what is committed. Regenerating them changes the bytes, so do not do
+it casually - the committed files are the oracle.
+
+
+DELIBERATE DIVERGENCES WORTH KNOWING
+====================================
+- An absent Matroska Language element is read as "eng" per RFC 9559, which
+  normalises to "en". Writers almost always state "und" explicitly, which
+  normalises to an empty tag, so the golden corpus is unaffected.
+- FFmpeg writes WebVTT tracks as D_WEBVTT/SUBTITLES with the cue identifier on
+  the first line and the settings on the second; mkvmerge writes S_TEXT/WEBVTT
+  with the payload in the Block and settings-then-identifier in a BlockAddition.
+  The reader handles both by deciding per line which one looks like a settings
+  list, rather than trusting either codec id.
+- For laced audio with neither DefaultDuration nor BlockDuration, every frame in
+  a lace carries its block's timestamp. FFmpeg derives per-frame times from the
+  codec's sample count instead. The difference is recorded in Notices; it moves
+  where a seek lands, not what is heard.
+- Cluster CRC-32 checking is OFF by default (MatroskaReader.VerifyClusterChecksums),
+  because verifying a cluster means reading it twice. The metadata checksums are
+  always verified.
+- The uncompressed decoder is not shipped. Its source is
+  tests/CodeBrix.VideoPlayback.Tests/RawVideoDecoder*.cs and the tools project
+  LINKS those two files rather than duplicating them.
+
 
 NOTES
 =====
 - The eight AI-agent pointer stubs point at README-INDEX.txt (the family's
   2026-08-24 convention). Do not let a scaffold overwrite them with the older
   "read AGENT-README.txt" wording.
-- The .slnx, when created, must list AGENT-README.txt, EXTRAS-README.txt,
+- The .slnx lists AGENT-README.txt, CBV-FORMAT.txt, EXTRAS-README.txt,
   MAINTAINER-README.txt, README-INDEX.txt, README.md, LICENSE,
-  THIRD-PARTY-NOTICES.txt and icon-codebrix-128.png under Solution Items.
+  THIRD-PARTY-NOTICES.txt, global.json, .gitignore and icon-codebrix-128.png
+  under Solution Items, both libraries at the top level, both test projects
+  under Tests, the sample under Samples and the tools under Tools.
+- The presenter's own AGENT-README lives beside its project, not at the root,
+  and is packed to the package ROOT with PackagePath="AGENT-README.txt". The
+  root AGENT-README.txt belongs to the core package and stays there.
+- A CLIP WHOSE AUDIO ENDS BEFORE ITS VIDEO used to freeze where the sound
+  stopped, in two ways that had to be fixed separately. The clock half:
+  OnAudioPlaybackEnded now moves the clock onto the session's own stopwatch from
+  exactly where the audio left off, and IsUsingFallbackClock decides which one
+  is running. The supply half: the reader now says which track has ended and the
+  demultiplexer can no longer be stopped by one track's full queue. Both are
+  described under PER-TRACK EXHAUSTION above and both are fenced by tests.
 ================================================================================

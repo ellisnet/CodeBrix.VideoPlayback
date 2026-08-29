@@ -1,0 +1,99 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>CodeBrix.VideoPlayback.Skia</AssemblyName>
+    <RootNamespace>CodeBrix.VideoPlayback.Skia</RootNamespace>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <!--
+    Package / assembly version: date-stamped and auto-incrementing.
+
+    Format:  1.<x>.<y>.<z>   (every field is derived from UTC "now")
+
+      1  (major)     Always 1 for this library.
+      x  (minor)     Whole years since $(_VersionBaseYear).
+                     With base 2026: 2026=0, 2027=1, 2028=2, ...
+      y  (build)     Day of year, 1-based inclusive, UTC.
+                     Jan 1 = 1, Feb 1 = 32, Dec 31 = 365 (366 in a leap year).
+      z  (revision)  Minute of day, UTC, range 0 to 1439.
+                     00:00 = 0, 23:59 = 1439.
+
+    The version is always strictly increasing over time:
+      * within a day, z grows;
+      * at a day boundary, y increments and outranks z resetting to 0;
+      * at a (UTC) year boundary, x increments and outranks y and z resetting.
+
+    Notes / caveats:
+      * All fields read from System.DateTime.UtcNow, so a local dev build and a
+        UTC CI build agree on the value. Math.Floor on the minutes keeps z in
+        0..1439 (plain rounding could land on 1440 late in the day).
+      * Because the value depends on the clock, every build produces a NEW
+        version. With GeneratePackageOnBuild=true that means a fresh .nupkg on
+        each build, and two builds in the SAME UTC minute produce the SAME
+        version (so do not publish two packages from within one minute).
+      * This is date-stamp versioning, not SemVer: minor encodes the year and
+        major is pinned to 1, so major/minor do not signal API compatibility.
+      * To re-baseline the minor number, change _VersionBaseYear below.
+      * This project and CodeBrix.VideoPlayback carry the SAME block, so a pack
+        of both in one run stamps both with one version - and the dependency
+        this package declares on the core is that same number.
+  -->
+  <PropertyGroup>
+    <_VersionBaseYear>2026</_VersionBaseYear>
+    <_VersionYears>$([MSBuild]::Subtract($([System.DateTime]::UtcNow.Year), $(_VersionBaseYear)))</_VersionYears>
+    <_VersionDayOfYear>$([System.DateTime]::UtcNow.DayOfYear)</_VersionDayOfYear>
+    <_VersionMinuteOfDay>$([System.Convert]::ToInt32($([System.Math]::Floor($([System.DateTime]::UtcNow.TimeOfDay.TotalMinutes)))))</_VersionMinuteOfDay>
+    <BuildVersion>1.$(_VersionYears).$(_VersionDayOfYear).$(_VersionMinuteOfDay)</BuildVersion>
+    <Version>$(BuildVersion)</Version>
+    <AssemblyVersion>$(BuildVersion)</AssemblyVersion>
+    <FileVersion>$(BuildVersion)</FileVersion>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <PackageId>CodeBrix.VideoPlayback.Skia.MitLicenseForever</PackageId>
+    <Product>CodeBrix.VideoPlayback.Skia</Product>
+    <Title>CodeBrix.VideoPlayback.Skia</Title>
+    <Authors>Jeremy Ellis</Authors>
+    <Description>Draws CodeBrix.VideoPlayback frames through SkiaSharp. SkiaVideoPresenter takes the newest decoded frame and composes it on an off-screen surface - on the GPU through one SkSL shader that does YUV-to-RGB and a resultant colour LUT in a single pass, or on the CPU through the core's SIMD converter - then blits the result into whatever canvas the application owns, with letterboxing, drawable overlay layers and a composed-frame capture. Plain SkiaSharp only: no view package, no native asset, no windowing dependency.</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/ellisnet/CodeBrix.VideoPlayback</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/ellisnet/CodeBrix.VideoPlayback</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageIcon>icon-codebrix-128.png</PackageIcon>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <Copyright>Copyright (c) 2026 Jeremy Ellis and contributors.</Copyright>
+    <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+    <PackageRequireLicenseAcceptance>true</PackageRequireLicenseAcceptance>
+    <IsPackable>true</IsPackable>
+    <PackageTags>video;playback;skia;skiasharp;presenter;sksl;lut;yuv;av1;webm;CodeBrix</PackageTags>
+  </PropertyGroup>
+
+  <!--
+    PLAIN SkiaSharp ONLY. Never SkiaSharp.Views.*, and never a NativeAssets package: the application picks
+    the native asset package that suits the platform it ships on, and a library that picks one for it breaks
+    every other platform. See MAINTAINER-README.txt.
+  -->
+  <ItemGroup>
+    <PackageReference Include="SkiaSharp" Version="4.151.0" />
+  </ItemGroup>
+
+  <!--
+    The core is referenced as a project here and packs as a package DEPENDENCY, not as a bundled assembly -
+    both projects carry the same date-stamped version block, so one pack run stamps both with one version.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\CodeBrix.VideoPlayback\CodeBrix.VideoPlayback.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\icon-codebrix-128.png" Pack="true" PackagePath="" />
+    <None Include="..\..\README.md" Pack="true" PackagePath="" />
+    <None Include="AGENT-README.txt" Pack="true" PackagePath="AGENT-README.txt" />
+    <None Include="..\..\THIRD-PARTY-NOTICES.txt" Pack="true" PackagePath="" />
+    <None Include="..\..\LICENSE" Pack="true" PackagePath="" />
+  </ItemGroup>
+
+</Project>

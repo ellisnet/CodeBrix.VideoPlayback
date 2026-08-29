@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.9.0" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="4.0.0">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="xunit.v3" Version="4.0.0" />
+    <PackageReference Include="SilverAssertions.ApacheLicenseForever" Version="1.0.237.1200" />
+    <!--
+      The TEST project supplies Skia's native binary for this machine; the LIBRARY never does, because the
+      application picks the native asset package that suits the platform it ships on. See MAINTAINER-README.txt.
+    -->
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux" Version="4.151.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\CodeBrix.VideoPlayback.Skia\CodeBrix.VideoPlayback.Skia.csproj" />
+  </ItemGroup>
+
+  <!--
+    The uncompressed-video decoder is a test and diagnostics codec whose source lives with the core's tests.
+    It is LINKED here, exactly as the tools project links it, so there is one copy of the code and it never
+    reaches a shipped package.
+  -->
+  <ItemGroup>
+    <Compile Include="..\CodeBrix.VideoPlayback.Tests\RawVideoDecoder.cs" Link="RawCodec\RawVideoDecoder.cs" />
+    <Compile Include="..\CodeBrix.VideoPlayback.Tests\RawVideoDecoderFactory.cs" Link="RawCodec\RawVideoDecoderFactory.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="..\assets\*.cbv;..\assets\*.txt">
+      <Link>assets\%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+</Project>

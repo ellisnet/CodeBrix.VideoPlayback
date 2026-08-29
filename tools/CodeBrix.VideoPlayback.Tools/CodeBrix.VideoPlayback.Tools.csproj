@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>CodeBrix.VideoPlayback.Tools</AssemblyName>
+    <RootNamespace>CodeBrix.VideoPlayback.Tools</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <Nullable>disable</Nullable>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\CodeBrix.VideoPlayback\CodeBrix.VideoPlayback.csproj" />
+  </ItemGroup>
+
+  <!--
+    The uncompressed-video decoder is a test and diagnostics codec, not a shipped one, so its source lives
+    with the tests and is LINKED into this project rather than duplicated. That way cbvdecode can decode a
+    raw-codec file with no codec package installed, and there is still exactly one copy of the code.
+  -->
+  <ItemGroup>
+    <Compile Include="..\..\tests\CodeBrix.VideoPlayback.Tests\RawVideoDecoder.cs" Link="RawCodec\RawVideoDecoder.cs" />
+    <Compile Include="..\..\tests\CodeBrix.VideoPlayback.Tests\RawVideoDecoderFactory.cs" Link="RawCodec\RawVideoDecoderFactory.cs" />
+  </ItemGroup>
+
+</Project>

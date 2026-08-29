@@ -1,0 +1,305 @@
+================================================================================
+CBV-FORMAT: the bespoke ".cbv" container, version 0
+The on-disk layout CodeBrix.VideoPlayback writes and reads
+================================================================================
+
+STATUS
+======
+Version 0. Finalised 2026-08-28. This document is the authority: where it and
+any other document disagree, this one is right.
+
+The ".cbv" extension covers TWO file formats, told apart by their first four
+bytes:
+
+  1A 45 DF A3   an EBML document - a WebM/Matroska file constrained to the
+                "WebM profile" (see the last section). Read by MatroskaReader.
+  43 42 56 46   "CBVF" - the bespoke format described here. Read by CbvReader,
+                written by CbvMuxer.
+
+A reader sniffs those four bytes and picks its reader. Nothing else in either
+file is used for identification.
+
+
+WHY A BESPOKE FORMAT AT ALL
+===========================
+Because the two things a shipped-with-the-application clip needs are awkward in
+Matroska and trivial here: EVERY index entry and EVERY caption cue in front of
+the media data, so that opening a file and seeking in it cost one read each and
+the captions are complete the instant the file is open - including immediately
+after a seek. Matroska can be persuaded to put its cues first; it cannot put
+every subtitle cue first, because its subtitles are interleaved with the video
+by design.
+
+
+CONVENTIONS
+===========
+- Every multi-byte number is LITTLE-ENDIAN.
+- Everything is byte-packed. There is NO implicit padding and no alignment
+  requirement anywhere: a field's offset is exactly the sum of the sizes before
+  it.
+- u8/u16/u32/u64 are unsigned; i64 is two's-complement signed.
+- f64 is an IEEE 754 binary64 value, little-endian.
+- "char[n]" is a fixed-width field of n bytes holding ASCII, padded with 0x00.
+  A value shorter than the field is followed by 0x00 bytes; a value exactly n
+  bytes long has no terminator. Non-ASCII characters are refused by the writer.
+- A length-prefixed string is a length field followed by that many bytes of
+  UTF-8. There is no terminator and no byte-order mark.
+- "ticks" are counted in the timescale declared in the header. This library
+  always writes 10,000,000 ticks per second, so one tick is 100 nanoseconds and
+  a timestamp is exactly a .NET TimeSpan tick count. A reader honours whatever
+  timescale the file declares.
+
+
+FILE LAYOUT
+===========
+  +--------------------+  offset 0
+  | fixed header       |  48 bytes
+  +--------------------+
+  | track table        |  }
+  +--------------------+  }  together: the "header region",
+  | chapter table      |  }  header_length bytes from offset 0
+  +--------------------+
+  | index              |  index_length bytes at index_offset
+  +--------------------+
+  | chunks             |  to the end of the file
+  +--------------------+
+
+The writer always places the index immediately after the header region and the
+chunks immediately after the index, so index_offset == header_length. A reader
+must NOT assume that: it uses index_offset and index_length, and it uses each
+index entry's own absolute offset to find a chunk.
+
+
+1. FIXED HEADER (48 bytes)
+==========================
+  off  size  field
+    0   4    magic, the ASCII bytes "CBVF"
+    4   2    u16  version                 = 0
+    6   2    u16  flags                   (see below)
+    8   4    u32  header_length           bytes from offset 0 to the end of the
+                                          chapter table
+   12   8    u64  index_offset            absolute offset of the index region
+   20   8    u64  index_length            bytes in the index region
+   28   8    u64  duration_ticks          the whole media's duration
+   36   4    u32  timescale               ticks per second; must not be 0
+   40   4    u32  index_crc32             checksum of the index region, or 0
+   44   4    u32  header_crc32            checksum of the header region, or 0
+
+  flags:
+    bit 0   HasIndex                    the file carries an index of every chunk
+    bit 1   ChunksInPresentationOrder   chunks are stored in ascending
+                                        presentation order across all tracks
+    bits 2-15 reserved, written as 0, ignored by a reader
+
+  CHECKSUMS. Both are CRC-32/ISO-HDLC: polynomial 0xEDB88320 (the reflected
+  form of 0x04C11DB7), initial value 0xFFFFFFFF, final exclusive-or 0xFFFFFFFF -
+  the same algorithm zlib and Matroska's CRC-32 element use, and NOT the direct
+  CRC-32 that Ogg uses.
+    header_crc32 covers bytes [0, header_length) with its OWN four bytes
+      (offsets 44..47) treated as 0x00000000.
+    index_crc32  covers bytes [index_offset, index_offset + index_length).
+  A value of 0 in either field means "not computed": a reader skips that check
+  rather than failing. A non-zero value that does not match is a hard error.
+
+
+2. TRACK TABLE
+==============
+  u16  track_count
+  then, track_count times:
+
+    u32      entry_length      bytes in this entry AFTER this field
+    u8       track_id          1-based; unique in the file; also the value in a
+                               chunk header
+    u8       kind              1 = video, 2 = audio, 3 = caption
+    char[8]  codec_id          "av01", "raw", "opus", "vorbis", "webvtt",
+                               "srt", "ass" - lower case
+    char[36] language          BCP 47 tag, or all zeros for "not stated"
+    u16      name_length
+    u8[]     name              UTF-8, name_length bytes
+    u8       flags             bit 0 default, bit 1 forced,
+                               bit 2 hearing-impaired, bit 3 disabled
+    u32      codec_private_length
+    u8[]     codec_private     codec_private_length bytes: an av1C record for
+                               "av01", an OpusHead for "opus", the three
+                               Xiph-laced setup headers for "vorbis", empty for
+                               "raw" and for caption tracks
+    ...      kind-specific body (below)
+
+  entry_length exists so that a reader can step over a track whose kind it does
+  not know. A reader MUST use it rather than assuming it can parse every entry.
+
+  2a. VIDEO BODY (kind 1)
+      u32  width               coded width in pixels
+      u32  height              coded height in pixels
+      u32  display_width       after pixel-aspect correction
+      u32  display_height
+      u8   bit_depth           8, 10 or 12
+      u8   pixel_layout        0 unknown, 1 gray, 2 = 4:2:0, 3 = 4:2:2,
+                               4 = 4:4:4   (the VideoPixelLayout values)
+      u8   primaries           ISO/IEC 23091-2 colour primaries
+      u8   transfer            ISO/IEC 23091-2 transfer characteristics
+      u8   matrix              ISO/IEC 23091-2 matrix coefficients
+      u8   color_range         0 unspecified, 1 limited, 2 full
+      u8   chroma_siting       0 unknown, 1 vertical (MPEG-2 "left"),
+                               2 co-located, 3 interstitial
+      u8   hdr_present         0 or 1
+      i64  frame_duration_ticks    0 when the frame rate varies
+      if hdr_present:
+        f64  red_x, red_y, green_x, green_y, blue_x, blue_y,
+             white_x, white_y, max_luminance, min_luminance
+        u32  max_content_light_level
+        u32  max_frame_average_light_level
+
+  2b. AUDIO BODY (kind 2)
+      u32  sample_rate
+      u8   channels
+      u16  pre_skip_samples        codec priming, per channel (Opus)
+      u32  trailing_trim_samples   samples per channel to drop at the very end
+      i64  codec_delay_ticks       the same priming expressed as time
+      i64  seek_preroll_ticks      audio to decode and discard after a seek
+
+  2c. CAPTION BODY (kind 3)
+      u32  cue_count
+      then, cue_count times:
+        i64  start_ticks
+        i64  end_ticks
+        u16  settings_length
+        u8[] settings            UTF-8; the format's raw placement instructions,
+                                 passed through untouched (a WebVTT cue settings
+                                 list, or empty)
+        u16  identifier_length
+        u8[] identifier          UTF-8; the cue identifier, or empty
+        u32  text_length
+        u8[] text                UTF-8; the cue text
+
+      A caption track's WHOLE content lives here in the header region. Caption
+      tracks carry no chunks at all. Caption tracks are small - a feature-length
+      subtitle track is tens of kilobytes - and putting them here is what makes
+      every cue available the instant the file is open.
+
+
+3. CHAPTER TABLE
+================
+  u32  chapter_count
+  then, chapter_count times:
+
+    i64      start_ticks
+    i64      end_ticks         0 means "until the next chapter, or the end"
+    u8       flags             bit 0 hidden
+    u16      title_count
+    then, title_count times:
+      char[36] language        BCP 47 tag, or all zeros for "not stated"
+      u16      title_length
+      u8[]     title           UTF-8
+
+  Chapters are flat and single-edition, ordered by start time. This is
+  Matroska's ChapterAtom / ChapterDisplay model with the parts nobody uses
+  removed.
+
+  The end of the chapter table is the end of the header region: header_length
+  equals the offset just past the last chapter's last title.
+
+
+4. INDEX
+========
+  u32  entry_count
+  then, entry_count times, in FILE order (the order the chunks appear):
+
+    u8   track_id
+    u8   flags           bit 0 key frame
+    u32  size            the chunk's PAYLOAD size, not counting its header
+    u64  offset          absolute file offset of the chunk's HEADER
+    i64  timestamp_ticks
+
+  Each entry is 22 bytes, so index_length == 4 + 22 * entry_count.
+
+  A reader builds whatever it wants from this: a per-track list, a key-frame
+  list for seeking, a running total for a progress bar. Seeking is then a binary
+  search over an array in memory - no reading, no scanning.
+
+
+5. CHUNKS
+=========
+  Each chunk is a 22-byte header followed by its payload:
+
+    u8   track_id
+    u8   flags           bit 0 key frame (the same value as its index entry)
+    u32  size            the payload size in bytes
+    i64  timestamp_ticks
+    i64  duration_ticks  0 when not known
+
+  then size bytes of payload: one coded video frame (for "av01", one temporal
+  unit in the low-overhead bitstream form) or one audio packet.
+
+  The header repeats the index's track, flags and size on purpose: a reader
+  checks them against the index entry it followed, and a file whose index and
+  chunks disagree is rejected rather than played as nonsense.
+
+  Chunks are written in ascending presentation order across all tracks, so a
+  player reading forwards fills its per-track queues evenly and never has to
+  seek backwards.
+
+
+WHAT DELIBERATELY IS NOT IN VERSION 0
+=====================================
+- No per-chunk discard padding. An encoder's trailing padding is recorded once,
+  as trailing_trim_samples on the audio track, which is where it belongs: it is
+  a property of the track, not of a packet.
+- No multiple renditions (a device-class ladder). That is a track-table
+  extension and would be version 1.
+- No encryption, no compression of the header, no attachments, no tags.
+- No unknown-size or streaming-append form. A .cbv file is finished when it is
+  written.
+
+
+DEVIATIONS FROM THE DRAFT LAYOUT IN THE PROGRAM PLAN
+====================================================
+The plan (section 5.4) carried a draft "v0" layout to be finalised at the Phase
+B GO. What changed, and why:
+
+1. The draft said "4-byte aligned". Dropped: everything is byte-packed with no
+   padding. Alignment bought nothing (no field is read by casting a pointer) and
+   made every offset a special case.
+2. index_length and index_crc32 added to the fixed header. Without a length the
+   index cannot be fetched in one range request over HTTP, which is the whole
+   point of putting it at the front; without a checksum a damaged index reads as
+   plausible offsets.
+3. header_crc32's coverage is now stated exactly: bytes [0, header_length) with
+   its own four bytes zeroed.
+4. Per-track entry_length added, so an unknown track kind can be stepped over
+   and a later version can extend a track entry without breaking this reader.
+5. language, name and flags moved OUT of the caption-specific body and up into
+   the common part of every track entry. Audio tracks want a language too, and
+   video tracks want a name.
+6. Video tracks gained the colour description (primaries, transfer, matrix,
+   range, chroma siting), an HDR block, and a frame duration. The draft had
+   none of it, and without it a "raw" video track - which has no bitstream to
+   carry its own colour metadata - cannot be interpreted at all.
+7. Audio tracks gained codec_delay_ticks and seek_preroll_ticks beside the
+   sample counts, so a player that thinks in time does not have to convert.
+8. Caption cues gained an identifier field. WebVTT cues have identifiers and
+   dropping them loses information for no saving.
+9. Chunk headers gained duration_ticks.
+10. The timescale is fixed at 10,000,000 for files this library writes (the
+    draft suggested 1,000,000). A tick is then exactly a .NET TimeSpan tick,
+    which removes a rounding step from every timestamp on the way in and out.
+    Readers still honour any timescale.
+
+
+THE OTHER FLAVOUR: THE WebM PROFILE
+===================================
+A ".cbv" file that begins with the EBML magic is an ordinary WebM file
+constrained as follows. The cbvinfo tool checks every one of these and reports
+the ones that fail:
+
+  - video codec V_AV1; audio codec A_OPUS or A_VORBIS; any number of
+    S_TEXT/WEBVTT (or D_WEBVTT/SUBTITLES) caption tracks
+  - Cues and SeekHead placed BEFORE the first Cluster (fast start)
+  - no unknown-size elements
+  - a Duration in the Info element
+  - cluster timestamps ascending
+  - 8-bit 4:2:0 video recommended (a warning, not a failure)
+
+It is written by FFmpeg with "-cues_to_front 1" and read by the same Matroska
+reader as any other WebM file, so nothing about it is private to this library.
+================================================================================

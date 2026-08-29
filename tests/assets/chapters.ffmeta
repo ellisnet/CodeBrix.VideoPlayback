@@ -1,0 +1,22 @@
+;FFMETADATA1
+title=CodeBrix VideoPlayback synthetic clip
+artist=ffmpeg lavfi testsrc2
+
+[CHAPTER]
+TIMEBASE=1/1000
+START=0
+END=333
+title=Opening bars
+title-fr=Mesures d'ouverture
+
+[CHAPTER]
+TIMEBASE=1/1000
+START=333
+END=667
+title=Colour ramp
+
+[CHAPTER]
+TIMEBASE=1/1000
+START=667
+END=1000
+title=Closing frames

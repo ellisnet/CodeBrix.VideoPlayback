@@ -1,0 +1,17 @@
+WEBVTT
+
+NOTE Synthetic captions for the CodeBrix.VideoPlayback test corpus.
+
+intro
+00:00:00.000 --> 00:00:00.250 line:90% align:center
+Bar pattern, top left.
+
+00:00:00.250 --> 00:00:00.500
+Colour ramp sweeps right.
+
+third-cue
+00:00:00.500 --> 00:00:00.750 align:start position:10%
+Timecode digits roll over.
+
+00:00:00.750 --> 00:00:01.000
+End of the synthetic clip.

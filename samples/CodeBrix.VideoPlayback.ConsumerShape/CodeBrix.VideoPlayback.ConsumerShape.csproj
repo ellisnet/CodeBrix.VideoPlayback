@@ -1,0 +1,54 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>CodeBrix.VideoPlayback.ConsumerShape</AssemblyName>
+    <RootNamespace>CodeBrix.VideoPlayback.ConsumerShape</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <Nullable>disable</Nullable>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <!--
+    THE POINT OF THIS SAMPLE is what it does NOT reference. An application that plays Vorbis-audio .cbv files
+    needs the playback library and a presenter, and nothing else: no Opus package, no codec binary, no
+    windowing toolkit. `dotnet publish` this project and look for CodeBrix.Audio.Opus.dll - it is not there,
+    and that is the check the Phase B gate makes.
+
+    A real application would reference the two PACKAGES; they are project references here because this sample
+    lives in the repository that builds them.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\CodeBrix.VideoPlayback\CodeBrix.VideoPlayback.csproj" />
+    <ProjectReference Include="..\..\src\CodeBrix.VideoPlayback.Skia\CodeBrix.VideoPlayback.Skia.csproj" />
+  </ItemGroup>
+
+  <!--
+    Skia's managed assembly arrives with the presenter package; its NATIVE binary does not, because the
+    library must not choose one for every platform an application might ship on. Choosing one is the
+    APPLICATION's job, and this is an application, so it chooses the Linux build it runs on.
+  -->
+  <ItemGroup>
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux" Version="4.151.0" />
+  </ItemGroup>
+
+  <!--
+    The uncompressed-video decoder is a test and diagnostics codec whose source lives with the tests; it is
+    LINKED here exactly as the tools project links it, so this sample can play a file with no codec package
+    installed at all. A real application would reference a real decoder package instead.
+  -->
+  <ItemGroup>
+    <Compile Include="..\..\tests\CodeBrix.VideoPlayback.Tests\RawVideoDecoder.cs" Link="RawCodec\RawVideoDecoder.cs" />
+    <Compile Include="..\..\tests\CodeBrix.VideoPlayback.Tests\RawVideoDecoderFactory.cs" Link="RawCodec\RawVideoDecoderFactory.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="..\..\tests\assets\raw-vorbis.cbv">
+      <Link>assets\raw-vorbis.cbv</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+</Project>
