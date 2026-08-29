@@ -158,20 +158,11 @@ this sample can reuse that library unchanged.
 
 ---
 
-## Temporary: the local package folder
+## Package references
 
-The AV1 decoder package this sample needs, `CodeBrix.VideoPlayback.Dav1d.BsdLicenseForever`, is not published
-yet. Until it is, it is packed from its own repository into a folder that `Directory.Build.props` adds as an
-extra restore source:
-
-```
-dotnet pack ~/GitHome/CodeBrix.VideoPlayback.Dav1d/src/CodeBrix.VideoPlayback.Dav1d/CodeBrix.VideoPlayback.Dav1d.csproj \
-    -c Release -o ~/ClaudeHome/localfeed_codebrix_videoplayback_2026-08-29/
-```
-
-No `nuget.config` is committed and the machine's own NuGet configuration is untouched. **Delete
-`Directory.Build.props` and pin the published version in `SimpleCbxVideoPlayer.SkiaVideo.csproj` as soon as
-the package is on nuget.org.**
+Every CodeBrix package this sample consumes is the published nuget.org version, including
+`CodeBrix.VideoPlayback.Dav1d.BsdLicenseForever` (published 2026-08-29). No extra restore source and no
+`nuget.config` are needed.
 
 The playback library and its Skia presenter are project references for the same reason the
 `CodeBrix.VideoPlayback.ConsumerShape` sample uses them: this sample lives in the repository that builds
