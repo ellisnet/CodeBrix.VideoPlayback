@@ -120,13 +120,13 @@ device-free run.
 
 THE TEST PROJECT'S OPUS PIN. tests/CodeBrix.VideoPlayback.Tests references
 CodeBrix.Audio.Opus.BsdLicenseForever so the Opus path can be proved once an
-application registers it; the LIBRARY never does. Bumping that pin is OPTIONAL. A
-newer Opus package overrides IPacketSoundDecoder.ConcealLoss and reports
-SupportsLossConcealment true, which would let a packet-loss gap be concealed by
-real Opus PLC rather than filled with silence - but nothing in THIS library ever
-reports a loss (see REPORTED PACKET LOSS above), so bumping it changes nothing that
-these tests can observe. Bump it when a streaming source lands, or simply to keep
-the corpus current.
+application registers it; the LIBRARY never does. The pin was bumped to the
+2026-08-29 Opus release, which overrides IPacketSoundDecoder.ConcealLoss and
+reports SupportsLossConcealment true - so the suite now runs against the package
+with real Opus PLC. Nothing in THIS library ever reports a loss (see REPORTED
+PACKET LOSS above), so the bump changes nothing these tests can observe today; it
+keeps the corpus current, and the PLC path becomes observable the day a streaming
+source lands. Keeping the pin at the newest published Opus is the standing rule.
 
 The suite depends on the golden corpus under tests/assets. When it is missing,
 the tests that need it SKIP rather than fail - see EXTRAS-README.txt for how to
