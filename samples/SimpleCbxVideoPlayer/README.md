@@ -261,7 +261,7 @@ canvas it settled on, so each head names its own (`SkiaGLCanvasElement`, `SKSwap
 
 Every CodeBrix package this sample consumes is the published nuget.org version, including
 `CodeBrix.VideoPlayback.MitLicenseForever`, `CodeBrix.VideoPlayback.Skia.MitLicenseForever` and
-`CodeBrix.VideoPlayback.Dav1d.BsdLicenseForever` (published 2026-08-29). No extra restore source and no
+`CodeBrix.VideoPlayback.Dav1d.BsdLicenseForever` (published 2026-08-30). No extra restore source and no
 `nuget.config` are needed, and nothing outside this folder is built.
 
 Each family adds exactly one more package for its own MVVM toolkit, and the native heads add SkiaSharp's

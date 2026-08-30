@@ -6,10 +6,9 @@
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>
 
-  <!-- TEMPORARY: local pack of the re-split; bump to the published version after Jeremy republishes -->
   <ItemGroup>
-    <PackageReference Include="CodeBrix.VideoPlayback.MitLicenseForever" Version="1.0.242.9999" />
-    <PackageReference Include="CodeBrix.VideoPlayback.Skia.MitLicenseForever" Version="1.0.242.9999" />
+    <PackageReference Include="CodeBrix.VideoPlayback.MitLicenseForever" Version="1.0.242.1044" />
+    <PackageReference Include="CodeBrix.VideoPlayback.Skia.MitLicenseForever" Version="1.0.242.1044" />
   </ItemGroup>
 
   <!--
@@ -20,7 +19,7 @@
     Both packages below are the published nuget.org versions.
   -->
   <ItemGroup>
-    <PackageReference Include="CodeBrix.VideoPlayback.Dav1d.BsdLicenseForever" Version="1.0.242.429" />
+    <PackageReference Include="CodeBrix.VideoPlayback.Dav1d.BsdLicenseForever" Version="1.0.242.1054" />
     <PackageReference Include="CodeBrix.Audio.Opus.BsdLicenseForever" Version="1.0.241.1040" />
   </ItemGroup>
 </Project>
