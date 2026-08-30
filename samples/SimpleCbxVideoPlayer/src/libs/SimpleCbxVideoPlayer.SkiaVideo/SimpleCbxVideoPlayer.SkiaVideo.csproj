@@ -7,8 +7,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="CodeBrix.VideoPlayback.MitLicenseForever" Version="1.0.241.1343" />
-    <PackageReference Include="CodeBrix.VideoPlayback.Skia.MitLicenseForever" Version="1.0.241.1343" />
+    <PackageReference Include="CodeBrix.VideoPlayback.MitLicenseForever" Version="1.0.242.419" />
+    <PackageReference Include="CodeBrix.VideoPlayback.Skia.MitLicenseForever" Version="1.0.242.419" />
   </ItemGroup>
 
   <!--
@@ -19,7 +19,7 @@
     Both packages below are the published nuget.org versions.
   -->
   <ItemGroup>
-    <PackageReference Include="CodeBrix.VideoPlayback.Dav1d.BsdLicenseForever" Version="1.0.241.1363" />
+    <PackageReference Include="CodeBrix.VideoPlayback.Dav1d.BsdLicenseForever" Version="1.0.242.429" />
     <PackageReference Include="CodeBrix.Audio.Opus.BsdLicenseForever" Version="1.0.241.1040" />
   </ItemGroup>
 </Project>
