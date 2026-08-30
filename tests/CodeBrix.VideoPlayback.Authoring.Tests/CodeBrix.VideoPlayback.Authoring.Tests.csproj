@@ -19,7 +19,7 @@
       AUTHORING LIBRARY references neither, and never will - it writes files, it does not play them.
       See MAINTAINER-README.txt.
     -->
-    <PackageReference Include="CodeBrix.VideoPlayback.Dav1d.BsdLicenseForever" Version="1.0.241.1363" />
+    <PackageReference Include="CodeBrix.VideoPlayback.Dav1d.BsdLicenseForever" Version="1.0.242.429" />
     <PackageReference Include="CodeBrix.Audio.Opus.BsdLicenseForever" Version="1.0.241.1040" />
   </ItemGroup>
 
