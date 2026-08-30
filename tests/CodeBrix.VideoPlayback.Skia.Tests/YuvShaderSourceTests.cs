@@ -4,6 +4,7 @@ using CodeBrix.VideoPlayback.Color;
 using CodeBrix.VideoPlayback.Color.Luts;
 using CodeBrix.VideoPlayback.Decoding;
 using CodeBrix.VideoPlayback.Frames;
+using CodeBrix.VideoPlayback.Rendering;
 using CodeBrix.VideoPlayback.Skia.Internal;
 using SilverAssertions;
 using SkiaSharp;

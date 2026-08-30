@@ -1,7 +1,7 @@
 using System;
 using CodeBrix.VideoPlayback.Decoding;
 
-namespace CodeBrix.VideoPlayback.Skia.Internal;
+namespace CodeBrix.VideoPlayback.Rendering;
 
 /// <summary>
 /// The numbers the colour shader needs for one particular frame description: how to read a sample, where the
@@ -11,7 +11,7 @@ namespace CodeBrix.VideoPlayback.Skia.Internal;
 /// This is deliberately a pure function of the frame's description, so it can be checked against the CPU
 /// converter's own constants without a graphics device anywhere in the picture.
 /// </remarks>
-internal readonly struct YuvShaderUniforms
+public readonly struct YuvShaderUniforms
 {
     private YuvShaderUniforms(
         float planeMaximum,
@@ -41,34 +41,34 @@ internal readonly struct YuvShaderUniforms
     /// What a fully-lit texel reads as in sample units: 255 for an 8-bit plane uploaded as R8, 65535 for a
     /// 10-bit or 12-bit plane uploaded as R16.
     /// </summary>
-    internal float PlaneMaximum { get; }
+    public float PlaneMaximum { get; }
 
     /// <summary>The luma sample value that means black - 16 at 8-bit studio range, 0 at full range.</summary>
-    internal float LumaOffset { get; }
+    public float LumaOffset { get; }
 
     /// <summary>The chroma sample value that means "no colour" - 128 at 8 bits.</summary>
-    internal float ChromaOffset { get; }
+    public float ChromaOffset { get; }
 
     /// <summary>The (Y, U, V) coefficients producing red on a 0-to-255 scale.</summary>
-    internal float[] RedRow { get; }
+    public float[] RedRow { get; }
 
     /// <summary>The (Y, U, V) coefficients producing green on a 0-to-255 scale.</summary>
-    internal float[] GreenRow { get; }
+    public float[] GreenRow { get; }
 
     /// <summary>The (Y, U, V) coefficients producing blue on a 0-to-255 scale.</summary>
-    internal float[] BlueRow { get; }
+    public float[] BlueRow { get; }
 
     /// <summary>1 when the chroma planes are half width, 0 when they are full width.</summary>
-    internal float ChromaShiftX { get; }
+    public float ChromaShiftX { get; }
 
     /// <summary>1 when the chroma planes are half height, 0 when they are full height.</summary>
-    internal float ChromaShiftY { get; }
+    public float ChromaShiftY { get; }
 
     /// <summary>1 when a chroma sample sits ON its luma column, 0 when it sits between two.</summary>
-    internal float ChromaCositedX { get; }
+    public float ChromaCositedX { get; }
 
     /// <summary>1 when a chroma sample sits ON its luma row, 0 when it sits between two.</summary>
-    internal float ChromaCositedY { get; }
+    public float ChromaCositedY { get; }
 
     /// <summary>Works out the shader's numbers from a frame's description.</summary>
     /// <param name="color">
@@ -83,7 +83,7 @@ internal readonly struct YuvShaderUniforms
     /// The arithmetic mirrors the core converter's <c>ConversionConstants</c> exactly, in floating point
     /// rather than fixed point, so the two paths produce the same picture to within rounding.
     /// </remarks>
-    internal static YuvShaderUniforms Create(in VideoColorInfo color, int bitDepth, VideoPixelLayout layout, bool monochrome)
+    public static YuvShaderUniforms Create(in VideoColorInfo color, int bitDepth, VideoPixelLayout layout, bool monochrome)
     {
         int scale = 1 << (bitDepth - 8);
         int maximum = (1 << bitDepth) - 1;

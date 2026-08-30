@@ -1,4 +1,4 @@
-namespace CodeBrix.VideoPlayback.Skia.Rendering;
+namespace CodeBrix.VideoPlayback.Rendering;
 
 /// <summary>
 /// Which of the two render paths is actually running - the answer to "what is this presenter doing right

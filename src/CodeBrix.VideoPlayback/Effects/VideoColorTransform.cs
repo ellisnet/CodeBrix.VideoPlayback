@@ -1,4 +1,4 @@
-namespace CodeBrix.VideoPlayback.Skia.Effects;
+namespace CodeBrix.VideoPlayback.Effects;
 
 /// <summary>
 /// A colour change expressed as a function of one colour - the general form an effect is reduced to when the

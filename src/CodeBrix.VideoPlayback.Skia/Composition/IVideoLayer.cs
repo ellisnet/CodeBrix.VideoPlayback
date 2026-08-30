@@ -1,3 +1,4 @@
+using CodeBrix.VideoPlayback.Rendering;
 using SkiaSharp;
 
 namespace CodeBrix.VideoPlayback.Skia.Composition;

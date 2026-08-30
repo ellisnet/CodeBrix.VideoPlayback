@@ -74,6 +74,12 @@ HARD RULES FOR THIS REPOSITORY
    suits the platforms it ships on, and a library that picks one for it breaks
    every other platform. The Skia test project and the sample DO reference
    SkiaSharp.NativeAssets.Linux, because they are things that run here.
+1d. AND ONLY WHAT NEEDS SkiaSharp LIVES IN THE PRESENTER PACKAGE. A type that
+   compiles without naming a Skia type belongs in the core, whatever it is for -
+   see THE CORE / .Skia RE-SPLIT. The check is one grep and it must come back
+   empty:
+       grep -rn 'SkiaSharp\|\bSK[A-Z]' src/CodeBrix.VideoPlayback \
+           --include=*.cs --include=*.csproj
 1b. THE AUTHORING LIBRARY REFERENCES THE CORE AND CodeBrix.VideoProcessing, AND
    NOTHING ELSE. Never SkiaSharp, never a decoder package, never
    CodeBrix.Audio.Opus, never the presenter: it writes files, it does not play
@@ -684,6 +690,21 @@ P2. THE PROCESSOR PATH HAS NO COPY IN IT. The composition surface is created
     change under the caller and no copy-on-write ever moves the surface off our
     memory. Both facts are load-bearing; re-check them if the Skia pin moves.
 
+P2a. AND WRITING BEHIND SKIA'S BACK HAS A PRICE, PAID WITH ONE LINE. Skia CACHES
+    the image a surface's Snapshot() handed back and only throws that cache away
+    when something draws through the surface's canvas. The converter does not
+    draw - that is the whole point of P2 - so Skia never learned the pixels had
+    changed, and CaptureComposedFrame() and CurrentImage handed back the FIRST
+    composed frame for the life of the presenter on the processor path with no
+    overlay layers. (A layer or a Composing handler hid it, because their drawing
+    invalidated the cache.) Found 2026-08-30 while building Recompose(), which
+    could not otherwise show its own work; fixed by calling
+    surface.Canvas.Discard() before the converter writes - which says exactly
+    what is about to happen, every pixel replaced and nothing preserved, and
+    costs nothing on a surface that does not own its pixels. The regression test
+    is SkiaVideoPresenterTests.Every_frame_composed_on_the_processor_is_captured
+    _as_itself: two frames through ONE presenter, captured, compared.
+
 P3. THE GRAPHICS PATH UPLOADS WITH SKImage.FromPixels(SKPixmap) FOLLOWED BY
     SKImage.ToTextureImage(GRContext). FromPixels BORROWS the plane's memory
     rather than copying it, so the samples the decoder wrote reach the driver
@@ -695,12 +716,14 @@ P3. THE GRAPHICS PATH UPLOADS WITH SKImage.FromPixels(SKPixmap) FOLLOWED BY
     wrapper objects per frame; the pixels are still never copied. If a future
     SkiaSharp exposes a texture write, that is the allocation to remove.
 
-P4. ONE SkSL SHADER, IN TWO VARIANTS. Internal/YuvShaderSource builds the source
-    with and without the lookup-table stage; building two rather than binding an
-    identity table to the plain one saves a texture sample per pixel in the
-    common case. Internal/YuvShaderUniforms computes the matrix rows, the sample
-    offsets and the chroma-siting flags, and MIRRORS the CPU converter's
-    ConversionConstants exactly, in floating point rather than fixed point.
+P4. ONE SkSL SHADER, IN TWO VARIANTS. Rendering/YuvShaderSource - in the CORE
+    package since the 2026-08-30 re-split - builds the source with and without
+    the lookup-table stage; building two rather than binding an identity table to
+    the plain one saves a texture sample per pixel in the common case.
+    Rendering/YuvShaderUniforms computes the matrix rows, the sample offsets and
+    the chroma-siting flags, and MIRRORS the CPU converter's ConversionConstants
+    exactly, in floating point rather than fixed point. Both are shader TEXT and
+    shader ARITHMETIC, not a drawing dependency: the core compiles nothing.
 
 P5. CHROMA SITING IN THE SHADER IS THE COORDINATE, NOT A BRANCH. A luma
     coordinate maps to a chroma coordinate one of three ways per axis: straight
@@ -723,13 +746,13 @@ P6. THE RESULTANT LOOKUP TABLE IS A STRIP, NOT A CUBE. SkSL has no
     neighbour. Eight bits a channel is the same quantum as the output surface,
     so nothing is lost; a float atlas was tried and buys nothing here.
 
-P7. THE FENCE IS INSTALLED AND SIGNALLED AROUND THE WHOLE DRAW. SkiaGpuUploadFence
+P7. THE FENCE IS INSTALLED AND SIGNALLED AROUND THE WHOLE DRAW. GpuUploadFence
     goes into VideoFrameBuffer.Tag before the upload and is signalled after
     GRContext.Flush() and Submit(false) - the point at which Skia no longer
     references the host memory. The pool parks the buffer until then.
 
 P8. THE SHADER IS TESTED WITHOUT A GRAPHICS DEVICE. SKRuntimeEffect compiles AND
-    RUNS on Skia's raster backend, so Internal/YuvSurfaceRenderer takes a null
+    RUNS on Skia's raster backend, so .Skia's Internal/YuvSurfaceRenderer takes a null
     GRContext and draws the very same shader with the very same bindings onto a
     software surface. YuvShaderSourceTests then compares it with the core
     converter for ten layout/siting/range/matrix combinations and for six real
@@ -741,6 +764,79 @@ P9. A REAL GRAPHICS CONTEXT IS ALSO AVAILABLE HERE, headlessly. Mesa's
     tests/CodeBrix.VideoPlayback.Skia.Tests/HeadlessGraphicsContext.cs reaches it
     through four P/Invokes to libEGL - nothing is installed. Where it cannot be
     had, the graphics tests skip themselves and say why.
+
+
+THE CORE / .Skia RE-SPLIT (2026-08-30)
+======================================
+THE RULE, and it is the whole of it: ONLY code with a DIRECT SkiaSharp dependency
+lives in CodeBrix.VideoPlayback.Skia. Everything else lives in the core, and
+anything that moves loses a Skia-flavoured name.
+
+WHY. A second presenter is coming - a CodeBrix.Platform add-in - and it must not
+depend on .Skia. The Platform family publishes as one unit and pins ONE SkiaSharp
+version of its own; .Skia pins its own. A package compiled against one SkiaSharp
+and run against another fails at runtime the first time SkiaSharp breaks a
+signature it uses, which happens across majors as a matter of routine. So the
+add-in carries its own Skia binding compiled against the family's pin, and takes
+everything else from the core - which is only possible if "everything else" is
+actually IN the core.
+
+WHAT MOVED, and where it went:
+
+  src/CodeBrix.VideoPlayback/Rendering/     (namespace CodeBrix.VideoPlayback.Rendering)
+      VideoRenderPath, VideoRenderBackend, VideoStretch,
+      VideoRenderPathChangedEventArgs             unchanged names
+      VideoCompositionStatistics                  was SkiaVideoPresenterStatistics
+      GpuUploadFence                              was SkiaGpuUploadFence
+      LutAtlas, CpuLutApplier,
+      YuvShaderUniforms, YuvShaderSource          were internal; now PUBLIC
+      VideoCompositionContext                     was .Skia.Composition; its rect is
+                                                  now a VideoRectangle, not an SKRect
+      VideoRectangle, VideoStretchMath            NEW
+
+  src/CodeBrix.VideoPlayback/Effects/       (namespace CodeBrix.VideoPlayback.Effects)
+      IVideoFrameEffect, LutEffect, EffectComposer, VideoColorTransform
+
+WHAT STAYED, because it genuinely needs SkiaSharp: SkiaVideoPresenter,
+Internal/YuvSurfaceRenderer, Composition/IVideoLayer (it draws on an SKCanvas),
+Composition/VideoComposingEventArgs, and the new SkiaRectangles bridge.
+
+THE JUDGMENT CALL WAS YuvShaderSource, and it went to the core. The text is SkSL,
+Skia's dialect - but it is TEXT. The core compiles nothing and references no
+drawing library; a presenter takes the string and compiles it with whatever it is
+built on. Keeping it in .Skia would have forced the add-in to duplicate the one
+thing that IS the colour arithmetic. Its XML docs say so in as many words.
+
+THE NAMESPACE CHANGE IS SOURCE-BREAKING FOR .Skia CONSUMERS, deliberately and
+with a decision behind it: a [TypeForwardedTo] cannot bridge a namespace change,
+so there is nothing to add that would help. Only using lines break - no member
+signature changed shape except VideoCompositionContext.VideoRect, and
+SkiaRectangles.ToSKRect()/FromSKRect() carry a layer across in one call. The
+package was one day old and its consumers were the sample in this repository and
+Jeremy's own work.
+
+TWO NEW CONSTANTS AND ONE FORWARD. EffectComposer.DefaultSize = 33 is the number
+now, and SkiaVideoPresenter.DefaultEffectLutSize forwards to it, so existing code
+compiles and the two can never drift.
+
+THE TEST SUITES FOLLOWED THE CODE. Every test that needs no drawing device moved
+to tests/CodeBrix.VideoPlayback.Tests: EffectComposerTests (the eight
+presenter-free ones), LutAtlasTests, LutCrossStageEquivalenceTests, LutEffectTests
+(six of seven), GpuUploadFenceTests (was SkiaGpuUploadFenceTests),
+YuvShaderUniformsTests, plus the new VideoRectangleTests and VideoStretchMathTests.
+The five tests in those files that drive a SkiaVideoPresenter came back to
+SkiaVideoPresenterTests, where a presenter belongs. YuvShaderSourceTests and
+LutShaderInterpolationTests stayed in the Skia suite because they COMPILE the
+shader, which needs Skia. TestLuts.cs - the hand-built "invert" and "halve" tables
+both suites grade with - lives in the core suite and is LINKED into the Skia one,
+the same arrangement SteadyStateAllocation.cs already had.
+
+THE PROOF the split is real, and the check to re-run after any change here:
+
+    grep -rn 'SkiaSharp\|\bSK[A-Z]' src/CodeBrix.VideoPlayback \
+        --include=*.cs --include=*.csproj
+
+It must return NOTHING. It does.
 
 
 THE COLOUR LOOKUP ENGINE, AND THE ONE-COMPOSER RULE
@@ -761,11 +857,10 @@ THE MOVE. Lut3D, Lut1D and CubeLutFile used to live in
 CodeBrix.VideoPlayback.Skia.Effects. They are pure arithmetic with no drawing in
 them, and the AUTHORING side needs them without any drawing dependency at all -
 so they moved down into the core while both packages were still unpublished, and
-nothing was kept in .Skia for compatibility. What stayed in .Skia is what is
-genuinely Skia's: LutEffect (the chain element), EffectComposer (the chain
-protocol and the grid the atlas is written from), the internal LutAtlas and
-CpuLutApplier. CubeLutFile.ReadFile used to return a LutEffect; it returns a
-CubeLut now, and LutEffect.FromCubeFile is the convenience that wraps one.
+nothing was kept in .Skia for compatibility. CubeLutFile.ReadFile used to return
+a LutEffect; it returns a CubeLut now, and LutEffect.FromCubeFile is the
+convenience that wraps one. LutEffect, EffectComposer, LutAtlas and CpuLutApplier
+followed them down on 2026-08-30 - see THE CORE / .Skia RE-SPLIT above.
 
 THE ONE-COMPOSER RULE. There is exactly ONE implementation of the composition
 arithmetic in this program, LutComposer, and it is in the core.
@@ -875,7 +970,7 @@ something that is not a node. YuvShaderSource.NeedsFilteredAtlas says which.
 CROSS-STAGE EQUIVALENCE, AND ITS MEASURED TOLERANCE. The claim the engine exists
 to make is that a grade shown at playback and a grade encoded by the pipeline are
 the same grade, and there is a test that measures it:
-tests/CodeBrix.VideoPlayback.Skia.Tests/LutCrossStageEquivalenceTests.cs bakes an
+tests/CodeBrix.VideoPlayback.Tests/LutCrossStageEquivalenceTests.cs bakes an
 effective table from two layers with percentages, applies it to the same 64x48
 RGB24 frame through FFmpeg's lut3d filter and through CpuLutApplier, and compares
 byte for byte. Measured against FFmpeg 7.1.5-0+deb13u1 on this machine:

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using CodeBrix.VideoPlayback.Color.Luts;
 using CodeBrix.VideoPlayback.Decoding;
 using CodeBrix.VideoPlayback.Frames;
+using CodeBrix.VideoPlayback.Rendering;
 using SkiaSharp;
 
 namespace CodeBrix.VideoPlayback.Skia.Internal;

@@ -22,6 +22,12 @@ one-slot frame mailbox, a managed SIMD YUV-to-BGRA converter, and an authoring
 muxer. The video decoder itself arrives as a separate package and registers
 itself; audio plays through CodeBrix.Audio.
 
+It also carries everything a PRESENTER is made of, short of the drawing itself:
+the render-path enums, the letterbox arithmetic, the composition context handed
+to an overlay layer, the composed-effect chain, and the colour shader's source
+text. A presenter package - CodeBrix.VideoPlayback.Skia, or one built on some
+other drawing library - supplies a canvas and nothing else.
+
 What that buys you: this package has NO native binaries, NO drawing dependency,
 and exactly one NuGet dependency. It runs anywhere .NET 10 runs.
 
@@ -36,8 +42,10 @@ Target framework: .NET 10 or later. License: MIT.
 WHAT YOU MUST REGISTER. A file whose codec has no decoder fails with a message
 naming the package to add. Nothing is guessed at and nothing is reflected on.
 
-  video "av01"     needs an AV1 decoder package registered with
-                   VideoDecoders.Register(...)
+  video "av01"     needs CodeBrix.VideoPlayback.Dav1d.BsdLicenseForever
+                   referenced and CodeBrixVideoPlaybackDav1d.Register() called
+                   (any other IVideoDecoderFactory serving "av01" works too, via
+                   VideoDecoders.Register(...))
   audio "vorbis"   works out of the box - CodeBrix.Audio has it built in
   audio "opus"     needs CodeBrix.Audio.Opus referenced and
                    CodeBrixAudioOpus.Register() called
@@ -65,11 +73,13 @@ Or in a project file:
 Its only dependency is CodeBrix.Audio.MitLicenseForever, which is pulled in for
 you. Add, as your application needs them:
 
-  * an AV1 decoder package, to play AV1 video;
+  * CodeBrix.VideoPlayback.Dav1d.BsdLicenseForever, to play AV1 video - the
+    dav1d binding with its seven self-built native libraries, a separate package
+    because it is BSD-2-Clause and carries natives;
   * CodeBrix.Audio.Opus.BsdLicenseForever, to play Opus audio;
   * CodeBrix.VideoPlayback.Skia.MitLicenseForever, if you would rather have
-    frames drawn for you than draw them yourself. It adds one class,
-    SkiaVideoPresenter, which composes the newest frame on an off-screen surface
+    frames drawn for you than draw them yourself. It is built around one class,
+    SkiaVideoPresenter (with IVideoLayer for overlays), which composes the newest frame on an off-screen surface
     - on the graphics device through a single shader, or on the processor
     through the converter above - lets you draw over it, and blits it into
     whatever canvas your application owns. Its own consumer guide is
@@ -115,6 +125,10 @@ KEY NAMESPACES / USINGS
     using CodeBrix.VideoPlayback.Containers.Ogg;       // OggAudioStream (authoring)
     using CodeBrix.VideoPlayback.Containers.Ivf;       // IvfReader (authoring)
     using CodeBrix.VideoPlayback.Codecs;        // Av1Bitstream, RawVideoFormat
+    using CodeBrix.VideoPlayback.Effects;       // IVideoFrameEffect, LutEffect, EffectComposer
+    using CodeBrix.VideoPlayback.Rendering;     // VideoStretch, VideoRenderPath, VideoRectangle,
+                                                //   VideoCompositionContext, VideoStretchMath,
+                                                //   GpuUploadFence, the shader source
 
 Playing a file needs the first three. Everything else is there when you want it.
 
@@ -264,10 +278,9 @@ and when a grade is baked for the authoring pipeline.
     Lut1D  - three per-channel curves. Size 2..65536, Red/Green/Blue, Sample(...),
              CreateIdentity(size), IsMonochrome, the same domain members
     LutInterpolation.Tetrahedral (the default, and FFmpeg's) | Trilinear
-             The presenter in CodeBrix.VideoPlayback.Skia exposes the same enum
-             as SkiaVideoPresenter.EffectInterpolation, where it governs the
-             folding, the shader's read of the composed atlas and the processor
-             path alike.
+             A presenter exposes the same enum as EffectInterpolation, where it
+             governs the folding, the shader's read of the composed atlas and
+             the processor path alike.
 
     CubeLutFile - the ".cube" format, and the ONLY format supported
         CubeLut ReadFile(string path)
@@ -320,9 +333,9 @@ decoded picture and FFmpeg's raw video both carry.
     CubeLutFile.Write(effective, "effective.cube", "my grade");
     // then, at authoring time:  ffmpeg -vf lut3d=file=effective.cube ...
 
-The same chain reaches playback through CodeBrix.VideoPlayback.Skia's
-LutEffect, which is composed by this very code - see that package's own
-AGENT-README.txt. There is exactly ONE implementation of this arithmetic.
+The same chain reaches playback through LutEffect and EffectComposer, below,
+which are composed by this very code. There is exactly ONE implementation of
+this arithmetic.
 
 Sources (…Sources) - five ways in
 ----------------------------------
@@ -438,6 +451,100 @@ Authoring a .cbv file
     has no element for it.
 
 
+The effect chain (…Effects) - what a presenter grades with
+----------------------------------------------------------
+A chain of colour effects is folded ONCE, when the chain changes, into a single
+three-dimensional lookup table. Ten effects then cost what one costs: a graphics
+presenter samples that table once per pixel, and the processor path reads it the
+same way, so the two paths grade identically. None of it needs a presenter, a
+graphics context, a frame or a window.
+
+    IVideoFrameEffect      string Name { get; }
+                           void Compose(EffectComposer composer)
+
+    LutEffect              new LutEffect(Lut3D lut [, string name [, double percent]])
+                           new LutEffect(Lut1D lut [, string name [, double percent]])
+                           new LutEffect(LutLayer layer)
+                           static LutEffect FromCubeFile(string path [, double percent])
+                           static LutEffect FromCube(CubeLut cube, double percent = 100)
+                           ApplyAtPercent, Layer, Lut3D, Lut1D
+
+    EffectComposer         const int DefaultSize = 33
+                           new EffectComposer(int size = DefaultSize)
+                           static Lut3D Compose(IEnumerable<IVideoFrameEffect> effects,
+                                                int size = DefaultSize)
+                           Size, NodeCount, Interpolation
+                           Reset(), ApplyLut(...), ApplyLayer(layer),
+                           Apply(VideoColorTransform transform),
+                           GetNode(r, g, b, out red, out green, out blue), ToLut3D()
+
+    VideoColorTransform    delegate void (ref float red, ref float green, ref float blue)
+
+  An effect is anything expressible as "this colour becomes that colour".
+  Anything that needs to see a pixel's NEIGHBOURS - a blur, a sharpen, a warp -
+  is not an effect; it is an overlay layer, and a presenter gives it a canvas.
+
+    Lut3D graded = EffectComposer.Compose(new IVideoFrameEffect[]
+    {
+        LutEffect.FromCubeFile("film-stock.cube", 70),
+        LutEffect.FromCubeFile("cool-shadows.cube"),
+    });
+
+Presenting (…Rendering) - the pieces a presenter is built from
+--------------------------------------------------------------
+Everything here is drawing-library-free on purpose, so that CodeBrix.VideoPlayback.Skia
+and any other presenter share one definition rather than copying it.
+
+    VideoRenderPath        GpuAuto (default) | GpuNoFallback | Cpu - what you WANT
+    VideoRenderBackend     Gpu | Cpu - what is actually RUNNING
+    VideoRenderPathChangedEventArgs   Backend, Reason
+    VideoStretch           None | Fill | Uniform | UniformToFill
+
+    VideoRectangle         a rectangle in floating-point pixels, and no more
+                           new VideoRectangle(left, top, right, bottom)
+                           Create(left, top, width, height) / Create(width, height)
+                           Left, Top, Right, Bottom, Width, Height, MidX, MidY,
+                           IsEmpty, Empty, equality, ToString
+
+    VideoStretchMath       static VideoRectangle ComputeDestination(
+                               VideoRectangle destination,
+                               int contentWidth, int contentHeight,
+                               VideoStretch stretch)
+                           The letterbox arithmetic, on its own - the same answer
+                           a host view needs for "where on screen is this pixel".
+
+    VideoCompositionContext   what an overlay layer is told: VideoRect (a
+                           VideoRectangle), FrameWidth/Height, DisplayWidth/Height,
+                           Timestamp, FrameNumber, Backend, EffectsActive
+
+    VideoCompositionStatistics   FramesComposed, FramesDrawn, SurfaceAllocations,
+                           EffectCompositions
+
+    GpuUploadFence         IVideoFrameFence: IsSignaled, Signal(). A presenter puts
+                           one in a frame buffer's Tag before a texture upload and
+                           signals it once the graphics commands are submitted, so
+                           the pool cannot recycle memory a driver is still reading.
+
+    LutAtlas               the composed grid as the two-dimensional strip a shader
+                           samples: BytesPerPixel, GetWidth(size), GetHeight(size),
+                           Write(EffectComposer, Span<byte>, stride)
+
+    CpuLutApplier          Apply(Lut3D, BgraFrameBuffer, LutInterpolation) - the
+                           per-pixel road, read exactly as the shader reads it
+
+    YuvShaderUniforms      Create(in VideoColorInfo, bitDepth, layout, monochrome)
+                           the matrix rows, offsets and chroma-siting numbers a
+                           colour shader is handed - a pure function of the frame
+
+    YuvShaderSource        Build() / Build(LutInterpolation) / NeedsFilteredAtlas(...)
+                           LumaChild, ChromaBlueChild, ChromaRedChild, LookupChild
+                           The shader's SOURCE TEXT, in SkSL. It is content, not a
+                           dependency: this package compiles nothing and references
+                           no drawing library. A presenter takes the string, compiles
+                           it with whatever library it is built on, and binds the
+                           four children named above.
+
+
 COMPLETE EXAMPLES
 =================
 
@@ -492,10 +599,10 @@ COMPLETE EXAMPLES
 3. Register a decoder package and play AV1.
 
     using CodeBrix.VideoPlayback;
-    using CodeBrix.VideoPlayback.Decoding;
+    using CodeBrix.VideoPlayback.Dav1d;   // from CodeBrix.VideoPlayback.Dav1d.BsdLicenseForever
 
-    // At start-up, once. The decoder package supplies the factory.
-    VideoDecoders.Register(SomeAv1DecoderPackage.Factory);
+    // At start-up, once. Gated and idempotent; registers the dav1d factory for "av01".
+    CodeBrixVideoPlaybackDav1d.Register();
 
     VideoPlaybackSession session = new VideoPlaybackSession();
     session.Open("https://example.invalid/clip.webm");
@@ -769,7 +876,10 @@ WHAT THIS PACKAGE DOES NOT DO
 - IT DOES NOT DECODE VIDEO. There is no codec here at all: the decoder seam is
   the product. A decoder package supplies the codec.
 - IT DOES NOT DRAW. There is no drawing surface, no bitmap type, no dependency on
-  any drawing library. It hands you planes and, if you want them, BGRA pixels.
+  any drawing library. It hands you planes and, if you want them, BGRA pixels -
+  and everything a presenter needs EXCEPT the canvas: the render-path enums, the
+  letterbox arithmetic, the effect chain, the shader's source text. A presenter
+  package supplies the canvas.
 - No MP4 / ISOBMFF, no H.264, no HEVC, no AAC.
 - No hardware or GPU decoding.
 - No HDR tone-mapping.
@@ -836,6 +946,9 @@ read a .cube lookup table             CubeLutFile.ReadFile(path)
 fold several .cube tables into one    LutComposer.Compose(layers)
   (each with its own strength)        LutLayer.FromCubeFile(path, percent)
 write the result out for FFmpeg       CubeLutFile.Write(effective, path, title)
+fold a chain of effects into one      EffectComposer.Compose(effects)
+  table, with no presenter            LutEffect.FromCubeFile(path, percent)
+work out where a picture goes         VideoStretchMath.ComputeDestination(...)
 find out why it failed                catch VideoPlaybackException, or session.MediaFailed
 
 Signatures worth memorising:

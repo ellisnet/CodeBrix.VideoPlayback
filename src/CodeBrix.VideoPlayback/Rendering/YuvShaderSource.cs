@@ -1,13 +1,21 @@
 using System;
 using CodeBrix.VideoPlayback.Color.Luts;
 
-namespace CodeBrix.VideoPlayback.Skia.Internal;
+namespace CodeBrix.VideoPlayback.Rendering;
 
 /// <summary>
 /// The one shader the graphics path runs: three planes in, one colour-managed pixel out, with the whole
 /// effect chain folded into a single lookup.
 /// </summary>
 /// <remarks>
+/// <para>
+/// <b>What this class hands back is TEXT.</b> The text is written in SkSL, the shading language Skia
+/// compiles, because that is the dialect every presenter in this family feeds to a runtime effect. That
+/// makes the source content, not a dependency: this package references no drawing library, names no drawing
+/// type, and never compiles anything. A presenter takes the string, compiles it with whatever library it is
+/// built on, and binds the children named below. Keeping the text here rather than in a presenter package is
+/// what stops every presenter from carrying its own copy of the one thing that IS the colour arithmetic.
+/// </para>
 /// <para>
 /// THREE variants are built from the same body: one that stops at the colour conversion, and one for each
 /// way of reading the resultant lookup table between its nodes. Building separate shaders rather than
@@ -34,7 +42,7 @@ namespace CodeBrix.VideoPlayback.Skia.Internal;
 /// exactly the weights 3/4 and 1/4.
 /// </para>
 /// </remarks>
-internal static class YuvShaderSource
+public static class YuvShaderSource
 {
     /// <summary>The uniforms and helper both variants share.</summary>
     private const string Preamble = @"uniform shader yPlane;
@@ -184,26 +192,26 @@ half4 main(float2 coordinate) {
 ";
 
     /// <summary>The name of the child the luma plane is bound to.</summary>
-    internal const string LumaChild = "yPlane";
+    public const string LumaChild = "yPlane";
 
     /// <summary>The name of the child the first chroma plane is bound to.</summary>
-    internal const string ChromaBlueChild = "uPlane";
+    public const string ChromaBlueChild = "uPlane";
 
     /// <summary>The name of the child the second chroma plane is bound to.</summary>
-    internal const string ChromaRedChild = "vPlane";
+    public const string ChromaRedChild = "vPlane";
 
     /// <summary>The name of the child the resultant lookup atlas is bound to.</summary>
-    internal const string LookupChild = "lookupTable";
+    public const string LookupChild = "lookupTable";
 
     /// <summary>Builds the shader source for the variant that stops at the colour conversion.</summary>
-    /// <returns>SkSL source suitable for <c>SKRuntimeEffect.CreateShader</c>.</returns>
-    internal static string Build() => Preamble + Body + PlainTail;
+    /// <returns>SkSL source, ready for a runtime-effect compiler.</returns>
+    public static string Build() => Preamble + Body + PlainTail;
 
     /// <summary>Builds the shader source for a variant that reads the resultant lookup table.</summary>
     /// <param name="interpolation">How the table is read between its nodes.</param>
-    /// <returns>SkSL source suitable for <c>SKRuntimeEffect.CreateShader</c>.</returns>
+    /// <returns>SkSL source, ready for a runtime-effect compiler.</returns>
     /// <exception cref="ArgumentOutOfRangeException">The interpolation is not one this shader knows.</exception>
-    internal static string Build(LutInterpolation interpolation)
+    public static string Build(LutInterpolation interpolation)
     {
         string lookup = interpolation switch
         {
@@ -224,6 +232,6 @@ half4 main(float2 coordinate) {
     /// True when the sampler's own filter does part of the work - trilinear - and false when the shader
     /// fetches node values itself and a filter would corrupt them.
     /// </returns>
-    internal static bool NeedsFilteredAtlas(LutInterpolation interpolation) =>
+    public static bool NeedsFilteredAtlas(LutInterpolation interpolation) =>
         interpolation == LutInterpolation.Trilinear;
 }

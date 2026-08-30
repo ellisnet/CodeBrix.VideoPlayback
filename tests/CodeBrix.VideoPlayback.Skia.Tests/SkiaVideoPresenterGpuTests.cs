@@ -2,9 +2,10 @@ using System;
 using CodeBrix.VideoPlayback.Color;
 using CodeBrix.VideoPlayback.Color.Luts;
 using CodeBrix.VideoPlayback.Decoding;
+using CodeBrix.VideoPlayback.Effects;
 using CodeBrix.VideoPlayback.Frames;
-using CodeBrix.VideoPlayback.Skia.Effects;
-using CodeBrix.VideoPlayback.Skia.Rendering;
+using CodeBrix.VideoPlayback.Rendering;
+using CodeBrix.VideoPlayback.Tests;
 using SilverAssertions;
 using SkiaSharp;
 using Xunit;
@@ -182,7 +183,7 @@ public class SkiaVideoPresenterGpuTests
             byte[] inverted;
             using (SkiaVideoPresenter presenter = new SkiaVideoPresenter(graphics))
             {
-                presenter.Effects.Add(new LutEffect(EffectComposerTests.Invert(33), "invert"));
+                presenter.Effects.Add(new LutEffect(TestLuts.Invert(33), "invert"));
                 presenter.Present(frame);
                 presenter.Update();
                 presenter.EffectsActive.Should().BeTrue();

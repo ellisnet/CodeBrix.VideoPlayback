@@ -1,7 +1,7 @@
 using System;
-using CodeBrix.VideoPlayback.Skia.Effects;
+using CodeBrix.VideoPlayback.Effects;
 
-namespace CodeBrix.VideoPlayback.Skia.Internal;
+namespace CodeBrix.VideoPlayback.Rendering;
 
 /// <summary>
 /// Lays a composed three-dimensional lookup grid out as the two-dimensional strip the shader samples.
@@ -17,20 +17,20 @@ namespace CodeBrix.VideoPlayback.Skia.Internal;
 /// be blended, so nothing must touch them between here and the sampler.
 /// </para>
 /// </remarks>
-internal static class LutAtlas
+public static class LutAtlas
 {
     /// <summary>The number of bytes one atlas pixel occupies.</summary>
-    internal const int BytesPerPixel = 4;
+    public const int BytesPerPixel = 4;
 
     /// <summary>The width in pixels of the atlas for a grid of the given size.</summary>
     /// <param name="size">The number of nodes along each axis.</param>
     /// <returns><paramref name="size" /> squared.</returns>
-    internal static int GetWidth(int size) => size * size;
+    public static int GetWidth(int size) => size * size;
 
     /// <summary>The height in pixels of the atlas for a grid of the given size.</summary>
     /// <param name="size">The number of nodes along each axis.</param>
     /// <returns><paramref name="size" />.</returns>
-    internal static int GetHeight(int size) => size;
+    public static int GetHeight(int size) => size;
 
     /// <summary>Writes a composed grid into an atlas.</summary>
     /// <param name="composer">The composed grid.</param>
@@ -38,7 +38,7 @@ internal static class LutAtlas
     /// <param name="stride">The distance in bytes from one atlas row to the next.</param>
     /// <exception cref="ArgumentNullException"><paramref name="composer" /> is null.</exception>
     /// <exception cref="ArgumentException">The destination is too small for the atlas.</exception>
-    internal static void Write(EffectComposer composer, Span<byte> destination, int stride)
+    public static void Write(EffectComposer composer, Span<byte> destination, int stride)
     {
         if (composer == null) throw new ArgumentNullException(nameof(composer));
 

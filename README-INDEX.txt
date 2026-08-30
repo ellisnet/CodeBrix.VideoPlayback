@@ -19,8 +19,9 @@ AGENT-README FILES (consumer documentation, one per NuGet package)
 
   src/CodeBrix.VideoPlayback.Skia/AGENT-README.txt
       CodeBrix.VideoPlayback.Skia.MitLicenseForever - Draws the frames the
-      playback library decodes, through SkiaSharp. One class, SkiaVideoPresenter:
-      it composes the newest frame on an off-screen surface - on the graphics
+      playback library decodes, through SkiaSharp - the presenter for hosts that
+      are NOT CodeBrix.Platform applications (WPF, WinUI, MAUI, Avalonia). Built
+      around one class, SkiaVideoPresenter, plus IVideoLayer for overlays: it composes the newest frame on an off-screen surface - on the graphics
       device through one shader that does colour conversion and a resultant
       colour lookup table in a single pass, or on the processor through the
       core's vector converter - lets the application draw over it, and blits the
@@ -50,8 +51,9 @@ MAINTAINER AND EXTRAS
   EXTRAS-README.txt
       The headless tools (cbvinfo, cbvdecode, cbvmux, lutbake), the sample-video
       corpus generator that drives the authoring library, the consumer-shape
-      sample, the golden test-asset corpus and the scripts and tools that
-      regenerate both corpora.
+      sample, the SimpleCbxVideoPlayer application sample under samples/, the
+      golden test-asset corpus and the scripts and tools that regenerate both
+      corpora.
 
 FORMAT SPECIFICATIONS
 ---------------------

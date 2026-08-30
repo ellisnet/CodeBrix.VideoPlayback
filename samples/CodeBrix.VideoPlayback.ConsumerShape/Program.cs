@@ -5,8 +5,8 @@ using System.Threading;
 using CodeBrix.VideoPlayback;
 using CodeBrix.VideoPlayback.Playback;
 using CodeBrix.VideoPlayback.RawCodec;
+using CodeBrix.VideoPlayback.Rendering;
 using CodeBrix.VideoPlayback.Skia;
-using CodeBrix.VideoPlayback.Skia.Rendering;
 using SkiaSharp;
 
 namespace CodeBrix.VideoPlayback.ConsumerShape;

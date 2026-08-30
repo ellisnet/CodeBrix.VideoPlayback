@@ -3,7 +3,7 @@ using System.Diagnostics;
 using System.Threading;
 using CodeBrix.VideoPlayback.Playback;
 using CodeBrix.VideoPlayback.RawCodec;
-using CodeBrix.VideoPlayback.Skia.Rendering;
+using CodeBrix.VideoPlayback.Rendering;
 using SilverAssertions;
 using SkiaSharp;
 using Xunit;

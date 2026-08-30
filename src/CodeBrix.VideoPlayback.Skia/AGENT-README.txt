@@ -22,6 +22,16 @@ owns.
 There is exactly one class you have to learn: SkiaVideoPresenter. Attach it to
 a session's presenter, call Draw from your paint handler, and you have video.
 
+WHERE THE TYPES LIVE. This package holds ONLY what genuinely needs SkiaSharp:
+SkiaVideoPresenter itself, the drawing seam (IVideoLayer, VideoComposingEventArgs)
+and the rectangle bridge (SkiaRectangles). Everything else a presenter needs -
+the render-path enums, VideoStretch, the composition context, the statistics, the
+upload fence, the whole effect chain (IVideoFrameEffect, LutEffect,
+EffectComposer) and the geometry (VideoRectangle, VideoStretchMath) - lives in
+the PLAYBACK library, which has no drawing dependency, so that a different
+presenter can be built on the same pieces without duplicating one line of them.
+You get all of it by referencing this package; the usings are listed below.
+
 WHAT IT ACTUALLY DOES, AND WHY THE SHAPE IS WHAT IT IS
 
   * TWO RENDER PATHS, BOTH FIRST CLASS. Give it a GRContext and the three
@@ -92,16 +102,17 @@ you.
 
 KEY NAMESPACES / USINGS
 =======================
-    using CodeBrix.VideoPlayback.Skia;              // SkiaVideoPresenter
-    using CodeBrix.VideoPlayback.Skia.Rendering;    // VideoStretch, VideoRenderPath,
-                                                    //   VideoRenderBackend, the fence,
-                                                    //   the statistics
-    using CodeBrix.VideoPlayback.Skia.Composition;  // IVideoLayer, VideoCompositionContext,
-                                                    //   VideoComposingEventArgs
-    using CodeBrix.VideoPlayback.Skia.Effects;      // IVideoFrameEffect, LutEffect,
-                                                    //   EffectComposer
+    using CodeBrix.VideoPlayback.Skia;              // SkiaVideoPresenter, SkiaRectangles
+    using CodeBrix.VideoPlayback.Skia.Composition;  // IVideoLayer, VideoComposingEventArgs
+    using CodeBrix.VideoPlayback.Rendering;         // VideoStretch, VideoRenderPath,
+                                                    //   VideoRenderBackend, VideoCompositionContext,
+                                                    //   VideoCompositionStatistics, GpuUploadFence,
+                                                    //   VideoRectangle, VideoStretchMath
+                                                    //   - all in the CORE package
+    using CodeBrix.VideoPlayback.Effects;           // IVideoFrameEffect, LutEffect,
+                                                    //   EffectComposer - also the CORE package
     using CodeBrix.VideoPlayback.Color.Luts;        // Lut3D, Lut1D, CubeLutFile, LutLayer,
-                                                    //   LutComposer - all in the CORE package
+                                                    //   LutComposer - also the CORE package
 
 And, from the playback library and Skia itself:
 
@@ -203,7 +214,7 @@ Facts about what is showing
 
 Diagnostics
 
-    SkiaVideoPresenterStatistics GetStatistics()
+    VideoCompositionStatistics GetStatistics()
     void ResetStatistics()
 
   FramesComposed, FramesDrawn, SurfaceAllocations, EffectCompositions.
@@ -211,11 +222,27 @@ Diagnostics
   only when the frame size changes; EffectCompositions should rise only when
   you edit the chain.
 
+Recomposing what is already on screen
+
+    void Recompose()
+
+  Editing Effects while playback is PAUSED changes nothing visible, because the
+  picture is only built when a frame arrives and none is coming. Recompose()
+  builds it again from the frame the presenter is still holding, updates
+  CurrentImage, and raises Invalidated so the view repaints. Nothing calls it
+  for you - the chain is edited on whatever thread you like, while a composition
+  must happen on the drawing thread, and a chain built up in several steps would
+  otherwise recompose once per step. So: edit the chain, then call this, on the
+  drawing thread. It does nothing at all before the first frame.
+
 Geometry, as a pure function
 
     static SKRect ComputeDestinationRect(SKRect destination,
                                          int contentWidth, int contentHeight,
                                          VideoStretch stretch)
+
+  A two-line conversion around VideoStretchMath.ComputeDestination in the core,
+  which is where every presenter in the family reads the same arithmetic.
 
   The same arithmetic Draw uses, exposed because it is what a host view needs
   in order to answer "where on screen is this video pixel" - for a click, a
@@ -303,8 +330,8 @@ IVideoFrameEffect, LutEffect, EffectComposer
   Anything that needs to see a pixel's NEIGHBOURS - a blur, a sharpen, a warp -
   is not an effect; it is a layer, and it gets a whole canvas.
 
-SkiaGpuUploadFence
-------------------
+GpuUploadFence  (CodeBrix.VideoPlayback.Rendering, in the CORE package)
+----------------------------------------------------------------------
     bool IsSignaled { get; }    void Signal()
 
   You will not normally touch this. The presenter puts one in a frame buffer's
@@ -312,6 +339,17 @@ SkiaGpuUploadFence
   been submitted, which is what stops the pool handing that memory back to a
   decoder while a driver is still reading it. It is public so that a presenter
   of your own can use the same mechanism.
+
+SkiaRectangles
+--------------
+    static SKRect ToSKRect(this VideoRectangle rectangle)
+    static VideoRectangle FromSKRect(SKRect rectangle)
+    static VideoRectangle ToVideoRectangle(this SKRect rectangle)
+
+  The playback library says where a picture goes as a VideoRectangle - four
+  floats, no drawing library - so that one piece of geometry serves every
+  presenter. These two lines convert. You meet a VideoRectangle in a layer's
+  VideoCompositionContext.VideoRect, and this is how it becomes an SKRect.
 
 
 COMPLETE EXAMPLES
@@ -321,7 +359,7 @@ COMPLETE EXAMPLES
 
     using CodeBrix.VideoPlayback;
     using CodeBrix.VideoPlayback.Skia;
-    using CodeBrix.VideoPlayback.Skia.Rendering;
+    using CodeBrix.VideoPlayback.Rendering;
     using SkiaSharp;
 
     public sealed class Player : IDisposable
@@ -408,7 +446,7 @@ COMPLETE EXAMPLES
 
 5. Grade the picture with a lookup table.
 
-    using CodeBrix.VideoPlayback.Skia.Effects;
+    using CodeBrix.VideoPlayback.Effects;
 
     presenter.Effects.Add(LutEffect.FromCubeFile("teal-and-orange.cube"));
     presenter.Effects.Add(LutEffect.FromCubeFile("film-stock.cube", 60));
@@ -420,7 +458,7 @@ COMPLETE EXAMPLES
 
 6. Write an effect that is not a file.
 
-    using CodeBrix.VideoPlayback.Skia.Effects;
+    using CodeBrix.VideoPlayback.Effects;
 
     public sealed class Desaturate : IVideoFrameEffect
     {
@@ -445,6 +483,7 @@ COMPLETE EXAMPLES
 7. Draw on the video.
 
     using CodeBrix.VideoPlayback.Skia.Composition;
+    using CodeBrix.VideoPlayback.Rendering;
 
     public sealed class TimecodeBar : IVideoLayer
     {
@@ -535,7 +574,7 @@ them.
     using CodeBrix.VideoPlayback;
     using CodeBrix.VideoPlayback.Playback;
     using CodeBrix.VideoPlayback.Skia;
-    using CodeBrix.VideoPlayback.Skia.Rendering;
+    using CodeBrix.VideoPlayback.Rendering;
     using SkiaSharp;
 
     using VideoPlaybackSession session = new VideoPlaybackSession();
@@ -665,6 +704,12 @@ WHAT THIS PACKAGE DOES NOT DO
     recorder is an authoring tool, and authoring lives elsewhere in this
     family.
 
+  * IT DOES NOT HOLD THE PIECES A PRESENTER IS MADE OF. The render-path enums,
+    the composition context, the statistics, the upload fence, the effect chain
+    and the letterbox arithmetic all live in the drawing-free playback library,
+    so that a presenter built on some other drawing library shares them rather
+    than copying them. This package is the SkiaSharp half and nothing else.
+
 
 WORKING EXAMPLES ON GITHUB
 ==========================
@@ -679,9 +724,11 @@ WORKING EXAMPLES ON GITHUB
 
   tests/CodeBrix.VideoPlayback.Skia.Tests
       Every part of this package, exercised: the letterbox arithmetic, the
-      render-path rules, the composition surface, the layers, the effect chain,
-      the upload fence, and the colour shader measured pixel for pixel against
-      the playback library's own converter.
+      render-path rules, the composition surface, the layers, recomposing a
+      paused picture, and the colour shader measured pixel for pixel against
+      the playback library's own converter. The effect chain, the upload fence
+      and the letterbox arithmetic are exercised in
+      tests/CodeBrix.VideoPlayback.Tests, where they now live.
 
 
 QUICK REFERENCE CARD
@@ -704,6 +751,7 @@ Apply grades without a graphics card  AllowEffectsOnCpu = true
 Trade grade accuracy for speed        EffectInterpolation = LutInterpolation.Trilinear
 Ask whether grades are applied        presenter.EffectsActive
 See the composed grade                presenter.GetResultantLut()
+Show a grade edited while paused      presenter.Recompose()
 Draw over the video                   Layers.Add(myLayer) / Composing += handler
 Take a screenshot                     using SKImage p = presenter.CaptureComposedFrame()
 Composite it yourself                 presenter.CurrentImage
@@ -711,4 +759,6 @@ Repaint when a frame arrives          presenter.Invalidated
 Know what is showing                  CurrentFrameNumber, CurrentTimestamp
 Check nothing is leaking              presenter.GetStatistics().SurfaceAllocations
 Where is this video pixel on screen   SkiaVideoPresenter.ComputeDestinationRect(...)
+Turn a layer's rectangle into an      context.VideoRect.ToSKRect()
+  SKRect
 ================================================================================

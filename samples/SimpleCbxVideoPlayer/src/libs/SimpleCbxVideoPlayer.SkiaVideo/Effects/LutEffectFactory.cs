@@ -1,7 +1,7 @@
-using CodeBrix.VideoPlayback.Skia.Effects;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using CodeBrix.VideoPlayback.Effects;
 
 namespace SimpleCbxVideoPlayer.SkiaVideo.Effects;
 

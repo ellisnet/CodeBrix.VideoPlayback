@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using CodeBrix.VideoPlayback.Color.Luts;
 
-namespace CodeBrix.VideoPlayback.Skia.Effects;
+namespace CodeBrix.VideoPlayback.Effects;
 
 /// <summary>
 /// The grid an effect chain is folded into: one resultant three-dimensional lookup table that says what every
@@ -37,21 +37,31 @@ namespace CodeBrix.VideoPlayback.Skia.Effects;
 /// </remarks>
 public sealed class EffectComposer
 {
+    /// <summary>The number of nodes along each axis a composer uses when nobody names a size.</summary>
+    /// <remarks>
+    /// Thirty-three is the size the ".cube" convention settled on, and is enough for any smooth colour
+    /// change: 35,937 nodes, a 1089-by-33 atlas, 143 kilobytes of texture. Presenters compose at this size
+    /// by default too, so a table baked here and a chain shown on screen agree without anyone naming a
+    /// number.
+    /// </remarks>
+    public const int DefaultSize = 33;
+
     private readonly float[] nodes;
 
     /// <summary>Creates a composer whose grid starts as the table that changes nothing.</summary>
     /// <param name="size">
     /// The number of nodes along each axis, between <see cref="Lut3D.MinimumSize" /> and
-    /// <see cref="Lut3D.MaximumSize" />. Thirty-three is the size the ".cube" convention settled on.
+    /// <see cref="Lut3D.MaximumSize" />. <see cref="DefaultSize" /> is the size the ".cube" convention
+    /// settled on.
     /// </param>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="size" /> is outside that range.</exception>
     /// <remarks>
     /// A composer needs NO presenter, no graphics context, no frame and no window - folding a chain into a
     /// grid is arithmetic on the tables. So an application that only wants to compose effects and write the
-    /// result out, with no video anywhere in it, can construct one directly and never touch
-    /// <see cref="SkiaVideoPresenter" />.
+    /// result out, with no video anywhere in it, can construct one directly and never name a presenter at
+    /// all.
     /// </remarks>
-    public EffectComposer(int size = SkiaVideoPresenter.DefaultEffectLutSize)
+    public EffectComposer(int size = DefaultSize)
     {
         if (size < Lut3D.MinimumSize || size > Lut3D.MaximumSize)
         {
@@ -73,12 +83,10 @@ public sealed class EffectComposer
     /// <returns>The table the whole chain reduces to, or null when the chain holds no effect.</returns>
     /// <remarks>
     /// The presenter-free way to get at what a chain does. This is the same arithmetic, at the same default
-    /// size, that <see cref="SkiaVideoPresenter.GetResultantLut" /> performs, so a table composed here and
-    /// one composed for playback agree exactly.
+    /// size, that a presenter's <c>GetResultantLut</c> performs, so a table composed here and one composed
+    /// for playback agree exactly.
     /// </remarks>
-    public static Lut3D Compose(
-        IEnumerable<IVideoFrameEffect> effects,
-        int size = SkiaVideoPresenter.DefaultEffectLutSize)
+    public static Lut3D Compose(IEnumerable<IVideoFrameEffect> effects, int size = DefaultSize)
     {
         if (effects == null) { return null; }
 

@@ -43,7 +43,12 @@ letterboxed however you asked. It depends on plain SkiaSharp and nothing else: n
 view package, no native asset, no windowing toolkit.
 
 The two packages are separate so that the choice stays yours. An application that
-draws frames itself, or runs where Skia does not, takes the first alone.
+draws frames itself, or runs where Skia does not, takes the first alone. The
+split runs one way only: this package holds what genuinely needs SkiaSharp, and
+everything else a presenter is made of — the render paths, the letterbox
+arithmetic, the composed effect chain, the shader's source text — lives in the
+drawing-free library above, so a presenter built on some other drawing library
+shares those pieces instead of copying them.
 
 ## The authoring library
 

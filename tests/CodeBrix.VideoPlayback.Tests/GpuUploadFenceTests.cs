@@ -1,23 +1,23 @@
 using System;
 using CodeBrix.VideoPlayback.Decoding;
 using CodeBrix.VideoPlayback.Frames;
-using CodeBrix.VideoPlayback.Skia.Rendering;
+using CodeBrix.VideoPlayback.Rendering;
 using SilverAssertions;
 using Xunit;
 
-namespace CodeBrix.VideoPlayback.Skia.Tests;
+namespace CodeBrix.VideoPlayback.Tests;
 
 /// <summary>
-/// Checks that the presenter's upload fence does what the pool expects of it: park a buffer until the
+/// Checks that a presenter's upload fence does what the pool expects of it: park a buffer until the
 /// graphics work that was reading it has been submitted, and release it the moment that happens.
 /// </summary>
-public class SkiaGpuUploadFenceTests
+public class GpuUploadFenceTests
 {
     [Fact]
     public void A_new_fence_is_not_signalled_and_signalling_is_final()
     {
         //Arrange
-        SkiaGpuUploadFence fence = new SkiaGpuUploadFence();
+        GpuUploadFence fence = new GpuUploadFence();
 
         //Act
         bool before = fence.IsSignaled;
@@ -35,7 +35,7 @@ public class SkiaGpuUploadFenceTests
     {
         //Arrange
         using PinnedFrameBufferPool pool = new PinnedFrameBufferPool();
-        SkiaGpuUploadFence fence = new SkiaGpuUploadFence();
+        GpuUploadFence fence = new GpuUploadFence();
 
         VideoFrameBufferDescriptor descriptor =
             new VideoFrameBufferDescriptor(32, 16, VideoPixelLayout.I420, 8);
@@ -69,7 +69,7 @@ public class SkiaGpuUploadFenceTests
     {
         //Arrange
         using PinnedFrameBufferPool pool = new PinnedFrameBufferPool();
-        SkiaGpuUploadFence fence = new SkiaGpuUploadFence();
+        GpuUploadFence fence = new GpuUploadFence();
         fence.Signal();
 
         VideoFrameBufferDescriptor descriptor =
@@ -96,7 +96,7 @@ public class SkiaGpuUploadFenceTests
             new VideoFrameBufferDescriptor(32, 16, VideoPixelLayout.I420, 8);
 
         VideoFrameBuffer buffer = pool.Rent(descriptor);
-        SkiaGpuUploadFence fence = new SkiaGpuUploadFence();
+        GpuUploadFence fence = new GpuUploadFence();
         fence.Signal();
         buffer.Tag = fence;
         pool.Return(buffer);

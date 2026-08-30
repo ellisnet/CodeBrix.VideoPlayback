@@ -36,10 +36,13 @@
 
   <!--
     The steady-state allocation helper is LINKED from the core test project for the same reason: one copy of
-    the reasoning about why an "allocates nothing" assertion has to be measured more than once.
+    the reasoning about why an "allocates nothing" assertion has to be measured more than once. So are the
+    two hand-built grading tables, so that the effect tests in the core suite and the presenter tests here
+    grade with one definition of "invert" and one of "halve".
   -->
   <ItemGroup>
     <Compile Include="..\CodeBrix.VideoPlayback.Tests\SteadyStateAllocation.cs" Link="SteadyStateAllocation.cs" />
+    <Compile Include="..\CodeBrix.VideoPlayback.Tests\TestLuts.cs" Link="TestLuts.cs" />
   </ItemGroup>
 
   <ItemGroup>

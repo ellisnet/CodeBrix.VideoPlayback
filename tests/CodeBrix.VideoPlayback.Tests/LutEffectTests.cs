@@ -1,16 +1,15 @@
 using System;
 using System.IO;
 using CodeBrix.VideoPlayback.Color.Luts;
-using CodeBrix.VideoPlayback.Skia.Effects;
-using CodeBrix.VideoPlayback.Skia.Rendering;
+using CodeBrix.VideoPlayback.Effects;
 using SilverAssertions;
 using Xunit;
 
-namespace CodeBrix.VideoPlayback.Skia.Tests;
+namespace CodeBrix.VideoPlayback.Tests;
 
 /// <summary>
-/// Checks the presenter-side lookup effect: the strength it is applied at, where it can be read from, and
-/// that composing it gives what the core's own engine gives.
+/// Checks the lookup effect: the strength it is applied at, where it can be read from, and that composing it
+/// gives what the core's own engine gives.
 /// </summary>
 public class LutEffectTests
 {
@@ -18,8 +17,8 @@ public class LutEffectTests
     public void An_effect_applies_its_whole_table_unless_it_is_told_otherwise()
     {
         //Arrange & Act
-        LutEffect whole = new LutEffect(EffectComposerTests.Invert(9));
-        LutEffect half = new LutEffect(EffectComposerTests.Invert(9), "half an inversion", 50d);
+        LutEffect whole = new LutEffect(TestLuts.Invert(9));
+        LutEffect half = new LutEffect(TestLuts.Invert(9), "half an inversion", 50d);
 
         //Assert
         whole.ApplyAtPercent.Should().Be(100d);
@@ -32,7 +31,7 @@ public class LutEffectTests
     {
         //Arrange - lerp(c, 1 - c, 0.5) = 0.5 for every c
         EffectComposer composer = new EffectComposer(9);
-        LutEffect half = new LutEffect(EffectComposerTests.Invert(9), "half", 50d);
+        LutEffect half = new LutEffect(TestLuts.Invert(9), "half", 50d);
 
         //Act
         half.Compose(composer);
@@ -49,7 +48,7 @@ public class LutEffectTests
     {
         //Arrange
         EffectComposer composer = new EffectComposer(5);
-        LutEffect nothing = new LutEffect(EffectComposerTests.Invert(5), "nothing", 0d);
+        LutEffect nothing = new LutEffect(TestLuts.Invert(5), "nothing", 0d);
 
         //Act
         nothing.Compose(composer);
@@ -62,34 +61,6 @@ public class LutEffectTests
     }
 
     [Fact]
-    public void A_chain_in_the_presenter_composes_to_what_the_core_engine_composes()
-    {
-        //Arrange - the same two layers, once through the presenter and once through the core
-        Lut3D first = EffectComposerTests.Scale(17, 0.75f);
-        Lut3D second = EffectComposerTests.Invert(17);
-
-        using SkiaVideoPresenter presenter = new SkiaVideoPresenter
-        {
-            RenderPath = VideoRenderPath.Cpu,
-            AllowEffectsOnCpu = true,
-            EffectLutSize = 33,
-        };
-
-        presenter.Effects.Add(new LutEffect(first, "three quarters", 80d));
-        presenter.Effects.Add(new LutEffect(second, "invert", 40d));
-
-        //Act
-        Lut3D fromPresenter = presenter.GetResultantLut();
-        Lut3D fromCore = LutComposer.Compose(
-            new[] { new LutLayer(first, 80d), new LutLayer(second, 40d) },
-            new LutComposerOptions { OutputSize = 33 });
-
-        //Assert - one implementation of the arithmetic, so these are equal and not merely close
-        fromPresenter.Size.Should().Be(33);
-        fromPresenter.Values.ToArray().Should().Equal(fromCore.Values.ToArray());
-    }
-
-    [Fact]
     public void An_effect_can_be_read_straight_out_of_a_cube_file()
     {
         //Arrange
@@ -99,7 +70,7 @@ public class LutEffectTests
 
         Directory.CreateDirectory(directory);
         string path = Path.Combine(directory, "cool-grade.cube");
-        CubeLutFile.Write(EffectComposerTests.Invert(9), path, null);
+        CubeLutFile.Write(TestLuts.Invert(9), path, null);
 
         try
         {
@@ -124,7 +95,7 @@ public class LutEffectTests
     {
         //Arrange
         Lut1D shaper = new Lut1D(new[] { 0f, 0.5f });
-        Lut3D table = EffectComposerTests.Invert(9);
+        Lut3D table = TestLuts.Invert(9);
         CubeLut combined = new CubeLut(shaper, table, "shaped", "shaped");
 
         //Act

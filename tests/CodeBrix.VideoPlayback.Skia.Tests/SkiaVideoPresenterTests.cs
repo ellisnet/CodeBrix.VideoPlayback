@@ -3,11 +3,11 @@ using System.Collections.Generic;
 using CodeBrix.VideoPlayback.Color;
 using CodeBrix.VideoPlayback.Color.Luts;
 using CodeBrix.VideoPlayback.Decoding;
+using CodeBrix.VideoPlayback.Effects;
 using CodeBrix.VideoPlayback.Frames;
 using CodeBrix.VideoPlayback.Presentation;
+using CodeBrix.VideoPlayback.Rendering;
 using CodeBrix.VideoPlayback.Skia.Composition;
-using CodeBrix.VideoPlayback.Skia.Effects;
-using CodeBrix.VideoPlayback.Skia.Rendering;
 using CodeBrix.VideoPlayback.Tests;
 using SilverAssertions;
 using SkiaSharp;
@@ -344,6 +344,40 @@ public class SkiaVideoPresenterTests
     }
 
     [Fact]
+    public void Every_frame_composed_on_the_processor_is_captured_as_itself()
+    {
+        //Arrange - two frames through ONE presenter, which is what playback does. The converter writes into
+        //  the composition surface's own memory rather than through its canvas, and Skia caches the image a
+        //  snapshot handed back, so without an explicit "the pixels changed" every capture after the first
+        //  used to hand back the FIRST frame. Found and fixed 2026-08-30.
+        using PinnedFrameBufferPool pool = new PinnedFrameBufferPool();
+        using SkiaVideoPresenter presenter = new SkiaVideoPresenter { RenderPath = VideoRenderPath.Cpu };
+
+        using (VideoFrame first = TestFrames.CreatePattern(
+            pool, 16, 16, VideoPixelLayout.I420, TestFrames.Bt709Limited, 1))
+        {
+            presenter.Present(first);
+        }
+
+        presenter.Update();
+        byte[] firstCapture = CaptureBytes(presenter);
+
+        //Act
+        using (VideoFrame second = TestFrames.CreatePattern(
+            pool, 16, 16, VideoPixelLayout.I420, TestFrames.Bt709Limited, 90))
+        {
+            presenter.Present(second);
+        }
+
+        presenter.Update();
+        byte[] secondCapture = CaptureBytes(presenter);
+
+        //Assert
+        presenter.GetStatistics().FramesComposed.Should().Be(2L);
+        secondCapture.Should().NotEqual(firstCapture);
+    }
+
+    [Fact]
     public void Layers_draw_in_list_order_over_the_video()
     {
         //Arrange
@@ -410,7 +444,7 @@ public class SkiaVideoPresenterTests
         seen.FrameNumber.Should().Be(7L);
         seen.Backend.Should().Be(VideoRenderBackend.Cpu);
         seen.EffectsActive.Should().BeFalse();
-        seen.VideoRect.Should().Be(SKRect.Create(0f, 0f, 48f, 24f));
+        seen.VideoRect.Should().Be(VideoRectangle.Create(0f, 0f, 48f, 24f));
     }
 
     [Fact]
@@ -542,6 +576,24 @@ public class SkiaVideoPresenterTests
         presenter.Dispose();
     }
 
+    private static byte[] CaptureBytes(SkiaVideoPresenter presenter)
+    {
+        using SKImage image = presenter.CaptureComposedFrame();
+        image.Should().NotBeNull();
+
+        using SKPixmap pixels = image.PeekPixels();
+        byte[] copy = new byte[image.Width * image.Height * 4];
+
+        for (int row = 0; row < image.Height; row++)
+        {
+            pixels.GetPixelSpan()
+                .Slice(row * pixels.RowBytes, image.Width * 4)
+                .CopyTo(copy.AsSpan(row * image.Width * 4));
+        }
+
+        return copy;
+    }
+
     private static byte[] ComposeToBytes(
         PinnedFrameBufferPool pool,
         IVideoFrameEffect effect,
@@ -616,6 +668,121 @@ public class SkiaVideoPresenterTests
         }
 
         return differences;
+    }
+
+    [Fact]
+    public void The_presenter_composes_its_chain_once_and_not_once_per_frame()
+    {
+        //Arrange
+        using SkiaVideoPresenter presenter = new SkiaVideoPresenter
+        {
+            RenderPath = VideoRenderPath.Cpu,
+            AllowEffectsOnCpu = true,
+            EffectLutSize = 9,
+        };
+
+        presenter.Effects.Add(new LutEffect(TestLuts.Scale(9, 0.5f), "halve"));
+
+        //Act
+        Lut3D first = presenter.GetResultantLut();
+        presenter.GetResultantLut();
+        presenter.GetResultantLut();
+        long afterThreeReads = presenter.GetStatistics().EffectCompositions;
+
+        presenter.Effects.Add(new LutEffect(TestLuts.Invert(9), "invert"));
+        Lut3D second = presenter.GetResultantLut();
+        long afterTheChainChanged = presenter.GetStatistics().EffectCompositions;
+
+        //Assert
+        afterThreeReads.Should().Be(1L);
+        afterTheChainChanged.Should().Be(2L);
+
+        first.Sample(1f, 1f, 1f, out float halved, out _, out _);
+        second.Sample(1f, 1f, 1f, out float halvedThenInverted, out _, out _);
+
+        halved.Should().BeApproximately(0.5f, 1e-4f);
+        halvedThenInverted.Should().BeApproximately(0.5f, 1e-4f);
+    }
+
+    [Fact]
+    public void Removing_the_last_effect_leaves_no_resultant_table_at_all()
+    {
+        //Arrange
+        using SkiaVideoPresenter presenter = new SkiaVideoPresenter { RenderPath = VideoRenderPath.Cpu };
+        LutEffect effect = new LutEffect(TestLuts.Invert(9));
+        presenter.Effects.Add(effect);
+
+        //Act
+        presenter.Effects.Remove(effect);
+
+        //Assert
+        presenter.GetResultantLut().Should().BeNull();
+        presenter.EffectsActive.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Changing_the_grid_size_recomposes_the_chain_at_the_new_size()
+    {
+        //Arrange
+        using SkiaVideoPresenter presenter = new SkiaVideoPresenter
+        {
+            RenderPath = VideoRenderPath.Cpu,
+            AllowEffectsOnCpu = true,
+        };
+
+        presenter.Effects.Add(new LutEffect(TestLuts.Invert(9)));
+        presenter.GetResultantLut().Size.Should().Be(SkiaVideoPresenter.DefaultEffectLutSize);
+
+        //Act
+        presenter.EffectLutSize = 17;
+        Lut3D resized = presenter.GetResultantLut();
+
+        //Assert
+        resized.Size.Should().Be(17);
+        presenter.GetStatistics().EffectCompositions.Should().Be(2L);
+    }
+
+    [Fact]
+    public void A_grid_size_the_shader_could_not_carry_is_refused()
+    {
+        //Arrange
+        using SkiaVideoPresenter presenter = new SkiaVideoPresenter();
+
+        //Act
+        Action tooSmall = () => presenter.EffectLutSize = 1;
+        Action tooLarge = () => presenter.EffectLutSize = 200;
+
+        //Assert
+        tooSmall.Should().Throw<ArgumentOutOfRangeException>();
+        tooLarge.Should().Throw<ArgumentOutOfRangeException>();
+    }
+
+    [Fact]
+    public void A_chain_in_the_presenter_composes_to_what_the_core_engine_composes()
+    {
+        //Arrange - the same two layers, once through the presenter and once through the core
+        Lut3D first = TestLuts.Scale(17, 0.75f);
+        Lut3D second = TestLuts.Invert(17);
+
+        using SkiaVideoPresenter presenter = new SkiaVideoPresenter
+        {
+            RenderPath = VideoRenderPath.Cpu,
+            AllowEffectsOnCpu = true,
+            EffectLutSize = 33,
+        };
+
+        presenter.Effects.Add(new LutEffect(first, "three quarters", 80d));
+        presenter.Effects.Add(new LutEffect(second, "invert", 40d));
+
+        //Act
+        Lut3D fromPresenter = presenter.GetResultantLut();
+        Lut3D fromCore = LutComposer.Compose(
+            new[] { new LutLayer(first, 80d), new LutLayer(second, 40d) },
+            new LutComposerOptions { OutputSize = 33 });
+
+        //Assert - one implementation of the arithmetic, so these are equal and not merely close
+        fromPresenter.Size.Should().Be(33);
+        fromPresenter.Values.ToArray().Should().Equal(fromCore.Values.ToArray());
     }
 
     private sealed class SolidRectangleLayer : IVideoLayer

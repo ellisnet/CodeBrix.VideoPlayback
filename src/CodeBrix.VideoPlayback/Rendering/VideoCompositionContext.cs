@@ -1,8 +1,6 @@
 using System;
-using CodeBrix.VideoPlayback.Skia.Rendering;
-using SkiaSharp;
 
-namespace CodeBrix.VideoPlayback.Skia.Composition;
+namespace CodeBrix.VideoPlayback.Rendering;
 
 /// <summary>
 /// Everything a layer needs to know about the frame it is being drawn over: where the video sits, which frame
@@ -13,6 +11,11 @@ namespace CodeBrix.VideoPlayback.Skia.Composition;
 /// The coordinates are those of the OFF-SCREEN composition surface, which is the frame's coded pixel size.
 /// The surface is later blitted into whatever rectangle the application asked for, so a layer draws once, in
 /// video pixels, and is scaled and letterboxed along with the picture it is drawn on.
+/// </para>
+/// <para>
+/// The rectangle is a <see cref="VideoRectangle" /> and not any drawing library's own type, because this
+/// description travels from a presenter to a layer through packages that have no drawing dependency. A
+/// presenter converts it to whatever its canvas speaks at the edge.
 /// </para>
 /// <para>
 /// <see cref="DisplayWidth" /> and <see cref="DisplayHeight" /> are the size the frame will be SHOWN at once
@@ -34,7 +37,7 @@ public readonly struct VideoCompositionContext
     /// <param name="backend">The render path that composed the frame.</param>
     /// <param name="effectsActive">True when the effect chain was applied to this frame.</param>
     public VideoCompositionContext(
-        SKRect videoRect,
+        VideoRectangle videoRect,
         int frameWidth,
         int frameHeight,
         int displayWidth,
@@ -59,7 +62,7 @@ public readonly struct VideoCompositionContext
     /// Where the video sits on the composition surface. It starts at the origin and covers the whole surface,
     /// which is the frame's coded size.
     /// </summary>
-    public SKRect VideoRect { get; }
+    public VideoRectangle VideoRect { get; }
 
     /// <summary>The frame's coded width in pixels.</summary>
     public int FrameWidth { get; }

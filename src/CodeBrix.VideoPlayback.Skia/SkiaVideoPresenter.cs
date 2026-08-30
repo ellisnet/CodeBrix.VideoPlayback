@@ -6,12 +6,12 @@ using System.Threading;
 using CodeBrix.VideoPlayback.Color;
 using CodeBrix.VideoPlayback.Color.Luts;
 using CodeBrix.VideoPlayback.Decoding;
+using CodeBrix.VideoPlayback.Effects;
 using CodeBrix.VideoPlayback.Frames;
 using CodeBrix.VideoPlayback.Presentation;
+using CodeBrix.VideoPlayback.Rendering;
 using CodeBrix.VideoPlayback.Skia.Composition;
-using CodeBrix.VideoPlayback.Skia.Effects;
 using CodeBrix.VideoPlayback.Skia.Internal;
-using CodeBrix.VideoPlayback.Skia.Rendering;
 using SkiaSharp;
 
 namespace CodeBrix.VideoPlayback.Skia;
@@ -61,9 +61,11 @@ public sealed class SkiaVideoPresenter : IDisposable
     /// <summary>The default number of nodes along each axis of the composed effect lookup table.</summary>
     /// <remarks>
     /// Thirty-three is the size the ".cube" convention settled on, and is enough for any smooth colour
-    /// change: 35,937 nodes, a 1089-by-33 atlas, 143 kilobytes of texture.
+    /// change: 35,937 nodes, a 1089-by-33 atlas, 143 kilobytes of texture. The number itself lives on
+    /// <see cref="EffectComposer.DefaultSize" /> in the playback library, so a chain composed with no
+    /// presenter anywhere near it lands on the same grid this one uses.
     /// </remarks>
-    public const int DefaultEffectLutSize = 33;
+    public const int DefaultEffectLutSize = EffectComposer.DefaultSize;
 
     private static readonly SKSamplingOptions BlitSampling =
         new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.None);
@@ -101,6 +103,7 @@ public sealed class SkiaVideoPresenter : IDisposable
     private int surfaceHeight;
     private SKImage cachedImage;
 
+    private VideoFrame composedFrame;
     private bool hasComposition;
     private int displayWidth;
     private int displayHeight;
@@ -371,40 +374,22 @@ public sealed class SkiaVideoPresenter : IDisposable
     /// </returns>
     /// <remarks>
     /// A pure function, exposed because it is the geometry a host view needs in order to answer "where on
-    /// screen is this video pixel" - for a click, a caption position, or a hit test.
+    /// screen is this video pixel" - for a click, a caption position, or a hit test. The arithmetic itself
+    /// is <see cref="VideoStretchMath.ComputeDestination" /> in the playback library, where every presenter
+    /// in the family reads it; this is the SkiaSharp spelling of the same answer.
     /// </remarks>
     public static SKRect ComputeDestinationRect(
         SKRect destination,
         int contentWidth,
         int contentHeight,
-        VideoStretch stretch)
-    {
-        if (contentWidth <= 0 || contentHeight <= 0) return destination;
-        if (stretch == VideoStretch.Fill) return destination;
-
-        float scale;
-        switch (stretch)
-        {
-            case VideoStretch.None:
-                scale = 1f;
-                break;
-
-            case VideoStretch.UniformToFill:
-                scale = Math.Max(destination.Width / contentWidth, destination.Height / contentHeight);
-                break;
-
-            default:
-                scale = Math.Min(destination.Width / contentWidth, destination.Height / contentHeight);
-                break;
-        }
-
-        float width = contentWidth * scale;
-        float height = contentHeight * scale;
-        float left = destination.Left + ((destination.Width - width) / 2f);
-        float top = destination.Top + ((destination.Height - height) / 2f);
-
-        return SKRect.Create(left, top, width, height);
-    }
+        VideoStretch stretch) =>
+        VideoStretchMath
+            .ComputeDestination(
+                SkiaRectangles.FromSKRect(destination),
+                contentWidth,
+                contentHeight,
+                stretch)
+            .ToSKRect();
 
     /// <summary>Reads frames from somebody else's mailbox - a playback session's, normally.</summary>
     /// <param name="presenter">
@@ -584,6 +569,54 @@ public sealed class SkiaVideoPresenter : IDisposable
         return true;
     }
 
+    /// <summary>
+    /// Composes the frame that is already on screen again, through whatever the effect chain, the layers and
+    /// the render path now say.
+    /// </summary>
+    /// <exception cref="VideoPlaybackException">
+    /// The graphics path was demanded and cannot be had, or a graphics resource could not be created.
+    /// </exception>
+    /// <exception cref="ObjectDisposedException">The presenter has been disposed.</exception>
+    /// <remarks>
+    /// <para>
+    /// <b>What it is for.</b> Editing <see cref="Effects" /> while playback is PAUSED changes nothing
+    /// visible, because the picture is only ever built when a frame arrives and none is coming. This builds
+    /// it again from the frame the presenter is still holding, so a grade the user just dialled in reaches
+    /// the screen at once. <see cref="CurrentImage" /> and <see cref="CaptureComposedFrame" /> then hand
+    /// back the new picture, and <see cref="Invalidated" /> is raised so the host view repaints.
+    /// </para>
+    /// <para>
+    /// It is a full composition and it counts as one: <see cref="GetStatistics" /> sees
+    /// <c>FramesComposed</c> rise, and <c>EffectCompositions</c> too whenever the chain actually needed
+    /// folding again. Changing <see cref="Layers" /> or the <see cref="Composing" /> handler alone does not
+    /// need this - those are drawn on every composition anyway - but it is the way to make THAT reach a
+    /// paused screen as well.
+    /// </para>
+    /// <para>
+    /// <b>Nothing calls it for you.</b> An edit to <see cref="Effects" /> marks the chain dirty and stops
+    /// there, deliberately: the collection is edited on whatever thread the application likes, while a
+    /// composition must happen on the thread that owns the graphics context, and a chain built up in several
+    /// steps would otherwise recompose once per step. So edit the chain, then call this - on the drawing
+    /// thread, like <see cref="Update" /> and <see cref="Draw" />.
+    /// </para>
+    /// <para>
+    /// It does NOT collect a newer frame; that is <see cref="Update" />'s job. Before the first frame has
+    /// been composed it does nothing at all - ask <see cref="HasComposedFrame" /> beforehand if the
+    /// difference matters.
+    /// </para>
+    /// </remarks>
+    public void Recompose()
+    {
+        ThrowIfDisposed();
+
+        VideoFrame frame = composedFrame;
+        if (frame == null) return;
+
+        VideoRenderBackend backend = ResolveRenderPath();
+        Compose(frame, backend);
+        Invalidated?.Invoke(this, EventArgs.Empty);
+    }
+
     /// <summary>Draws the composed video into a canvas.</summary>
     /// <param name="canvas">The canvas to draw into - the host view's.</param>
     /// <param name="destination">The rectangle in that canvas the video should occupy.</param>
@@ -673,8 +706,8 @@ public sealed class SkiaVideoPresenter : IDisposable
 
     /// <summary>Takes a snapshot of the presenter's counters.</summary>
     /// <returns>The counters as they stood at the moment of the call.</returns>
-    public SkiaVideoPresenterStatistics GetStatistics() =>
-        new SkiaVideoPresenterStatistics(framesComposed, framesDrawn, surfaceAllocations, effectCompositions);
+    public VideoCompositionStatistics GetStatistics() =>
+        new VideoCompositionStatistics(framesComposed, framesDrawn, surfaceAllocations, effectCompositions);
 
     /// <summary>Sets every counter back to zero. Nothing else changes.</summary>
     public void ResetStatistics()
@@ -709,6 +742,9 @@ public sealed class SkiaVideoPresenter : IDisposable
         lookupAtlasImage = null;
         lookupAtlas?.Dispose();
         lookupAtlas = null;
+
+        composedFrame?.Dispose();
+        composedFrame = null;
 
         renderer.Dispose();
         bgraPool.Dispose();
@@ -749,6 +785,17 @@ public sealed class SkiaVideoPresenter : IDisposable
         if (backend == VideoRenderBackend.Gpu) ComposeOnGpu(frame);
         else ComposeOnCpu(frame);
 
+        // Recompose() needs the frame that is on screen, so the presenter keeps a reference of its own -
+        // taken AFTER the composition, so a frame that threw on the way in is never recomposed. Retaining
+        // before releasing the previous one is deliberate: recomposing hands this same frame back in, and
+        // releasing first could drop the last reference to the very frame being composed.
+        if (!ReferenceEquals(composedFrame, frame))
+        {
+            VideoFrame previous = composedFrame;
+            composedFrame = frame.Retain();
+            previous?.Dispose();
+        }
+
         displayWidth = frame.DisplayWidth > 0 ? frame.DisplayWidth : frame.Width;
         displayHeight = frame.DisplayHeight > 0 ? frame.DisplayHeight : frame.Height;
         lastTimestamp = frame.Timestamp;
@@ -765,7 +812,7 @@ public sealed class SkiaVideoPresenter : IDisposable
         if (layers.Count == 0 && composing == null) return;
 
         VideoCompositionContext context = new VideoCompositionContext(
-            SKRect.Create(0f, 0f, surfaceWidth, surfaceHeight),
+            VideoRectangle.Create(0f, 0f, surfaceWidth, surfaceHeight),
             surfaceWidth,
             surfaceHeight,
             displayWidth,
@@ -807,6 +854,13 @@ public sealed class SkiaVideoPresenter : IDisposable
 
     private unsafe void ComposeOnCpu(VideoFrame frame)
     {
+        // The converter writes into the surface's own memory rather than through its canvas, which is what
+        // makes this path copy-free - and which means Skia never learns the pixels changed. It caches the
+        // image a snapshot handed back and reuses it until something draws, so without this the SECOND and
+        // every later frame would be captured as the FIRST one. Discard says exactly what is about to happen:
+        // every pixel is replaced, nothing needs preserving.
+        surface.Canvas.Discard();
+
         VideoFrameConverter.ToBgra32(frame, cpuSurfaceBuffer.AsSpan(), cpuSurfaceBuffer.Stride);
 
         if (!effectsActive || resultantLut == null) return;
@@ -819,7 +873,7 @@ public sealed class SkiaVideoPresenter : IDisposable
     {
         // The pool must not recycle this frame's memory until the upload has actually been handed to the
         // driver, so a fence goes in the buffer's tag before the upload and is signalled after the submit.
-        SkiaGpuUploadFence fence = new SkiaGpuUploadFence();
+        GpuUploadFence fence = new GpuUploadFence();
         frame.Buffer.Tag = fence;
 
         try

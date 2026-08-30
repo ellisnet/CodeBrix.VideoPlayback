@@ -1,4 +1,4 @@
-namespace CodeBrix.VideoPlayback.Skia.Rendering;
+namespace CodeBrix.VideoPlayback.Rendering;
 
 /// <summary>
 /// Which of the two first-class render paths a presenter should use, and what it should do when the graphics
@@ -12,9 +12,8 @@ namespace CodeBrix.VideoPlayback.Skia.Rendering;
 /// clear failure instead of a silently different picture.
 /// </para>
 /// <para>
-/// What is actually running is always readable from
-/// <see cref="SkiaVideoPresenter.ActiveRenderPath" />, and a change is announced by
-/// <see cref="SkiaVideoPresenter.RenderPathChanged" />.
+/// What is actually running is always readable from a presenter's <c>ActiveRenderPath</c>, and a change is
+/// announced by its <c>RenderPathChanged</c> event.
 /// </para>
 /// </remarks>
 public enum VideoRenderPath
@@ -24,10 +23,10 @@ public enum VideoRenderPath
     /// exception and no warning. The default.
     /// </summary>
     /// <remarks>
-    /// In the fallback the configured effects are silently ignored unless
-    /// <see cref="SkiaVideoPresenter.AllowEffectsOnCpu" /> is set. The fallback itself is announced through
-    /// <see cref="SkiaVideoPresenter.RenderPathChanged" /> and written once to
-    /// <see cref="System.Diagnostics.Trace" /> at information level.
+    /// In the fallback the configured effects are silently ignored unless the presenter's
+    /// <c>AllowEffectsOnCpu</c> is set. The fallback itself is announced through the presenter's
+    /// <c>RenderPathChanged</c> event and written once to <see cref="System.Diagnostics.Trace" /> at
+    /// information level.
     /// </remarks>
     GpuAuto = 0,
 

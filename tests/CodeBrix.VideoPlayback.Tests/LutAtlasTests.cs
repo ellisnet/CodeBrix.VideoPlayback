@@ -1,10 +1,10 @@
 using System;
-using CodeBrix.VideoPlayback.Skia.Effects;
-using CodeBrix.VideoPlayback.Skia.Internal;
+using CodeBrix.VideoPlayback.Effects;
+using CodeBrix.VideoPlayback.Rendering;
 using SilverAssertions;
 using Xunit;
 
-namespace CodeBrix.VideoPlayback.Skia.Tests;
+namespace CodeBrix.VideoPlayback.Tests;
 
 /// <summary>
 /// Checks the two-dimensional strip the shader samples the resultant lookup table from.

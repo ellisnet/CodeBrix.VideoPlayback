@@ -6,9 +6,10 @@
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>
 
+  <!-- TEMPORARY: local pack of the re-split; bump to the published version after Jeremy republishes -->
   <ItemGroup>
-    <PackageReference Include="CodeBrix.VideoPlayback.MitLicenseForever" Version="1.0.242.419" />
-    <PackageReference Include="CodeBrix.VideoPlayback.Skia.MitLicenseForever" Version="1.0.242.419" />
+    <PackageReference Include="CodeBrix.VideoPlayback.MitLicenseForever" Version="1.0.242.9999" />
+    <PackageReference Include="CodeBrix.VideoPlayback.Skia.MitLicenseForever" Version="1.0.242.9999" />
   </ItemGroup>
 
   <!--

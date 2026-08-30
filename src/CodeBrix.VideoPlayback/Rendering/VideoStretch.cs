@@ -1,4 +1,4 @@
-namespace CodeBrix.VideoPlayback.Skia.Rendering;
+namespace CodeBrix.VideoPlayback.Rendering;
 
 /// <summary>
 /// How a composed video frame is fitted into the rectangle it is being drawn into.

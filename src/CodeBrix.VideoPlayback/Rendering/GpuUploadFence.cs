@@ -1,7 +1,7 @@
 using System.Threading;
 using CodeBrix.VideoPlayback.Frames;
 
-namespace CodeBrix.VideoPlayback.Skia.Rendering;
+namespace CodeBrix.VideoPlayback.Rendering;
 
 /// <summary>
 /// The presenter's promise that it has finished reading a frame's memory on the graphics path.
@@ -21,12 +21,12 @@ namespace CodeBrix.VideoPlayback.Skia.Rendering;
 /// </para>
 /// <para>Every member is safe to call from any thread.</para>
 /// </remarks>
-public sealed class SkiaGpuUploadFence : IVideoFrameFence
+public sealed class GpuUploadFence : IVideoFrameFence
 {
     private int signaled;
 
     /// <summary>Creates an unsignalled fence.</summary>
-    public SkiaGpuUploadFence()
+    public GpuUploadFence()
     {
     }
 

@@ -1,4 +1,4 @@
-namespace CodeBrix.VideoPlayback.Skia.Effects;
+namespace CodeBrix.VideoPlayback.Effects;
 
 /// <summary>
 /// One step of a presenter's colour effect chain.
@@ -13,7 +13,7 @@ namespace CodeBrix.VideoPlayback.Skia.Effects;
 /// <para>
 /// That is also the limit of what an effect can be: anything expressible as "this colour becomes that colour"
 /// fits, and anything that needs to see its neighbours - a blur, a sharpen, a warp - does not. Those belong
-/// in a <see cref="CodeBrix.VideoPlayback.Skia.Composition.IVideoLayer" />, which gets a whole canvas.
+/// in a presenter's overlay layer, which gets a whole canvas.
 /// </para>
 /// </remarks>
 public interface IVideoFrameEffect

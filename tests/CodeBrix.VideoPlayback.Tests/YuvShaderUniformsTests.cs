@@ -1,9 +1,9 @@
 using CodeBrix.VideoPlayback.Decoding;
-using CodeBrix.VideoPlayback.Skia.Internal;
+using CodeBrix.VideoPlayback.Rendering;
 using SilverAssertions;
 using Xunit;
 
-namespace CodeBrix.VideoPlayback.Skia.Tests;
+namespace CodeBrix.VideoPlayback.Tests;
 
 /// <summary>
 /// Checks the numbers the shader is handed: the sample scale, the sample offsets, the matrix rows, and -

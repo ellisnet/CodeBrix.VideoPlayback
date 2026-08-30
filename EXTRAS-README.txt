@@ -440,4 +440,29 @@ why this program reads .cube and nothing else. MANIFEST.txt carries the per-file
 provenance, hashes and validation results; LICENSES/ carries the verbatim licence
 text of all six upstream projects.
 
+
+
+samples/SimpleCbxVideoPlayer
+============================
+The application sample: an eight-head player that plays the sample-video corpus
+(AV1 video with Opus or Vorbis sound, in Matroska, WebM and both .cbv flavours)
+and grades the picture with a chain of .cube colour lookup tables while it
+plays. Six CodeBrix.Platform heads (Linux X11, Wayland and frame buffer; macOS;
+Windows Win32-Skia and WPF-Skia) and two native Windows heads (WinUI 3 and WPF)
+share no user-interface code; all eight drive the same playback library through
+one library, src/libs/SimpleCbxVideoPlayer.SkiaVideo, which owns every
+VideoPlayback, .Skia, Dav1d and Opus reference plus the graphics-context seam.
+It is the reference consumer of CodeBrix.VideoPlayback.Skia - the presenter for
+hosts that are not CodeBrix.Platform applications - and it consumes the
+PUBLISHED packages, not project references, so it builds the way an application
+outside this repository would.
+
+It carries no media of its own: at start-up it walks up from its folder looking
+for tests/assets/authoring and plays what it finds, so run it from inside a
+clone. Its own README.md (samples/SimpleCbxVideoPlayer/README.md) covers the two
+solutions (the six-head one builds anywhere; the Windows one adds the WinUI and
+WPF heads and needs -p:Platform=x64), running each head, the render-path
+drop-down (GpuAuto / GpuNoFallback / Cpu), the LUT panel and the "bake the
+current chain to .cube" button, and the scripted smoke verification.
+
 ================================================================================

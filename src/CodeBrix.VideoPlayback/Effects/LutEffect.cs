@@ -2,7 +2,7 @@ using System;
 using System.Globalization;
 using CodeBrix.VideoPlayback.Color.Luts;
 
-namespace CodeBrix.VideoPlayback.Skia.Effects;
+namespace CodeBrix.VideoPlayback.Effects;
 
 /// <summary>
 /// An effect that applies a colour lookup table - either a full three-dimensional one or a set of

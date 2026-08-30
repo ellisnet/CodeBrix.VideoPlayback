@@ -3,11 +3,11 @@ using System.Diagnostics;
 using System.IO;
 using CodeBrix.VideoPlayback.Color;
 using CodeBrix.VideoPlayback.Color.Luts;
-using CodeBrix.VideoPlayback.Skia.Internal;
+using CodeBrix.VideoPlayback.Rendering;
 using SilverAssertions;
 using Xunit;
 
-namespace CodeBrix.VideoPlayback.Skia.Tests;
+namespace CodeBrix.VideoPlayback.Tests;
 
 /// <summary>
 /// Bakes an effective table out of a chain with percentages, then applies it to the SAME pixels twice - once
