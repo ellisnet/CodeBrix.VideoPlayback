@@ -511,7 +511,7 @@ public class AuthoringEndToEndTests
             TemporaryFolder = work.Path,
         };
 
-        request.Video.SpeedPreset = 13;
+        AuthoringEncoders.ApplyFastest(request.Video);
         request.Video.ConstantRateFactor = 50;
         request.Video.KeyframeIntervalFrames = 5;
         request.Audio.BitrateKilobitsPerSecond = 96;
@@ -539,12 +539,11 @@ public class AuthoringEndToEndTests
     {
         VideoProcessing.FFMpegArguments
             .FromFileInput("testsrc2=size=128x72:rate=10:duration=1", false, input => input.ForceFormat("lavfi"))
-            .OutputToFile(path, true, output => output
-                .WithVideoCodec("libsvtav1")
-                .WithSpeedPreset(13)
-                .WithConstantRateFactor(50)
-                .ForcePixelFormat("yuv420p")
-                .ForceFormat("matroska"))
+            .OutputToFile(path, true, output =>
+            {
+                AuthoringEncoders.ApplyFastestTo(output, 50);
+                output.ForcePixelFormat("yuv420p").ForceFormat("matroska");
+            })
             .ProcessSynchronously();
     }
 }

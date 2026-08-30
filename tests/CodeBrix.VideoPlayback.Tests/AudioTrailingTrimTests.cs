@@ -239,12 +239,15 @@ public class AudioTrailingTrimTests
         session.RegisterDecoderFactory(new RawVideoDecoderFactory());
 
         int ended = 0;
-        session.PlaybackEnded += (s, e) => ended++;
+        session.PlaybackEnded += (s, e) => Interlocked.Increment(ref ended);
 
         //Act
         session.Open(path);
         session.Play();
-        bool finished = WaitFor(() => session.State == VideoPlaybackState.Ended);
+        // The state is published a moment BEFORE the event is raised, so waiting on the state alone can
+        // return between the two and read a count that has not been incremented yet.
+        bool finished = WaitFor(
+            () => session.State == VideoPlaybackState.Ended && Volatile.Read(ref ended) > 0);
 
         //Assert
         finished.Should().BeTrue();

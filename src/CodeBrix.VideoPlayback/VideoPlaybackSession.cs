@@ -987,6 +987,18 @@ public sealed class VideoPlaybackSession : IDisposable
                 lock (readerGate)
                 {
                     if (reader == null) return;
+
+                    // The seek generation is read HERE, under the very lock a seek repositions the reader
+                    // under, so the stamp a packet carries and the position it was read from always agree.
+                    // Taken at the top of the loop instead, a packet read from the NEW position can carry the
+                    // OLD stamp - and the decoding thread, not having noticed the seek yet either, takes it
+                    // as current, sends it to the decoder and then throws the decoded frame away when it does
+                    // notice. What is lost that way is the key frame the seek landed on, which is the only
+                    // frame a key-frame-only seek has to show. Nothing is read on a mismatch: the top of the
+                    // loop puts the rest of the demultiplexer's state back first, and the read happens on the
+                    // next pass with a stamp that matches.
+                    if (Volatile.Read(ref seekGeneration) != generation) continue;
+
                     more = reader.TryReadPacket(out packet);
 
                     if (!more) demuxFinished = true;

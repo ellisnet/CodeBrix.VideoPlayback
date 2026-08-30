@@ -110,7 +110,7 @@ public class AuthoringPlaybackTests
             TemporaryFolder = work.Path,
         };
 
-        request.Video.SpeedPreset = 13;
+        AuthoringEncoders.ApplyFastest(request.Video);
         request.Video.ConstantRateFactor = 50;
         request.Video.KeyframeIntervalFrames = 5;
         request.Audio.BitrateKilobitsPerSecond = 96;
@@ -205,7 +205,7 @@ public class AuthoringPlaybackTests
             TemporaryFolder = work.Path,
         };
 
-        request.Video.SpeedPreset = 13;
+        AuthoringEncoders.ApplyFastest(request.Video);
         request.Video.ConstantRateFactor = 50;
         request.Video.KeyframeIntervalFrames = 5;
         request.Audio.BitrateKilobitsPerSecond = 96;

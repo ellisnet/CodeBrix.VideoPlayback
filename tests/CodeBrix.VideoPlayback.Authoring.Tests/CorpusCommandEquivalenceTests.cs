@@ -65,7 +65,13 @@ public class CorpusCommandEquivalenceTests
 
         //Act
         IReadOnlyList<AuthoringCommand> commands = CorpusEncoder.BuildCommands(item, source, output);
-        string rendered = commands[0].Arguments.Replace(repositoryRoot + Path.DirectorySeparatorChar, string.Empty);
+        // The manifest records its paths repository-relative and with forward slashes. Path.Combine above
+        // already produces those on Linux and macOS; on Windows it produces backslashes, so the separator
+        // is normalised here. Where the separator IS a forward slash the replacement does nothing, so
+        // those platforms compare exactly the text they always compared.
+        string rendered = commands[0].Arguments
+            .Replace(repositoryRoot + Path.DirectorySeparatorChar, string.Empty)
+            .Replace(Path.DirectorySeparatorChar, '/');
 
         //Assert
         commands.Count.Should().Be(1);

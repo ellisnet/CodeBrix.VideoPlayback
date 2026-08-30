@@ -50,12 +50,13 @@ public class VideoPlaybackSessionAudioTests
 
         using VideoPlaybackSession session = NewSession();
         int ended = 0;
-        session.PlaybackEnded += (s, e) => ended++;
+        session.PlaybackEnded += (s, e) => Interlocked.Increment(ref ended);
 
         //Act
         session.Open(path);
         session.Play();
-        bool finished = WaitFor(() => session.State == VideoPlaybackState.Ended);
+        bool finished = WaitFor(
+            () => session.State == VideoPlaybackState.Ended && Volatile.Read(ref ended) > 0);
 
         //Assert
         session.AudioTrack.CodecId.Should().Be(VideoCodecIds.Vorbis);
@@ -107,12 +108,13 @@ public class VideoPlaybackSessionAudioTests
 
         using VideoPlaybackSession session = new VideoPlaybackSession();
         int ended = 0;
-        session.PlaybackEnded += (s, e) => ended++;
+        session.PlaybackEnded += (s, e) => Interlocked.Increment(ref ended);
 
         //Act
         session.Open(path);
         session.Play();
-        bool finished = WaitFor(() => session.State == VideoPlaybackState.Ended);
+        bool finished = WaitFor(
+            () => session.State == VideoPlaybackState.Ended && Volatile.Read(ref ended) > 0);
 
         //Assert
         session.AudioTrack.CodecId.Should().Be(VideoCodecIds.Opus);
@@ -193,12 +195,13 @@ public class VideoPlaybackSessionAudioTests
         using VideoPlaybackSession session = NewSession();
 
         int ended = 0;
-        session.PlaybackEnded += (s, e) => ended++;
+        session.PlaybackEnded += (s, e) => Interlocked.Increment(ref ended);
 
         //Act
         session.Open(path);
         session.Play();
-        bool finished = WaitFor(() => session.State == VideoPlaybackState.Ended);
+        bool finished = WaitFor(
+            () => session.State == VideoPlaybackState.Ended && Volatile.Read(ref ended) > 0);
         TimeSpan reached = session.Position;
 
         //Assert - the bespoke container's index says where the audio track stops, so the session learns of it
@@ -229,14 +232,17 @@ public class VideoPlaybackSessionAudioTests
         TimeSpan endedAt = TimeSpan.Zero;
         session.PlaybackEnded += (s, e) =>
         {
-            ended++;
+            // The count goes up LAST, so a test thread that has seen it has necessarily also been
+            // handed the position written beside it.
             endedAt = session.Position;
+            Interlocked.Increment(ref ended);
         };
 
         //Act
         session.Open(path);
         session.Play();
-        bool finished = WaitFor(() => session.State == VideoPlaybackState.Ended);
+        bool finished = WaitFor(
+            () => session.State == VideoPlaybackState.Ended && Volatile.Read(ref ended) > 0);
 
         //Assert - the end is the LATER of the two, so the sound is heard out; and the picture's last frame
         // stays on screen rather than being cleared when the video track ends.
@@ -263,12 +269,13 @@ public class VideoPlaybackSessionAudioTests
         using VideoPlaybackSession session = NewSession();
 
         int ended = 0;
-        session.PlaybackEnded += (s, e) => ended++;
+        session.PlaybackEnded += (s, e) => Interlocked.Increment(ref ended);
 
         //Act
         session.Open(path);
         session.Play();
-        bool finished = WaitFor(() => session.State == VideoPlaybackState.Ended);
+        bool finished = WaitFor(
+            () => session.State == VideoPlaybackState.Ended && Volatile.Read(ref ended) > 0);
         TimeSpan reached = session.Position;
 
         //Assert
@@ -297,13 +304,14 @@ public class VideoPlaybackSessionAudioTests
 
         using VideoPlaybackSession session = NewSession();
         int ended = 0;
-        session.PlaybackEnded += (s, e) => ended++;
+        session.PlaybackEnded += (s, e) => Interlocked.Increment(ref ended);
 
         //Act
         session.Open(path);
         TimeSpan trimAtOpen = session.AudioTrailingTrim;
         session.Play();
-        bool finished = WaitFor(() => session.State == VideoPlaybackState.Ended);
+        bool finished = WaitFor(
+            () => session.State == VideoPlaybackState.Ended && Volatile.Read(ref ended) > 0);
         TimeSpan reached = session.Position;
 
         //Assert - the trim reaches the player BEFORE anything is heard (the header states it, so the session
@@ -369,12 +377,13 @@ public class VideoPlaybackSessionAudioTests
 
         using VideoPlaybackSession session = NewSession();
         int ended = 0;
-        session.PlaybackEnded += (s, e) => ended++;
+        session.PlaybackEnded += (s, e) => Interlocked.Increment(ref ended);
 
         //Act
         session.Open(path);
         session.Play();
-        bool finished = WaitFor(() => session.State == VideoPlaybackState.Ended);
+        bool finished = WaitFor(
+            () => session.State == VideoPlaybackState.Ended && Volatile.Read(ref ended) > 0);
 
         //Assert
         session.AudioTrailingTrim.Should().Be(TimeSpan.FromSeconds(10));
@@ -395,12 +404,13 @@ public class VideoPlaybackSessionAudioTests
 
         using VideoPlaybackSession session = NewSession();
         int ended = 0;
-        session.PlaybackEnded += (s, e) => ended++;
+        session.PlaybackEnded += (s, e) => Interlocked.Increment(ref ended);
 
         //Act
         session.Open(path);
         session.Play();
-        bool finished = WaitFor(() => session.State == VideoPlaybackState.Ended);
+        bool finished = WaitFor(
+            () => session.State == VideoPlaybackState.Ended && Volatile.Read(ref ended) > 0);
         TimeSpan trimAtEnd = session.AudioTrailingTrim;
 
         //Assert - 13.5 ms is what the authoring tool wrote on the last Opus block of this file. The track

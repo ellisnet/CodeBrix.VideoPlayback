@@ -33,11 +33,19 @@ public static class SyntheticSource
     /// <summary>The duration every synthetic clip is made at.</summary>
     public static TimeSpan Duration { get; } = TimeSpan.FromSeconds(DurationSeconds);
 
-    /// <summary>Skips the calling test when FFmpeg is not installed, naming what was looked for.</summary>
+    /// <summary>
+    /// Skips the calling test when FFmpeg cannot do this work here, naming what was looked for.
+    /// </summary>
+    /// <remarks>
+    /// Two things are needed, and a machine missing either still has a green suite: the binaries, which is
+    /// what the library itself checks for, and an AV1 encoder in the build, which it does not - a perfectly
+    /// working FFmpeg may simply have been built without one. See <see cref="AuthoringEncoders" />.
+    /// </remarks>
     public static void SkipWithoutFFmpeg()
     {
         bool available = CbvAuthor.TryVerifyTools(out string problem);
         Assert.SkipUnless(available, problem);
+        Assert.SkipUnless(AuthoringEncoders.IsAvailable, AuthoringEncoders.Problem);
     }
 
     /// <summary>Writes a landscape test clip carrying a moving picture and a tone.</summary>
@@ -64,10 +72,7 @@ public static class SyntheticSource
         FFMpegArguments
             .FromFileInput(video, false, input => input.ForceFormat("lavfi"))
             .AddFileInput(audio, false, input => input.ForceFormat("lavfi"))
-            .OutputToFile(path, true, output => output
-                .WithVideoCodec("libsvtav1")
-                .WithSpeedPreset(13)
-                .WithConstantRateFactor(50)
+            .OutputToFile(path, true, output => ApplyVideoEncoder(output)
                 .ForcePixelFormat("yuv420p")
                 .WithAudioCodec("libopus")
                 .WithAudioBitrate(32)
@@ -77,6 +82,15 @@ public static class SyntheticSource
             .ProcessSynchronously();
 
         return path;
+    }
+
+    /// <summary>Puts whichever AV1 encoder this machine has, at its fastest setting, on an output.</summary>
+    /// <param name="output">The output to configure.</param>
+    /// <returns>The same output, so the fluent chain can carry on.</returns>
+    private static FFMpegArgumentOptions ApplyVideoEncoder(FFMpegArgumentOptions output)
+    {
+        AuthoringEncoders.ApplyFastestTo(output, 50);
+        return output;
     }
 
     /// <summary>Writes a chapter file naming two chapters with a title in three languages each.</summary>
