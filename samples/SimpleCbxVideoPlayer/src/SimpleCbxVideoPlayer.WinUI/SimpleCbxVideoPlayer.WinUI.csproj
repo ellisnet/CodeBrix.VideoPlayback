@@ -1,0 +1,100 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <RootNamespace>SimpleCbxVideoPlayer.WinUI</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Platforms>x86;x64;ARM64</Platforms>
+    <RuntimeIdentifiers>win-x86;win-x64;win-arm64</RuntimeIdentifiers>
+    <PublishProfile>win-$(Platform).pubxml</PublishProfile>
+    <UseWinUI>true</UseWinUI>
+    <EnableMsixTooling>true</EnableMsixTooling>
+    <Nullable>disable</Nullable>
+
+    <!--
+      UNPACKAGED by default, which is what makes this head runnable the way every other head in this
+      sample is runnable: from a terminal, with a command line, so that the smoke switch is a real thing.
+      Without it the Windows App SDK's auto-initializer never bootstraps the runtime for a launch that
+      did not come from an MSIX identity, and the process dies with REGDB_E_CLASSNOTREG before Main.
+
+      The condition leaves the MSIX story intact: the "(Package)" launch profile and the single-project
+      packaging pass set this property themselves, and what they set wins.
+    -->
+    <WindowsPackageType Condition="'$(WindowsPackageType)' == ''">None</WindowsPackageType>
+  </PropertyGroup>
+
+  <!--
+    SimpleCbxVideoPlayer.SkiaVideo is the seam: this head talks to a VideoPlaybackController and
+    never names a type from CodeBrix.VideoPlayback, CodeBrix.VideoPlayback.Skia,
+    CodeBrix.VideoPlayback.Dav1d or CodeBrix.Audio.Opus. The library is referenced UNCHANGED -
+    it is the same project the CodeBrix.Platform head uses.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\libs\SimpleCbxVideoPlayer.SkiaVideo\SimpleCbxVideoPlayer.SkiaVideo.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="Assets\SplashScreen.scale-200.png" />
+    <Content Include="Assets\LockScreenLogo.scale-200.png" />
+    <Content Include="Assets\Square150x150Logo.scale-200.png" />
+    <Content Include="Assets\Square44x44Logo.scale-200.png" />
+    <Content Include="Assets\Square44x44Logo.targetsize-24_altform-unplated.png" />
+    <Content Include="Assets\StoreLogo.png" />
+    <Content Include="Assets\Wide310x150Logo.scale-200.png" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Manifest Include="$(ApplicationManifest)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The "Simple" MVVM toolkit (SimpleViewModel, SimpleCommand, SimpleServiceResolver) for WinUI -->
+    <PackageReference Include="CodeBrix.Platform.WinUI.ApacheLicenseForever" Version="1.0.193.1013" />
+    <!-- The concrete generic host SimpleServiceResolver builds its container from; the toolkit
+         package itself depends on the .Abstractions only -->
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.11" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.2705" />
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.4.0" />
+    <!--
+      SKSwapChainPanel - an ANGLE-backed surface that hands out the GRContext the video presenter needs
+      for its graphics path - and SKXamlCanvas, the processor-side fallback. Unlike the CodeBrix.Platform
+      heads, native WinUI needs no extra package to get a graphics context: SkiaSharp's own WinUI views
+      supply one, and this SKSwapChainPanel is the real thing rather than a placeholder.
+    -->
+    <PackageReference Include="SkiaSharp.Views.WinUI" Version="4.151.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Page Update="Views\MainPage.xaml">
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+  </ItemGroup>
+
+  <!--
+    Defining the "Msix" ProjectCapability here allows the Single-project MSIX Packaging
+    Tools extension to be activated for this project even if the Windows App SDK Nuget
+    package has not yet been restored.
+  -->
+  <ItemGroup Condition="'$(DisableMsixProjectCapabilityAddedByProject)'!='true' and '$(EnableMsixTooling)'=='true'">
+    <ProjectCapability Include="Msix" />
+  </ItemGroup>
+
+  <!--
+    Defining the "HasPackageAndPublishMenuAddedByProject" property here allows the Solution
+    Explorer "Package and Publish" context menu entry to be enabled for this project even if
+    the Windows App SDK Nuget package has not yet been restored.
+  -->
+  <PropertyGroup Condition="'$(DisableHasPackageAndPublishMenuAddedByProject)'!='true' and '$(EnableMsixTooling)'=='true'">
+    <HasPackageAndPublishMenu>true</HasPackageAndPublishMenu>
+  </PropertyGroup>
+
+  <!-- Publish Properties -->
+  <PropertyGroup>
+    <PublishReadyToRun Condition="'$(Configuration)' == 'Debug'">False</PublishReadyToRun>
+    <PublishReadyToRun Condition="'$(Configuration)' != 'Debug'">True</PublishReadyToRun>
+    <!-- NOT trimmed: the XAML bindings and the decoder registration in SkiaVideoRuntime both
+         resolve types by name, which a trimmer cannot see -->
+    <PublishTrimmed>False</PublishTrimmed>
+  </PropertyGroup>
+</Project>

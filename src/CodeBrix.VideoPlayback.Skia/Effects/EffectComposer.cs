@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using CodeBrix.VideoPlayback.Color.Luts;
 
 namespace CodeBrix.VideoPlayback.Skia.Effects;
@@ -38,11 +39,61 @@ public sealed class EffectComposer
 {
     private readonly float[] nodes;
 
-    internal EffectComposer(int size)
+    /// <summary>Creates a composer whose grid starts as the table that changes nothing.</summary>
+    /// <param name="size">
+    /// The number of nodes along each axis, between <see cref="Lut3D.MinimumSize" /> and
+    /// <see cref="Lut3D.MaximumSize" />. Thirty-three is the size the ".cube" convention settled on.
+    /// </param>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="size" /> is outside that range.</exception>
+    /// <remarks>
+    /// A composer needs NO presenter, no graphics context, no frame and no window - folding a chain into a
+    /// grid is arithmetic on the tables. So an application that only wants to compose effects and write the
+    /// result out, with no video anywhere in it, can construct one directly and never touch
+    /// <see cref="SkiaVideoPresenter" />.
+    /// </remarks>
+    public EffectComposer(int size = SkiaVideoPresenter.DefaultEffectLutSize)
     {
+        if (size < Lut3D.MinimumSize || size > Lut3D.MaximumSize)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(size),
+                size,
+                $"An effect composer's grid must be between {Lut3D.MinimumSize} and {Lut3D.MaximumSize} "
+                + "nodes along each axis.");
+        }
+
         Size = size;
         nodes = new float[size * size * size * 3];
         Reset();
+    }
+
+    /// <summary>Folds a chain of effects into one resultant table, in order.</summary>
+    /// <param name="effects">The chain, in the order the effects are applied; null or empty composes nothing.</param>
+    /// <param name="size">The number of nodes along each axis of the grid to compose into.</param>
+    /// <returns>The table the whole chain reduces to, or null when the chain holds no effect.</returns>
+    /// <remarks>
+    /// The presenter-free way to get at what a chain does. This is the same arithmetic, at the same default
+    /// size, that <see cref="SkiaVideoPresenter.GetResultantLut" /> performs, so a table composed here and
+    /// one composed for playback agree exactly.
+    /// </remarks>
+    public static Lut3D Compose(
+        IEnumerable<IVideoFrameEffect> effects,
+        int size = SkiaVideoPresenter.DefaultEffectLutSize)
+    {
+        if (effects == null) { return null; }
+
+        EffectComposer composer = new EffectComposer(size);
+        var composed = 0;
+
+        foreach (IVideoFrameEffect effect in effects)
+        {
+            if (effect == null) { continue; }
+
+            effect.Compose(composer);
+            composed++;
+        }
+
+        return composed == 0 ? null : composer.ToLut3D();
     }
 
     /// <summary>The number of nodes along each axis of the grid.</summary>

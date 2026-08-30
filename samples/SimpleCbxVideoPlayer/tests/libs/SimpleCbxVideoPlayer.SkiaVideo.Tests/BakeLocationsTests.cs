@@ -22,14 +22,28 @@ public class BakeLocationsTests
     }
 
     [Fact]
-    public void CreateFilePath_lands_in_the_baked_luts_folder_beside_the_application()
+    public void CreateFileName_is_a_bare_name_and_never_a_location()
     {
-        //Act
-        var path = BakeLocations.CreateFilePath(new DateTime(2026, 8, 29, 0, 0, 0, DateTimeKind.Local));
+        //Act - a suggestion for a save dialog, not somewhere the application picked on its own
+        var name = BakeLocations.CreateFileName(new DateTime(2026, 8, 29, 0, 0, 0, DateTimeKind.Local));
 
         //Assert
-        Path.GetDirectoryName(path).Should().Be(BakeLocations.DefaultFolder);
-        BakeLocations.DefaultFolder.Should().Contain(BakeLocations.FolderName);
-        Path.GetExtension(path).Should().Be(BakeLocations.LutFileExtension);
+        Path.GetDirectoryName(name).Should().BeEmpty();
+        Path.IsPathRooted(name).Should().BeFalse();
+        Path.GetExtension(name).Should().Be(BakeLocations.LutFileExtension);
+    }
+
+    [Fact]
+    public void Two_bakes_a_second_apart_do_not_propose_the_same_file()
+    {
+        //Arrange
+        DateTime first = new DateTime(2026, 8, 29, 14, 15, 30, DateTimeKind.Local);
+
+        //Act
+        var earlier = BakeLocations.CreateFileName(first);
+        var later = BakeLocations.CreateFileName(first.AddSeconds(1));
+
+        //Assert
+        later.Should().NotBe(earlier);
     }
 }

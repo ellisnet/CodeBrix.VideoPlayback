@@ -574,7 +574,7 @@ public class MainViewModel : SimpleViewModel
                 + $"luts=[{string.Join(", ", smoke.Luts)}]");
             SmokeLog($"runtime {SkiaVideoRuntime.Summary}");
             SmokeLog($"corpus {CorpusText}");
-            SmokeLog($"canvas {(IsGpuCanvasAvailable ? "SkiaGLCanvasElement (GPU Skia)" : "SKXamlCanvas (CPU)")}");
+            SmokeLog($"canvas {(IsGpuCanvasAvailable ? "SKSwapChainPanel (GPU Skia)" : "SKXamlCanvas (CPU)")}");
 
             if (!string.IsNullOrWhiteSpace(smoke.ParseError))
             {

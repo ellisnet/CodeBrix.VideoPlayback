@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "SimpleCbxVideoPlayer.WinUI (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "SimpleCbxVideoPlayer.WinUI (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}

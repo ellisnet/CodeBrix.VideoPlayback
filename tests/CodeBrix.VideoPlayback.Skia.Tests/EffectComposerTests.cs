@@ -13,6 +13,66 @@ namespace CodeBrix.VideoPlayback.Skia.Tests;
 public class EffectComposerTests
 {
     [Fact]
+    public void A_chain_composes_to_a_table_with_no_presenter_anywhere_near_it()
+    {
+        //Arrange - the whole point: no SkiaVideoPresenter, no graphics context, no frame, no window.
+        //  An application that only picks tables and bakes the result needs none of them.
+        LutEffect halve = new LutEffect(Scale(17, 0.5f), "halve");
+        LutEffect invert = new LutEffect(Invert(17), "invert");
+
+        //Act
+        Lut3D composed = EffectComposer.Compose([halve, invert], 17);
+
+        //Assert - the same table the long-hand composer produces
+        EffectComposer longHand = new EffectComposer(17);
+        halve.Compose(longHand);
+        invert.Compose(longHand);
+
+        composed.Should().NotBeNull();
+        composed.Size.Should().Be(17);
+        composed.Values.ToArray().Should().Equal(longHand.ToLut3D().Values.ToArray());
+    }
+
+    [Fact]
+    public void Compose_of_nothing_is_null_rather_than_an_identity_table()
+    {
+        //Act
+        Lut3D fromNull = EffectComposer.Compose(null);
+        Lut3D fromEmpty = EffectComposer.Compose([]);
+
+        //Assert - nothing to compose is not the same as "a table that changes nothing"
+        fromNull.Should().BeNull();
+        fromEmpty.Should().BeNull();
+    }
+
+    [Fact]
+    public void Compose_defaults_to_the_size_playback_composes_at()
+    {
+        //Arrange
+        LutEffect halve = new LutEffect(Scale(17, 0.5f), "halve");
+
+        //Act
+        Lut3D composed = EffectComposer.Compose([halve]);
+
+        //Assert - so a baked file and a played chain agree without anyone naming a size
+        composed.Size.Should().Be(SkiaVideoPresenter.DefaultEffectLutSize);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(0)]
+    [InlineData(-8)]
+    [InlineData(4096)]
+    public void A_grid_outside_the_allowed_range_is_refused(int size)
+    {
+        //Act
+        Action creating = () => _ = new EffectComposer(size);
+
+        //Assert
+        creating.Should().Throw<ArgumentOutOfRangeException>();
+    }
+
+    [Fact]
     public void A_new_composer_holds_the_table_that_changes_nothing()
     {
         //Arrange

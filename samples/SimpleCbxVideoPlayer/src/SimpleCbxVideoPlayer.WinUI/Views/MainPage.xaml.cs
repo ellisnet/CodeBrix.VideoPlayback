@@ -1,5 +1,4 @@
 using CodeBrix.Platform.Simple;
-using CodeBrix.Platform.WinUI.Graphics3DGL;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using SimpleCbxVideoPlayer.SkiaVideo.Playback;
@@ -7,19 +6,21 @@ using SimpleCbxVideoPlayer.ViewModels;
 using SkiaSharp;
 using SkiaSharp.Views.Windows;
 using System;
-using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Threading.Tasks;
 using Windows.Storage;
 using Windows.Storage.Pickers;
 
-namespace SimpleCbxVideoPlayer.Views;
+namespace SimpleCbxVideoPlayer.WinUI.Views;
 
 public sealed partial class MainPage : Page
 {
-    private SkiaGLCanvasElement gpuCanvas;
+    private SKSwapChainPanel gpuCanvas;
     private bool hasSettledVideoSurface;
+
+    //I tend to like to declare/define private members above the constructor, in C# classes
+    private MainViewModel ViewModel => DataContext as MainViewModel;
 
     public MainPage()
     {
@@ -42,20 +43,30 @@ public sealed partial class MainPage : Page
         this.InitializeComponent(); //Leave this line last
     }
 
-    private MainViewModel ViewModel => DataContext as MainViewModel;
-
     private async void OnLoaded(object sender, RoutedEventArgs args)
     {
-        if (gpuCanvas != null) { return; }
+        if (hasSettledVideoSurface) { return; }
 
-        //The GPU canvas is built here rather than in XAML because its only constructor takes an argument.
-        gpuCanvas = new SkiaGLCanvasElement();
-        gpuCanvas.PaintSurface += OnGpuPaintSurface;
-        VideoHost.Children.Insert(0, gpuCanvas);
+        //The GPU canvas is built here rather than in XAML because SKSwapChainPanel starts ANGLE on its
+        //  own: a machine with no usable context throws, and a throw inside InitializeComponent would
+        //  take the whole page with it. Built here, a failure just settles on the CPU canvas.
+        try
+        {
+            gpuCanvas = new SKSwapChainPanel();
+            gpuCanvas.PaintSurface += OnGpuPaintSurface;
+            VideoHost.Children.Insert(0, gpuCanvas);
+        }
+        catch (Exception exception)
+        {
+            gpuCanvas = null;
+            Debug.WriteLine($"SimpleCbxVideoPlayer: the swap chain did not start - {exception.Message}");
+        }
 
         CpuCanvas.SizeChanged += (_, _) => CpuCanvas.Invalidate();
 
-        //IsGpuInitialized reads null until the element has loaded and tried to start OpenGL.
+        //GRContext reads null until the panel has loaded and drawn its first frame.
+        gpuCanvas?.Invalidate();
+
         await Task.Delay(600);
 
         DispatcherQueue?.TryEnqueue(SettleVideoSurface);
@@ -63,7 +74,7 @@ public sealed partial class MainPage : Page
 
     private void SettleVideoSurface()
     {
-        var hasGpuCanvas = gpuCanvas?.IsGpuInitialized == true;
+        var hasGpuCanvas = gpuCanvas?.GRContext != null;
 
         if (gpuCanvas != null)
         {
@@ -94,9 +105,10 @@ public sealed partial class MainPage : Page
 
     /// <summary>Asks where to write a baked lookup table, and returns null when the person cancels.</summary>
     /// <remarks>
-    /// No SuggestedStartLocation: the dialog opens where this person last was, and the application never
-    /// proposes a folder of its own. The frame-buffer head has no dialog to show, so a bake there simply
-    /// says so rather than writing somewhere nobody chose.
+    /// A WinUI 3 picker has to be told which window it belongs to before it will show at all - there is no
+    /// ambient main window to infer, and an unpackaged process has no identity to fall back on. No
+    /// SuggestedStartLocation is set: the dialog opens where this person last was, and the application
+    /// never proposes a folder of its own.
     /// </remarks>
     private Task<string> PickSaveCubePathAsync(string suggestedFileName)
     {
@@ -117,14 +129,17 @@ public sealed partial class MainPage : Page
         return chosen.Task;
     }
 
-    private static async Task<string> ShowSavePickerAsync(string suggestedFileName)
+    private async Task<string> ShowSavePickerAsync(string suggestedFileName)
     {
         FileSavePicker picker = new FileSavePicker
         {
             SuggestedFileName = suggestedFileName,
             DefaultFileExtension = BakeLocations.LutFileExtension,
         };
-        picker.FileTypeChoices.Add("Cube lookup table", new List<string> { BakeLocations.LutFileExtension });
+        picker.FileTypeChoices.Add("Cube lookup table", [BakeLocations.LutFileExtension]);
+
+        WinRT.Interop.InitializeWithWindow.Initialize(
+            picker, WinRT.Interop.WindowNative.GetWindowHandle(App.CurrentWindow));
 
         StorageFile file = await picker.PickSaveFileAsync();
 
@@ -152,10 +167,10 @@ public sealed partial class MainPage : Page
         }
     }
 
-    private void OnGpuPaintSurface(object sender, SkiaGLPaintSurfaceEventArgs args)
+    private void OnGpuPaintSurface(object sender, SKPaintGLSurfaceEventArgs args)
     {
         //The context is current for the length of this call, which is where the presenter wants it.
-        ViewModel?.SetGraphicsContext(args.Context);
+        ViewModel?.SetGraphicsContext(gpuCanvas?.GRContext);
         args.Surface.Canvas.Clear(SKColors.Black);
         ViewModel?.DrawVideo(args.Surface.Canvas, new SKRect(0f, 0f, args.Info.Width, args.Info.Height));
     }

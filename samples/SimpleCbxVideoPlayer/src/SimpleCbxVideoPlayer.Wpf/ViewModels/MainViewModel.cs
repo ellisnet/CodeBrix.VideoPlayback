@@ -1,5 +1,5 @@
 using CodeBrix.Platform.Simple;
-using Microsoft.UI.Xaml;
+using System.Windows;
 using SimpleCbxVideoPlayer.SkiaVideo;
 using SimpleCbxVideoPlayer.SkiaVideo.Assets;
 using SimpleCbxVideoPlayer.SkiaVideo.Diagnostics;
@@ -20,7 +20,6 @@ namespace SimpleCbxVideoPlayer.ViewModels;
 /// The whole application: the corpus drop-down, the render-path drop-down, the transport and the
 /// lookup-table panel.
 /// </summary>
-[Microsoft.UI.Xaml.Data.Bindable]
 public class MainViewModel : SimpleViewModel
 {
     private readonly VideoPlaybackController controller;
@@ -574,7 +573,7 @@ public class MainViewModel : SimpleViewModel
                 + $"luts=[{string.Join(", ", smoke.Luts)}]");
             SmokeLog($"runtime {SkiaVideoRuntime.Summary}");
             SmokeLog($"corpus {CorpusText}");
-            SmokeLog($"canvas {(IsGpuCanvasAvailable ? "SkiaGLCanvasElement (GPU Skia)" : "SKXamlCanvas (CPU)")}");
+            SmokeLog($"canvas {(IsGpuCanvasAvailable ? "SKGLElement (GPU Skia)" : "SKElement (CPU)")}");
 
             if (!string.IsNullOrWhiteSpace(smoke.ParseError))
             {
