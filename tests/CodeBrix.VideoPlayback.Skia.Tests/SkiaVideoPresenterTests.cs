@@ -8,6 +8,7 @@ using CodeBrix.VideoPlayback.Presentation;
 using CodeBrix.VideoPlayback.Skia.Composition;
 using CodeBrix.VideoPlayback.Skia.Effects;
 using CodeBrix.VideoPlayback.Skia.Rendering;
+using CodeBrix.VideoPlayback.Tests;
 using SilverAssertions;
 using SkiaSharp;
 using Xunit;
@@ -272,20 +273,20 @@ public class SkiaVideoPresenterTests
         GC.Collect();
 
         //Act
-        long before = GC.GetAllocatedBytesForCurrentThread();
-
-        for (int i = 0; i < 200; i++)
-        {
-            presenter.Present(frame);
-            presenter.Draw(destination.Canvas, target, VideoStretch.Uniform);
-        }
-
-        long after = GC.GetAllocatedBytesForCurrentThread();
+        long allocated = SteadyStateAllocation.MeasureSmallest(
+            () =>
+            {
+                for (int i = 0; i < 200; i++)
+                {
+                    presenter.Present(frame);
+                    presenter.Draw(destination.Canvas, target, VideoStretch.Uniform);
+                }
+            });
 
         //Assert
-        (after - before).Should().Be(0);
+        allocated.Should().Be(0);
         presenter.GetStatistics().SurfaceAllocations.Should().Be(1);
-        presenter.GetStatistics().FramesDrawn.Should().Be(220);
+        presenter.GetStatistics().FramesDrawn.Should().Be(20 + (200 * SteadyStateAllocation.DefaultAttempts));
     }
 
     [Fact]

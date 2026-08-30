@@ -125,15 +125,15 @@ public class FrameDataPathGuaranteeTests
 
         for (int i = 0; i < 8; i++) PumpOnce(decoder, presenter, packet, i);
 
-        long before = GC.GetAllocatedBytesForCurrentThread();
-
         //Act
-        for (int i = 0; i < 300; i++) PumpOnce(decoder, presenter, packet, i);
-
-        long after = GC.GetAllocatedBytesForCurrentThread();
+        long allocated = SteadyStateAllocation.MeasureSmallest(
+            () =>
+            {
+                for (int i = 0; i < 300; i++) PumpOnce(decoder, presenter, packet, i);
+            });
 
         //Assert
-        (after - before).Should().Be(0);
+        allocated.Should().Be(0);
     }
 
     [Fact]

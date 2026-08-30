@@ -23,7 +23,9 @@ What it gives you is the machinery around a codec, and no codec:
 - **container readers** for EBML, Matroska/WebM and `.cbv`, written clean-room
   from the published specifications;
 - an **authoring muxer** that turns an encoder's IVF and Ogg output, plus caption
-  and chapter files, into a `.cbv`.
+  and chapter files, into a `.cbv`;
+- and a **streamable-profile checker** that says whether a file really is laid
+  out the way a `.cbv` promises.
 
 The video decoder itself arrives as a separate package and registers itself;
 audio plays through [CodeBrix.Audio](https://github.com/ellisnet/CodeBrix.Audio).
@@ -43,12 +45,36 @@ view package, no native asset, no windowing toolkit.
 The two packages are separate so that the choice stays yours. An application that
 draws frames itself, or runs where Skia does not, takes the first alone.
 
+## The authoring library
+
+The third package, **`CodeBrix.VideoPlayback.Authoring`**, writes the files the
+first one reads. One call turns a source video, plus its caption files and a
+chapter file, into a `.cbv` — in either flavour: one FFmpeg pass for the
+WebM-profile one, two passes and this repository's own muxer for the bespoke one.
+Frame sizes, rate control, device-class presets, a colour grade baked with the
+same composer the presenter uses live, a dry run that renders every command line
+without running anything, and a streamable-profile report over the finished file.
+
+It drives the FFmpeg installed on the authoring workstation, which is the ONE
+tool `.cbv` authoring is allowed to need — not mkvtoolnix, not a dav1d
+command-line tool, not Python. **It belongs in a build tool or an asset pipeline,
+never in a shipped application:** FFmpeg's binaries carry exactly the licences
+this family exists to keep out of one.
+
 ## Installing
 
 ```
 dotnet add package CodeBrix.VideoPlayback.MitLicenseForever
 dotnet add package CodeBrix.VideoPlayback.Skia.MitLicenseForever   # optional: the presenter
 ```
+
+And, on the machine that authors video rather than plays it:
+
+```
+dotnet add package CodeBrix.VideoPlayback.Authoring.MitLicenseForever
+```
+
+The three are published together at one version.
 
 ## Playing something
 
@@ -90,6 +116,10 @@ build is verified on a small board or a build agent.
 - **[src/CodeBrix.VideoPlayback.Skia/AGENT-README.txt](src/CodeBrix.VideoPlayback.Skia/AGENT-README.txt)**
   — the presenter's consumer guide: the two render paths, the composition
   surface, the effect chain, and ten more worked examples.
+- **[src/CodeBrix.VideoPlayback.Authoring/AGENT-README.txt](src/CodeBrix.VideoPlayback.Authoring/AGENT-README.txt)**
+  — the authoring library's consumer guide: the two flavours, every encoder
+  setting, the device-class table, the colour-grade hook, and the two things a
+  WebM-profile file cannot carry.
 - **[CBV-FORMAT.txt](CBV-FORMAT.txt)** — the bespoke container, byte by byte.
 - **[MAINTAINER-README.txt](MAINTAINER-README.txt)** — design notes and how to
   build, test and package this repository.
@@ -99,7 +129,7 @@ build is verified on a small board or a build agent.
 
 ## Licence
 
-MIT, both packages. See [LICENSE](LICENSE) and
+MIT, all three packages. See [LICENSE](LICENSE) and
 [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt) — nothing is vendored, and
 every container reader and every line of the colour shader here was written from
 its published specification.

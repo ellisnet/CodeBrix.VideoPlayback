@@ -408,16 +408,17 @@ public class VideoFrameConverterTests
         for (int warmUp = 0; warmUp < 4; warmUp++) VideoFrameConverter.ToBgra32(frame, destination, stride);
 
         //Act
-        long before = GC.GetAllocatedBytesForCurrentThread();
-        for (int iteration = 0; iteration < 50; iteration++)
-        {
-            VideoFrameConverter.ToBgra32(frame, destination, stride);
-        }
-
-        long after = GC.GetAllocatedBytesForCurrentThread();
+        long allocated = SteadyStateAllocation.MeasureSmallest(
+            () =>
+            {
+                for (int iteration = 0; iteration < 50; iteration++)
+                {
+                    VideoFrameConverter.ToBgra32(frame, destination, stride);
+                }
+            });
 
         //Assert
-        (after - before).Should().Be(0L);
+        allocated.Should().Be(0L);
     }
 
     [Fact]

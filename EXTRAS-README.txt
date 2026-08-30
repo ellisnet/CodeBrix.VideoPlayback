@@ -147,35 +147,45 @@ tools/CodeBrix.VideoPlayback.AssetAuthoring
     dotnet run --project tools/CodeBrix.VideoPlayback.AssetAuthoring -c Release
 
 The second console executable, also not packable. It regenerates the SAMPLE-VIDEO
-corpus under tests/assets/authoring - eighteen files derived from two
+corpus under tests/assets/authoring - twenty-four files derived from two
 Public-Domain phone recordings - and writes the manifest that describes them.
 
 It is the counterpart to generate-assets.sh, and the difference is the point.
 That script drives ffmpeg from a shell for the golden corpus. This tool builds
-every command line through the CodeBrix.VideoProcessing LIBRARY
-(CodeBrix.VideoProcessing.MitLicenseForever), which launches the host's ffmpeg as
-a child process on its behalf; the tool never invokes ffmpeg itself. That makes
-the library usage in CorpusEncoder.cs a WORKING PROTOTYPE of the authoring helper
-this program's own library will eventually expose, rather than a sketch of one,
-and the Mode1 layout - the one line that moves the cues to the front - is
-exercised on real video every time the corpus is rebuilt.
+every command line through CodeBrix.VideoPlayback.Authoring, which renders the
+arguments and hands them to CodeBrix.VideoProcessing to run; the tool never
+invokes ffmpeg itself. It used to be the working PROTOTYPE of that authoring
+library - CorpusEncoder.cs built its own ffmpeg arguments - and now it is the
+library's reference CONSUMER: CorpusEncoder.cs turns a plan entry into a
+VideoAuthoringRequest and nothing else. Every decision the prototype documented
+survived as a setting.
 
     --dry-run              print every command line and produce nothing
-    --only <folder>        rebuild only MKV, WebM or CodeBrix-Mode1 (the manifest is then
-                           left alone, because it describes the whole corpus)
-    --skip-profile-check   do not run cbvinfo over each finished file
+    --only <folder>        re-encode only MKV, WebM, CodeBrix-Mode1 or
+                           CodeBrix-Mode2. The manifest is still rewritten IN
+                           FULL: every other folder is read back and re-verified
+                           rather than re-encoded, so the manifest never
+                           describes a corpus that is half stale.
+    --skip-profile-check   do not judge each finished file against the profile
     --authoring-root <p>   use a folder other than the repository's own
 
-Every finished file is probed back through the library's own FFProbe.Analyse and
-checked against the plan - codecs, exact dimensions, frame rate, duration, and
-that no rotation side data survived - and then handed to this repository's cbvinfo
-for the streamable-profile report. Both results go into the manifest, and a failure
-of either makes the tool exit non-zero.
+Every finished file is read back and checked against the plan - codecs, exact
+dimensions, frame rate, duration, and that no rotation side data survived - and
+then judged against the streamable profile. The three FFmpeg-muxed folders are
+read back with FFProbe.Analyse, which keeps them judged by an implementation
+OTHER than the one that wrote them; CodeBrix-Mode2 cannot be, because a CBVF file
+is not a container ffmpeg has ever heard of, so it is read back with this
+repository's own container reader. Both results go into the manifest, and a
+failure of either makes the tool exit non-zero.
 
-It needs ffmpeg and ffprobe on the PATH, built with libsvtav1 and libopus. It
-downloads nothing and installs nothing. Build the solution first so that cbvinfo
-exists; without it the profile check is recorded as "not run" and the encoding
-still happens.
+The profile check no longer starts a process. The rules live in the playback
+library as StreamableProfile, so the tool, the authoring library and the cbvinfo
+verb all judge a file by the same code - and the corpus can be generated without
+the tools project having been built at all.
+
+It needs ffmpeg and ffprobe on the PATH, built with libsvtav1, libopus and
+libvorbis. Nothing else: the CodeBrix-Mode2 container is written by managed code.
+It downloads nothing and installs nothing.
 
 
 tests/assets
@@ -273,25 +283,36 @@ byte-level assertion is made against it.
     CodeBrix-Mode1/   the same six again as "CodeBrix Video Mode1" .cbv files: plain WebM
              with the cues moved to the FRONT, which is what the streamable
              profile is built around
+    CodeBrix-Mode2/   the same six again as "CodeBrix Video Mode2" .cbv files: the
+             BESPOKE CBVF container, AV1 + VORBIS, written by two ffmpeg passes
+             and the playback library's own muxer. Vorbis rather than Opus
+             because Mode2 is the flavour an application ships inside itself, and
+             a Vorbis file plays with the core package alone
 
 The portrait derivatives have TRUE portrait pixels - taller than they are wide,
 with no rotation left for a player to apply. The generator asserts that and so do
 the tests.
 
 READ README.txt AND MANIFEST.txt in that folder before changing anything there.
-README.txt is the Public-Domain declaration and the description of the four
+README.txt is the Public-Domain declaration and the description of the five
 folders; MANIFEST.txt is the per-file record, rewritten on every run.
 
-The twelve off-the-shelf files are the NEGATIVE CONTROL for the profile: cbvinfo
-fails them on "cues sit before the first cluster" and passes them on everything
-else, which is exactly the difference the Mode1 layout makes.
+The twelve off-the-shelf files are the NEGATIVE CONTROL for the profile: they
+fail on "cues sit before the first cluster" and pass on everything else, which is
+exactly the difference the Mode1 layout makes.
 
-tests/CodeBrix.VideoPlayback.Tests/AuthoringCorpusTests.cs reads all eighteen with
-this repository's own Matroska reader - track codecs, frame sizes, declared
-duration, seek index, cues-before-first-cluster - and decodes nothing, because
-there is no AV1 decoder in this repository's tests. Those tests skip themselves,
-naming the folder and the command that fills it, on a checkout that has not
-generated the corpus.
+CodeBrix-Mode2 WAS GENERATED BY THE AUTHORING LIBRARY AND THE OTHER THREE FOLDERS
+WERE NOT REGENERATED WHEN IT LANDED. That is deliberate, and it is checked: the
+authoring library renders the same command text the committed manifest records,
+byte for byte, and CorpusCommandEquivalenceTests says so. See MAINTAINER-README.txt.
+
+tests/CodeBrix.VideoPlayback.Tests/AuthoringCorpusTests.cs reads all twenty-four
+with this repository's own readers - track codecs, frame sizes, declared duration,
+seek index, cues-before-first-cluster for Mode1, index-first and Vorbis for Mode2
+- and decodes nothing, because there is no AV1 decoder in that project's tests.
+tests/CodeBrix.VideoPlayback.Authoring.Tests DOES decode the six Mode2 files, with
+the published Dav1d package. Both sets skip themselves, naming the folder and the
+command that fills it, on a checkout that has not generated the corpus.
 
 
 samples/CodeBrix.VideoPlayback.ConsumerShape
@@ -354,6 +375,35 @@ There is no opt-in gate here: the whole suite is device-free, because Skia's
 runtime effects compile and run on its raster backend, so the colour shader is
 measured against the core's own converter with no graphics device in the picture
 at all.
+
+
+tests/CodeBrix.VideoPlayback.Authoring.Tests
+============================================
+The third suite, and the only project in this repository that references a
+DECODER package. It is in three layers, and the layering is the point:
+
+  * ARGUMENT TESTS assert the exact ffmpeg command text a request renders, and
+    the refusals a bad request earns. They touch no file, run no process and need
+    no ffmpeg - which is what the authoring library's dry run exists for.
+  * END-TO-END TESTS author real files from clips generated on the spot out of
+    ffmpeg's own synthetic sources, then read them back with this repository's
+    readers. Nothing here is third-party media and nothing depends on the
+    sample-video corpus having been built. They SKIP, naming what was looked for,
+    when ffmpeg is absent.
+  * PLAYBACK TESTS open what was authored with CodeBrix.VideoPlayback.Dav1d
+    registered and decode through to a frame count and a set of frame hashes -
+    the gate that turns "the structure reads back" into "it is a video". The six
+    CodeBrix-Mode2 corpus files are played here too, and skip when the corpus has
+    not been generated.
+
+It also references tools/CodeBrix.VideoPlayback.AssetAuthoring, for one test: that
+the library still renders exactly the command lines the committed sample-video
+manifest records. That is what lets the eighteen FFmpeg-muxed corpus files stand
+unregenerated.
+
+There is no opt-in gate here either. Nothing opens an audio device: what is
+asserted about the sound is that a Vorbis track is decodable with the Opus package
+never registered, and asking that question costs no device.
 
 
 tests/assets/LUTs

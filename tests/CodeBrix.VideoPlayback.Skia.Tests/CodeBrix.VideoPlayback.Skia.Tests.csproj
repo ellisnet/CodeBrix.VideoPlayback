@@ -34,6 +34,14 @@
     <Compile Include="..\CodeBrix.VideoPlayback.Tests\RawVideoDecoderFactory.cs" Link="RawCodec\RawVideoDecoderFactory.cs" />
   </ItemGroup>
 
+  <!--
+    The steady-state allocation helper is LINKED from the core test project for the same reason: one copy of
+    the reasoning about why an "allocates nothing" assertion has to be measured more than once.
+  -->
+  <ItemGroup>
+    <Compile Include="..\CodeBrix.VideoPlayback.Tests\SteadyStateAllocation.cs" Link="SteadyStateAllocation.cs" />
+  </ItemGroup>
+
   <ItemGroup>
     <Content Include="..\assets\*.cbv;..\assets\*.txt">
       <Link>assets\%(Filename)%(Extension)</Link>

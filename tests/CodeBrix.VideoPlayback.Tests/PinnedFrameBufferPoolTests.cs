@@ -110,18 +110,20 @@ public class PinnedFrameBufferPoolTests
         for (int i = 0; i < 8; i++) pool.Return(pool.Rent(descriptor));
 
         long allocationsAfterWarmUp = pool.GetStatistics().Allocations;
-        long managedBytesBefore = GC.GetAllocatedBytesForCurrentThread();
 
         //Act
-        for (int i = 0; i < 500; i++) pool.Return(pool.Rent(descriptor));
+        long managedBytes = SteadyStateAllocation.MeasureSmallest(
+            () =>
+            {
+                for (int i = 0; i < 500; i++) pool.Return(pool.Rent(descriptor));
+            });
 
-        long managedBytesAfter = GC.GetAllocatedBytesForCurrentThread();
         VideoFrameBufferPoolStatistics statistics = pool.GetStatistics();
 
         //Assert
         statistics.Allocations.Should().Be(allocationsAfterWarmUp);
-        statistics.Rents.Should().Be(508);
-        (managedBytesAfter - managedBytesBefore).Should().Be(0);
+        statistics.Rents.Should().Be(8 + (500 * SteadyStateAllocation.DefaultAttempts));
+        managedBytes.Should().Be(0);
     }
 
     [Fact]

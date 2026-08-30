@@ -11,9 +11,10 @@ namespace SimpleCbxVideoPlayer.SkiaVideo.Assets;
 /// <remarks>
 /// The rule is deliberately a rule rather than a list of folders: EVERY sub-folder of the corpus is read,
 /// except the ones named in <see cref="ExcludedFolderNames" />, and every file whose extension is in
-/// <see cref="PlayableExtensions" /> is offered. So MKV/, WebM/ and CodeBrix-Mode1/ are listed today, MP4/
-/// is not - nothing in this family reads an MP4 - and a CodeBrix-Mode2/ folder added tomorrow appears in
-/// the drop-down without a line of code changing.
+/// <see cref="PlayableExtensions" /> is offered. So MKV/, WebM/, CodeBrix-Mode1/ and CodeBrix-Mode2/ are all
+/// listed today - twenty-four files - MP4/ is not, because nothing in this family reads an MP4, and a folder
+/// added tomorrow appears in the drop-down without a line of code changing. That is not a hypothetical:
+/// CodeBrix-Mode2/ landed after this class was written and needed no change at all.
 /// </remarks>
 public static class VideoCorpus
 {

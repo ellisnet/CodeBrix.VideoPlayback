@@ -52,9 +52,10 @@ libraries built in Release as well.
 
 **The video drop-down** lists every playable file found under `tests/assets/authoring`. The rule is a rule,
 not a list: every sub-folder is read except `MP4/`, and every `.mkv`, `.webm` and `.cbv` file in it is
-offered. So `MKV/`, `WebM/` and `CodeBrix-Mode1/` appear today - eighteen files - `MP4/` never does, because
-nothing in this family reads an ISOBMFF file, and a `CodeBrix-Mode2/` folder added later will appear without
-a line of code changing.
+offered. So `MKV/`, `WebM/`, `CodeBrix-Mode1/` and `CodeBrix-Mode2/` appear today - twenty-four files -
+`MP4/` never does, because nothing in this family reads an ISOBMFF file, and a folder added later will appear
+without a line of code changing. The `CodeBrix-Mode2/` files are the bespoke `.cbv` container carrying Vorbis
+audio, so they play with no Opus package anywhere in this sample.
 
 **The render-path drop-down** sets `SkiaVideoPresenter.RenderPath`:
 

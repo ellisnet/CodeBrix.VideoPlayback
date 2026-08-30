@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Text;
+using CodeBrix.VideoPlayback.Authoring.Commands;
+using CodeBrix.VideoPlayback.Containers.Cbv;
 
 namespace CodeBrix.VideoPlayback.AssetAuthoring;
 
@@ -12,32 +14,105 @@ public sealed class CorpusFileRecord
     /// <summary>The plan entry the file was produced from.</summary>
     public CorpusItem Item { get; set; }
 
-    /// <summary>The FFmpeg command line the library rendered and ran.</summary>
-    public string CommandLine { get; set; }
+    /// <summary>False when the file is not in this checkout at all.</summary>
+    public bool Present { get; set; } = true;
 
-    /// <summary>How long the encode took.</summary>
+    /// <summary>
+    /// True when THIS run encoded the file; false when the run only read an existing file back to describe it.
+    /// </summary>
+    public bool Encoded { get; set; }
+
+    /// <summary>The FFmpeg command lines the authoring library rendered - one, or two for Mode2.</summary>
+    public IReadOnlyList<AuthoringCommand> Commands { get; set; }
+
+    /// <summary>What the bespoke muxer produced, for a Mode2 file; null for the other three profiles.</summary>
+    public CbvAuthoringResult Mux { get; set; }
+
+    /// <summary>Anything the authoring library wanted the caller to know.</summary>
+    public IReadOnlyList<string> Notes { get; set; }
+
+    /// <summary>How long the encode took, when this run did it.</summary>
     public TimeSpan Elapsed { get; set; }
 
-    /// <summary>What the probe found, and whether it matches the plan.</summary>
+    /// <summary>The encode time recorded by an EARLIER run, when this one did not encode the file.</summary>
+    public string RecordedElapsed { get; set; }
+
+    /// <summary>What the probe or the container reader found, and whether it matches the plan.</summary>
     public VerificationResult Verification { get; set; }
 
-    /// <summary>What <c>cbvinfo</c> made of the file's streamable profile.</summary>
+    /// <summary>What the streamable profile made of the file.</summary>
     public ProfileCheckResult ProfileCheck { get; set; }
 }
 
 /// <summary>Writes <c>MANIFEST.txt</c> beside the folders it describes.</summary>
+/// <remarks>
+/// The manifest always describes the WHOLE corpus, even after a run that only rebuilt one folder. A run that
+/// did not encode a file reads it back and describes it anyway - the command line is re-derived from the plan,
+/// which is where it came from in the first place - and carries the encode time the previous manifest
+/// recorded, so nothing measured is quietly lost. <see cref="ReadRecordedEncodeTimes" /> is how that carrying
+/// happens.
+/// </remarks>
 public static class ManifestWriter
 {
+    /// <summary>Reads the encode times an earlier manifest recorded, so a partial run does not lose them.</summary>
+    /// <param name="path">The existing manifest, which need not exist.</param>
+    /// <returns>The recorded time for each "Folder/File", or an empty map when there is no manifest to read.</returns>
+    public static IReadOnlyDictionary<string, string> ReadRecordedEncodeTimes(string path)
+    {
+        Dictionary<string, string> times = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (string.IsNullOrEmpty(path) || !File.Exists(path)) return times;
+
+        string folder = null;
+        string file = null;
+        bool inFiles = false;
+
+        foreach (string raw in File.ReadAllLines(path))
+        {
+            string line = raw.TrimEnd();
+
+            if (!inFiles)
+            {
+                if (string.Equals(line, "THE FILES", StringComparison.Ordinal)) inFiles = true;
+                continue;
+            }
+
+            if (line.Length > 1 && line[0] != ' ' && line.EndsWith("/", StringComparison.Ordinal))
+            {
+                folder = line.Substring(0, line.Length - 1);
+                file = null;
+                continue;
+            }
+
+            if (folder != null
+                && line.StartsWith("  ", StringComparison.Ordinal)
+                && !line.StartsWith("   ", StringComparison.Ordinal))
+            {
+                file = line.Trim();
+                continue;
+            }
+
+            const string marker = "      encode time      ";
+            if (folder != null && file != null && line.StartsWith(marker, StringComparison.Ordinal))
+            {
+                times[folder + "/" + file] = line.Substring(marker.Length).Trim();
+            }
+        }
+
+        return times;
+    }
+
     /// <summary>Writes the manifest.</summary>
     /// <param name="path">Where to write it.</param>
-    /// <param name="records">Every finished file, in the order it was produced.</param>
+    /// <param name="records">Every file of the corpus, in plan order.</param>
     /// <param name="sources">What the probe found in the two Public-Domain originals.</param>
     /// <param name="totalElapsed">The wall clock of the whole run.</param>
+    /// <param name="regenerated">The folders this run actually re-encoded.</param>
     public static void Write(
         string path,
         IReadOnlyList<CorpusFileRecord> records,
         IReadOnlyList<SourceRecord> sources,
-        TimeSpan totalElapsed)
+        TimeSpan totalElapsed,
+        IReadOnlyList<string> regenerated)
     {
         StringBuilder text = new StringBuilder();
 
@@ -54,17 +129,26 @@ public static class ManifestWriter
         text.AppendLine();
         text.AppendLine("    dotnet run --project tools/CodeBrix.VideoPlayback.AssetAuthoring -c Release");
         text.AppendLine();
-        text.AppendLine("Every command line below was BUILT AND RUN by the CodeBrix.VideoProcessing library");
-        text.AppendLine("(CodeBrix.VideoProcessing.MitLicenseForever), which launches the host's ffmpeg as a");
-        text.AppendLine("child process. The generator never invokes ffmpeg itself.");
+        text.AppendLine("Every command line below was BUILT by CodeBrix.VideoPlayback.Authoring and RUN by");
+        text.AppendLine("CodeBrix.VideoProcessing, which launches the host's ffmpeg as a child process. The");
+        text.AppendLine("generator never invokes ffmpeg itself, and the CodeBrix-Mode2 files are muxed by the");
+        text.AppendLine("playback library's own bespoke muxer rather than by ffmpeg at all.");
         text.AppendLine();
-        text.AppendLine("REPRODUCIBILITY. The SHAPE of this corpus is deterministic - the same eighteen files,");
+        text.AppendLine("WHAT THIS RUN RE-ENCODED: "
+            + (regenerated == null || regenerated.Count == 0 ? "nothing" : string.Join(", ", regenerated)) + ".");
+        text.AppendLine("Everything else below was read back and re-verified, not re-encoded; its command line");
+        text.AppendLine("is re-derived from the plan, which is where it came from in the first place, and its");
+        text.AppendLine("encode time is the one the previous manifest recorded.");
+        text.AppendLine();
+        text.AppendLine("REPRODUCIBILITY. The SHAPE of this corpus is deterministic - the same twenty-four files,");
         text.AppendLine("the same resolutions, the same settings, the same command lines every run. The BYTES");
         text.AppendLine("are NOT: the Matroska muxer writes a random track UID and a fresh muxing date into");
         text.AppendLine("every file, so two runs of this tool produce files that differ even when the encoder");
         text.AppendLine("has made an identical bitstream. Those fields are fixed-length, so the sizes below do");
         text.AppendLine("tend to come back the same - but do not pin these files with a hash, and do not treat");
-        text.AppendLine("a size that moves by a few bytes as a fault.");
+        text.AppendLine("a size that moves by a few bytes as a fault. The CodeBrix-Mode2 files carry no random");
+        text.AppendLine("field at all, but the AV1 encoder is itself only deterministic for a fixed build and");
+        text.AppendLine("thread count, so the same caution applies to them.");
         text.AppendLine();
 
         text.AppendLine();
@@ -73,8 +157,8 @@ public static class ManifestWriter
         Rule(text);
         text.AppendLine();
         text.AppendLine("Created by Jeremy Ellis on his phone, and placed by him in the Public Domain on");
-        text.AppendLine("2026-08-29. Everything in MKV/, WebM/ and CodeBrix-Mode1/ is derived from these two files and");
-        text.AppendLine("is therefore Public Domain too.");
+        text.AppendLine("2026-08-29. Everything in MKV/, WebM/, CodeBrix-Mode1/ and CodeBrix-Mode2/ is derived");
+        text.AppendLine("from these two files and is therefore Public Domain too.");
         text.AppendLine();
 
         foreach (SourceRecord source in sources)
@@ -114,8 +198,15 @@ public static class ManifestWriter
         text.AppendLine();
         text.AppendLine("  Video   " + CorpusPlan.VideoEncoder + ", 8-bit " + CorpusPlan.PixelFormat + ", "
             + CorpusPlan.FramesPerSecond + " frames per second, scaled with " + CorpusPlan.ScalerFlags + ".");
-        text.AppendLine("  Audio   " + CorpusPlan.AudioEncoder + ", " + CorpusPlan.AudioChannels + " channels at "
-            + CorpusPlan.AudioSampleRateHz + " Hz.");
+        text.AppendLine("  Audio   " + CorpusPlan.AudioEncoder + " for MKV, WebM and CodeBrix-Mode1; "
+            + CorpusPlan.Mode2AudioEncoder + " for CodeBrix-Mode2.");
+        text.AppendLine("          " + CorpusPlan.AudioChannels + " channels at " + CorpusPlan.AudioSampleRateHz
+            + " Hz throughout, at the bit rates in the table above.");
+        text.AppendLine("          The rungs are the SAME numbers for both codecs, so the two ladders stay");
+        text.AppendLine("          comparable. Mode2 is Vorbis rather than Opus because Mode2 is the flavour an");
+        text.AppendLine("          application ships inside itself, and a Vorbis file plays with the core");
+        text.AppendLine("          playback package alone - an Opus one needs the application to add");
+        text.AppendLine("          CodeBrix.Audio.Opus and call its Register().");
         text.AppendLine("  Keyframes every " + CorpusPlan.KeyframeIntervalFrames + " frames is two seconds at "
             + CorpusPlan.FramesPerSecond + " frames per second - set");
         text.AppendLine("  explicitly, because the encoder's own default interval is far longer and a long");
@@ -129,6 +220,7 @@ public static class ManifestWriter
 
         long totalBytes = 0;
         int failed = 0;
+        int present = 0;
 
         text.AppendLine();
         Rule(text);
@@ -145,14 +237,24 @@ public static class ManifestWriter
                 text.AppendLine();
                 text.AppendLine(folder + "/");
                 text.AppendLine(new string('=', folder.Length + 1));
+                text.AppendLine();
+                text.AppendLine("  " + CorpusPlan.DescriptionFor(record.Item.Profile));
             }
 
+            text.AppendLine();
+            text.AppendLine("  " + record.Item.FileName);
+
+            if (!record.Present)
+            {
+                text.AppendLine("      NOT PRESENT      this file has not been generated in this checkout");
+                continue;
+            }
+
+            present++;
             VerificationResult verification = record.Verification;
             totalBytes += verification.SizeInBytes;
             if (!verification.Passed) failed++;
 
-            text.AppendLine();
-            text.AppendLine("  " + record.Item.FileName);
             text.AppendLine("      source           MP4/" + record.Item.Source.FileName);
             text.AppendLine("      resolution       " + verification.Width + "x" + verification.Height
                 + " (planned " + record.Item.Dimensions + ")");
@@ -166,8 +268,17 @@ public static class ManifestWriter
             text.AppendLine("      rotation         " + verification.Rotation + " degrees");
             text.AppendLine("      encoder          " + CorpusPlan.VideoEncoder + " preset " + record.Item.Tier.Preset
                 + ", crf " + record.Item.Tier.Crf + ", keyframes every " + CorpusPlan.KeyframeIntervalFrames + " frames");
-            text.AppendLine("      encode time      " + record.Elapsed.TotalSeconds.ToString("0.0", CultureInfo.InvariantCulture) + " s");
-            text.AppendLine("      ffprobe check    " + verification);
+            text.AppendLine("      encode time      " + DescribeElapsed(record));
+            text.AppendLine("      read-back check  " + verification);
+
+            if (record.Mux != null)
+            {
+                text.AppendLine("      mux              " + record.Mux.VideoFrameCount + " video frames, "
+                    + record.Mux.AudioPacketCount + " audio packets, "
+                    + record.Mux.CaptionTrackCount + " caption track(s) with "
+                    + record.Mux.CaptionCueCount + " cues");
+            }
+
             text.AppendLine("      profile check    " + Describe(record.ProfileCheck));
 
             foreach (string rule in record.ProfileCheck.Rules)
@@ -175,7 +286,18 @@ public static class ManifestWriter
                 text.AppendLine("                       " + rule);
             }
 
-            text.AppendLine("      command          ffmpeg " + record.CommandLine);
+            if (record.Notes != null)
+            {
+                foreach (string note in record.Notes) text.AppendLine("      note             " + note);
+            }
+
+            if (record.Commands != null)
+            {
+                foreach (AuthoringCommand command in record.Commands)
+                {
+                    text.AppendLine("      command          [" + command.Label + "] ffmpeg " + command.Arguments);
+                }
+            }
         }
 
         text.AppendLine();
@@ -184,20 +306,32 @@ public static class ManifestWriter
         text.AppendLine("TOTALS");
         Rule(text);
         text.AppendLine();
-        text.AppendLine("  files            " + records.Count);
+        text.AppendLine("  files            " + present + " of " + records.Count + " present");
         text.AppendLine("  total size       " + CorpusVerifier.FormatSize(totalBytes));
-        text.AppendLine("  ffprobe checks   " + (records.Count - failed) + " of " + records.Count + " passed");
-        text.AppendLine("  encode wall time " + totalElapsed.TotalSeconds.ToString("0.0", CultureInfo.InvariantCulture) + " s");
+        text.AppendLine("  read-back checks " + (present - failed) + " of " + present + " passed");
+        text.AppendLine("  run wall time    " + totalElapsed.TotalSeconds.ToString("0.0", CultureInfo.InvariantCulture) + " s");
         text.AppendLine();
         Rule(text);
 
         File.WriteAllText(path, text.ToString());
     }
 
+    private static string DescribeElapsed(CorpusFileRecord record)
+    {
+        if (record.Encoded)
+        {
+            return record.Elapsed.TotalSeconds.ToString("0.0", CultureInfo.InvariantCulture) + " s";
+        }
+
+        return string.IsNullOrEmpty(record.RecordedElapsed)
+            ? "not recorded (this run did not encode it)"
+            : record.RecordedElapsed;
+    }
+
     private static string Describe(ProfileCheckResult check)
     {
         if (check == null || !check.Ran) return "not run - " + (check == null ? "no result" : check.Unavailable);
-        return check.Verdict + " (cbvinfo exit code " + check.ExitCode + ")";
+        return check.Verdict;
     }
 
     private static void Rule(StringBuilder text) =>

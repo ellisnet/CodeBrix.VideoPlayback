@@ -150,22 +150,22 @@ public class VideoFramePresenterTests
             taken.Dispose();
         }
 
-        long before = GC.GetAllocatedBytesForCurrentThread();
-
         //Act
-        for (int i = 0; i < 500; i++)
-        {
-            VideoFrame frame = NewFrame(pool, TimeSpan.Zero);
-            presenter.Post(frame);
-            frame.Dispose();
-            presenter.TryTakeLatest(out VideoFrame taken);
-            taken.Dispose();
-        }
-
-        long after = GC.GetAllocatedBytesForCurrentThread();
+        long allocated = SteadyStateAllocation.MeasureSmallest(
+            () =>
+            {
+                for (int i = 0; i < 500; i++)
+                {
+                    VideoFrame frame = NewFrame(pool, TimeSpan.Zero);
+                    presenter.Post(frame);
+                    frame.Dispose();
+                    presenter.TryTakeLatest(out VideoFrame taken);
+                    taken.Dispose();
+                }
+            });
 
         //Assert
-        (after - before).Should().Be(0);
+        allocated.Should().Be(0);
     }
 
     [Fact]

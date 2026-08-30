@@ -661,28 +661,10 @@ public sealed class VideoPlaybackSession : IDisposable
         bufferPool.Dispose();
     }
 
-    private IMediaContainerReader OpenContainer(IMediaSource mediaSource)
-    {
-        Span<byte> magic = stackalloc byte[4];
-        int read = mediaSource.CanSeek ? mediaSource.ReadAt(0, magic) : mediaSource.ReadAtLeast(magic);
-
-        if (read < 4)
-        {
-            throw new VideoPlaybackException(
-                $"'{mediaSource.Name}' is only {read} bytes long, so it carries no container header at all.");
-        }
-
-        if (mediaSource.CanSeek) mediaSource.Position = 0;
-
-        if (CbvReader.IsCbv(magic)) return new CbvReader(mediaSource, true);
-
-        if (magic.SequenceEqual(CbvFormat.EbmlMagic)) return new MatroskaReader(mediaSource, true);
-
-        throw new VideoPlaybackException(
-            $"'{mediaSource.Name}' begins with {magic[0]:X2} {magic[1]:X2} {magic[2]:X2} {magic[3]:X2}, which is "
-            + "neither the bespoke container's 'CBVF' nor Matroska's 1A 45 DF A3. This library plays WebM, "
-            + "Matroska and .cbv files.");
-    }
+    // The session keeps ownership of the source - it may have to close it itself, and it may have been told
+    // to leave it open - so the reader is always built with leaveSourceOpen true.
+    private IMediaContainerReader OpenContainer(IMediaSource mediaSource) =>
+        MediaContainers.Open(mediaSource, true);
 
     private void SelectTracks()
     {

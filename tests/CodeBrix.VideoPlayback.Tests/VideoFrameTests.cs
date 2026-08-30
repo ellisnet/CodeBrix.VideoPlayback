@@ -117,15 +117,17 @@ public class VideoFrameTests
         using PinnedFrameBufferPool pool = new PinnedFrameBufferPool();
         for (int i = 0; i < 8; i++) NewFrame(pool).Dispose();
 
-        long before = GC.GetAllocatedBytesForCurrentThread();
-
         //Act
-        for (int i = 0; i < 500; i++) NewFrame(pool).Dispose();
-
-        long after = GC.GetAllocatedBytesForCurrentThread();
+        // Measured as the steady state rather than as one pass, because a tier-up can charge the measuring
+        // thread a few kilobytes exactly once - see SteadyStateAllocation. The assertion is still zero.
+        long allocated = SteadyStateAllocation.MeasureSmallest(
+            () =>
+            {
+                for (int i = 0; i < 500; i++) NewFrame(pool).Dispose();
+            });
 
         //Assert
-        (after - before).Should().Be(0);
+        allocated.Should().Be(0);
     }
 
     [Fact]

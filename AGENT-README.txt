@@ -79,6 +79,21 @@ you. Add, as your application needs them:
 Nothing else. There is no native binary in this package and no platform-specific
 build.
 
+AND ONE PACKAGE THAT DOES NOT BELONG IN AN APPLICATION AT ALL.
+CodeBrix.VideoPlayback.Authoring.MitLicenseForever WRITES the files this one
+reads: one call turns a source video plus its caption and chapter text into a
+".cbv", in either flavour, by driving the ffmpeg installed on the machine. Put it
+in a build tool or an asset pipeline; never in the thing you ship, because it
+expects an encoder to be there and ffmpeg's binaries carry exactly the licences
+this family exists to keep out of a shipped application. Its consumer guide is
+src/CodeBrix.VideoPlayback.Authoring/AGENT-README.txt.
+
+THE THREE PACKAGES ARE PUBLISHED TOGETHER, AT ONE VERSION. The core, the Skia
+presenter and the authoring library carry the same date-stamped version block and
+are packed in one run, so the presenter and the authoring library each depend on
+the core at exactly the number they were built beside. Take them at matching
+versions.
+
 
 KEY NAMESPACES / USINGS
 =======================
@@ -93,7 +108,8 @@ KEY NAMESPACES / USINGS
     using CodeBrix.VideoPlayback.Captions;      // CaptionTrack, CaptionCue, CaptionFiles
     using CodeBrix.VideoPlayback.Chapters;      // Chapter, FfMetadataChapters
     using CodeBrix.VideoPlayback.Sources;       // IMediaSource and the five ways to open one
-    using CodeBrix.VideoPlayback.Containers;    // MediaTrackInfo, MediaPacket, IMediaContainerReader
+    using CodeBrix.VideoPlayback.Containers;    // MediaTrackInfo, MediaPacket, IMediaContainerReader,
+                                                //   MediaContainers, StreamableProfile
     using CodeBrix.VideoPlayback.Containers.Cbv;       // CbvReader, CbvMuxer, CbvAuthoring
     using CodeBrix.VideoPlayback.Containers.Matroska;  // MatroskaReader
     using CodeBrix.VideoPlayback.Containers.Ogg;       // OggAudioStream (authoring)
@@ -357,7 +373,44 @@ Containers, for reading a file without playing it
     read the whole file, because nothing in Matroska records where a track stops
     - cues index key frames, usually of the video track alone. False therefore
     means "not proven", never "there is definitely more".
-    Sniff first: MatroskaReader.IsMatroska(firstFourBytes), CbvReader.IsCbv(firstFourBytes)
+
+    MediaContainers.Open(string pathOrUrl)                  the reader the header calls for
+    MediaContainers.Open(IMediaSource source, bool leaveSourceOpen = false)
+
+    Open sniffs the first four bytes and hands back the right reader - CbvReader
+    for a file beginning "CBVF", MatroskaReader for one beginning with EBML's
+    1A 45 DF A3. The EXTENSION is never consulted, which is exactly why the two
+    ".cbv" flavours can share one name. A file that is neither is refused with a
+    message quoting the bytes it actually began with. To ask the question
+    yourself: MatroskaReader.IsMatroska(firstFourBytes), CbvReader.IsCbv(...).
+
+The streamable profile - what makes a .cbv a .cbv
+--------------------------------------------------
+    StreamableProfile.EvaluateFile(string path)             open, walk, judge
+    StreamableProfile.Evaluate(IMediaContainerReader reader, int outOfOrderPacketCount)
+    StreamableProfile.CountOutOfOrderPackets(IMediaContainerReader reader)
+
+    StreamableProfileReport
+        IReadOnlyList<StreamableProfileRule> Rules
+        int Failed        int Warnings       bool Passes
+        string Verdict                       IEnumerable<...> FailedRules()
+        ToString()        the whole report, as the cbvinfo tool prints it
+
+    StreamableProfileRule
+        string Rule       string Detail      StreamableProfileOutcome Outcome
+        bool Passed       string Tag         ToString()   "[pass] rule - detail"
+
+    The rules: AV1 video; Opus or Vorbis audio; WebVTT captions; the seek index
+    in FRONT of the media data; every element a known size; a stated duration;
+    timestamps that ascend within every track; and - as a RECOMMENDATION rather
+    than a requirement, so it warns rather than fails - 8-bit 4:2:0 samples.
+    Three of them are asked differently of a Matroska document and of a bespoke
+    file, because the two containers state the same facts in different places.
+
+    A warning never costs a file its pass. Nothing is decoded, so this runs with
+    no codec package installed at all. This is the one implementation of those
+    rules: the cbvinfo tool prints from it, and the authoring library checks
+    every file it writes with it.
 
 Authoring a .cbv file
 ----------------------
@@ -367,6 +420,22 @@ Authoring a .cbv file
         AddChapters / WriteChunk / Complete, for building one packet at a time
     CaptionFiles.ReadFile(path, id, language, name, flags)   // .vtt and .srt
     FfMetadataChapters.ReadFile(path)                        // FFmpeg's chapter format
+
+    That is the muxer: it takes files an ENCODER already produced. To drive the
+    encoder as well - one call from a source video to a finished ".cbv" in
+    either flavour, with frame sizes, rate control, device-class presets and a
+    baked colour grade - add CodeBrix.VideoPlayback.Authoring.MitLicenseForever
+    on the machine that authors. It is not for a shipped application.
+
+    ONE ASYMMETRY WORTH KNOWING WHILE READING FILES. A chapter can carry a title
+    per language, and the bespoke flavour stores every one of them. A
+    WebM-profile file cannot: ffmpeg's Matroska muxer writes a single untagged
+    chapter title, so a file authored that way has exactly one title per chapter
+    whatever the chapter source said. TitleFor(chapter, preferredLanguages)
+    falls back to it, so an application need not care - but a chapter list that
+    refuses to translate is explained by the file, not by a bug here. The
+    hearing-impaired caption flag has the same shape: Matroska carries it, WebM
+    has no element for it.
 
 
 COMPLETE EXAMPLES
@@ -758,8 +827,11 @@ play Opus                             CodeBrixAudioOpus.Register()
 ask whether a codec is playable       VideoDecoders.IsCodecSupported("av01")
   (without opening anything)          AudioDecoders.IsCodecSupported("opus")
 avoid rate conversion                 SharedAudioOutput.Configure(48000) at start-up
-inspect a file without playing        new MatroskaReader(source) / new CbvReader(source)
-author a .cbv                         CbvAuthoring.Write(request)
+inspect a file without playing        MediaContainers.Open(path)
+judge a file against the profile      StreamableProfile.EvaluateFile(path)
+mux a .cbv from encoder output        CbvAuthoring.Write(request)
+author a .cbv from a source video     add CodeBrix.VideoPlayback.Authoring
+  (developer machine only)            and call CbvAuthor.Write(request)
 read a .cube lookup table             CubeLutFile.ReadFile(path)
 fold several .cube tables into one    LutComposer.Compose(layers)
   (each with its own strength)        LutLayer.FromCubeFile(path, percent)

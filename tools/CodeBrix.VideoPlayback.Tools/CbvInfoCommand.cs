@@ -110,21 +110,13 @@ public static class CbvInfoCommand
 
     private static IMediaContainerReader OpenReader(IMediaSource source, bool verifyChecksums)
     {
-        Span<byte> magic = stackalloc byte[4];
-        source.ReadExactlyAt(0, magic, "the container header");
+        // The library sniffs the header and picks the reader; the only thing this verb adds is the
+        // checksum switch, which only the Matroska reader has.
+        IMediaContainerReader reader = MediaContainers.Open(source, true);
 
-        if (CbvReader.IsCbv(magic)) return new CbvReader(source, true);
+        if (reader is MatroskaReader matroska) matroska.VerifyClusterChecksums = verifyChecksums;
 
-        if (MatroskaReader.IsMatroska(magic))
-        {
-            MatroskaReader reader = new MatroskaReader(source, true);
-            reader.VerifyClusterChecksums = verifyChecksums;
-            return reader;
-        }
-
-        throw new VideoPlaybackException(
-            $"'{source.Name}' begins with {magic[0]:X2} {magic[1]:X2} {magic[2]:X2} {magic[3]:X2}, which is neither "
-            + "'CBVF' nor Matroska's 1A 45 DF A3.");
+        return reader;
     }
 
     private static void WriteMatroskaHeader(MatroskaReader reader)
@@ -363,101 +355,14 @@ public static class CbvInfoCommand
         }
     }
 
+    // The RULES are not here: they live in the library, as CodeBrix.VideoPlayback.Containers.StreamableProfile,
+    // so that this verb and the authoring library judge a file by one implementation rather than two. All this
+    // does is print what the report already renders.
     private static bool WriteProfileReport(IMediaContainerReader reader, PacketSummary summary)
     {
-        Console.WriteLine("streamable profile");
-
-        bool pass = true;
-        bool warned = false;
-
-        void Check(string rule, bool ok, string detail)
-        {
-            Console.WriteLine($"  [{(ok ? "pass" : "FAIL")}] {rule}{(detail == null ? string.Empty : " - " + detail)}");
-            if (!ok) pass = false;
-        }
-
-        void Warn(string rule, bool ok, string detail)
-        {
-            Console.WriteLine($"  [{(ok ? "pass" : "warn")}] {rule}{(detail == null ? string.Empty : " - " + detail)}");
-            if (!ok) warned = true;
-        }
-
-        bool videoOk = true;
-        bool audioOk = true;
-        bool captionsOk = true;
-        string videoDetail = "no video track";
-        string audioDetail = "no audio track";
-
-        foreach (MediaTrackInfo track in reader.Tracks)
-        {
-            switch (track.Kind)
-            {
-                case MediaTrackKind.Video:
-                    videoDetail = $"'{track.CodecId}'";
-                    videoOk = string.Equals(track.CodecId, VideoCodecIds.Av1, StringComparison.OrdinalIgnoreCase);
-                    break;
-
-                case MediaTrackKind.Audio:
-                    audioDetail = $"'{track.CodecId}'";
-                    audioOk = string.Equals(track.CodecId, VideoCodecIds.Opus, StringComparison.OrdinalIgnoreCase)
-                        || string.Equals(track.CodecId, VideoCodecIds.Vorbis, StringComparison.OrdinalIgnoreCase);
-                    break;
-
-                case MediaTrackKind.Caption:
-                    if (!string.Equals(track.CodecId, VideoCodecIds.WebVtt, StringComparison.OrdinalIgnoreCase))
-                    {
-                        captionsOk = false;
-                    }
-
-                    break;
-            }
-        }
-
-        Check("video codec is AV1", videoOk, videoDetail);
-        Check("audio codec is Opus or Vorbis", audioOk, audioDetail);
-        Check("caption tracks are WebVTT", captionsOk, $"{reader.CaptionTracks.Count} caption track(s)");
-
-        if (reader is MatroskaReader matroska)
-        {
-            Check(
-                "cues sit before the first cluster",
-                matroska.HasIndex && matroska.CuesPrecedeFirstCluster,
-                matroska.HasIndex ? null : "the file carries no cues at all");
-
-            Check("every element declares a known size", !matroska.HasUnknownSizeElements,
-                matroska.HasUnknownSizeElements ? $"{matroska.UnknownSizeElementCount} unsized element(s)" : null);
-
-            Check("the Info element states a duration", matroska.HasDeclaredDuration, null);
-        }
-        else if (reader is CbvReader cbv)
-        {
-            Check("the file carries an index", cbv.Index.Count > 0, null);
-            Check("the index sits before the chunks", (cbv.Flags & CbvHeaderFlags.HasIndex) != 0, null);
-            Check("the header states a duration", cbv.Duration > TimeSpan.Zero, null);
-        }
-
-        Check("timestamps ascend within every track", summary.OutOfOrder == 0,
-            summary.OutOfOrder == 0 ? null : $"{summary.OutOfOrder} packet(s) go backwards");
-
-        foreach (MediaTrackInfo track in reader.Tracks)
-        {
-            if (track.Kind != MediaTrackKind.Video) continue;
-
-            bool eightBitFourTwoZero = track.BitDepth is 0 or 8
-                && (track.Layout == Decoding.VideoPixelLayout.I420 || track.Layout == Decoding.VideoPixelLayout.Unknown);
-
-            Warn(
-                "video is 8-bit 4:2:0 (recommended)",
-                eightBitFourTwoZero,
-                eightBitFourTwoZero ? null : $"{track.Layout} at {track.BitDepth} bits");
-        }
-
-        Console.WriteLine();
-        Console.WriteLine(pass
-            ? warned ? "result      passes the profile, with warnings" : "result      passes the profile"
-            : "result      DOES NOT pass the profile");
-
-        return pass;
+        StreamableProfileReport report = StreamableProfile.Evaluate(reader, summary.OutOfOrder);
+        Console.WriteLine(report.ToString());
+        return report.Passes;
     }
 
     private static string Format(TimeSpan value) =>

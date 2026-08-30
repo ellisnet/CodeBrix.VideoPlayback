@@ -27,18 +27,31 @@ AGENT-README FILES (consumer documentation, one per NuGet package)
       result into whatever canvas the application owns. Plain SkiaSharp only: no
       view package, no native asset, no windowing dependency.
 
+  src/CodeBrix.VideoPlayback.Authoring/AGENT-README.txt
+      CodeBrix.VideoPlayback.Authoring.MitLicenseForever - WRITES the files the
+      playback library reads. One call, CbvAuthor.Write, turns a source video
+      plus its caption and chapter text into a ".cbv" in either flavour: one
+      FFmpeg pass for the WebM-profile one, two passes and the core's own muxer
+      for the bespoke one. Frame sizes, rate control, device-class presets, a
+      colour grade baked with the same composer the presenter uses, a dry run
+      that renders every command line without running anything, and a
+      streamable-profile report over the finished file. A DEVELOPER-MACHINE
+      package: it drives the FFmpeg on the authoring workstation and never
+      belongs in a shipped application.
+
 MAINTAINER AND EXTRAS
 ---------------------
   MAINTAINER-README.txt
       Building, testing, packaging, versioning and provenance notes for
-      maintainers of BOTH packages, plus the design notes: the buffer-pool
+      maintainers of ALL THREE packages, plus the design notes: the buffer-pool
       contract, frame reference counting and fences, session threading, the
       clock, seeking, audio trimming and pre-roll, HTTP behaviour, the
       presenter's two render paths and its shader, and the benchmark numbers.
   EXTRAS-README.txt
-      The headless tools (cbvinfo, cbvdecode, cbvmux), the sample-video corpus
-      generator, the consumer-shape sample, the golden test-asset corpus and the
-      scripts and tools that regenerate both corpora.
+      The headless tools (cbvinfo, cbvdecode, cbvmux, lutbake), the sample-video
+      corpus generator that drives the authoring library, the consumer-shape
+      sample, the golden test-asset corpus and the scripts and tools that
+      regenerate both corpora.
 
 FORMAT SPECIFICATIONS
 ---------------------

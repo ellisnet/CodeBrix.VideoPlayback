@@ -142,18 +142,9 @@ public static class CbvDecodeCommand
         }
     }
 
-    private static IMediaContainerReader OpenReader(IMediaSource source)
-    {
-        Span<byte> magic = stackalloc byte[4];
-        source.ReadExactlyAt(0, magic, "the container header");
-
-        if (CbvReader.IsCbv(magic)) return new CbvReader(source, true);
-        if (MatroskaReader.IsMatroska(magic)) return new MatroskaReader(source, true);
-
-        throw new VideoPlaybackException(
-            $"'{source.Name}' begins with {magic[0]:X2} {magic[1]:X2} {magic[2]:X2} {magic[3]:X2}, which is neither "
-            + "'CBVF' nor Matroska's 1A 45 DF A3.");
-    }
+    // One sniff, one implementation: the library picks the reader the header calls for.
+    private static IMediaContainerReader OpenReader(IMediaSource source) =>
+        MediaContainers.Open(source, true);
 
     private static IVideoDecoder CreateDecoder(MediaTrackInfo track, VideoDecoderOptions options)
     {

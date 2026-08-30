@@ -10,7 +10,7 @@ in this file is needed to use the package.
 
 PURPOSE AND SCOPE
 =================
-This repository produces TWO NuGet packages:
+This repository produces THREE NuGet packages:
 
   CodeBrix.VideoPlayback.MitLicenseForever
       License:       MIT
@@ -23,6 +23,12 @@ This repository produces TWO NuGet packages:
       Dependencies:  CodeBrix.VideoPlayback.MitLicenseForever (same version) and
                      plain SkiaSharp, and nothing else
 
+  CodeBrix.VideoPlayback.Authoring.MitLicenseForever
+      License:       MIT
+      Consumer doc:  src/CodeBrix.VideoPlayback.Authoring/AGENT-README.txt
+      Dependencies:  CodeBrix.VideoPlayback.MitLicenseForever (same version) and
+                     CodeBrix.VideoProcessing.MitLicenseForever, and nothing else
+
 The first is the Skia-free core of a video-playback family: containers, a
 playback session, a frame-buffer pool, a frame presenter, a CPU colour converter
 and an authoring muxer. It contains no video codec and no drawing surface, on
@@ -33,9 +39,19 @@ the family's "no Skia outside the platform library" rule. It is a separate
 package precisely so that the rule holds everywhere else: an application that
 draws frames itself, or on a platform Skia does not reach, takes the core alone.
 
-Both projects carry the SAME date-stamped version block, so one pack run stamps
-both with one version and the dependency the presenter declares on the core is
-that same number. They are published together.
+The third WRITES what the first reads. It drives the ffmpeg installed on the
+authoring machine, through CodeBrix.VideoProcessing, and produces ".cbv" files in
+both flavours - the WebM-profile one in a single ffmpeg pass, the bespoke one in
+two passes plus the core's own muxer. It is a DEVELOPER-MACHINE package: it has
+no place in a shipped application, and nothing an application needs to PLAY video
+depends on it. It is published here rather than in the video-processing
+repository because the muxer and the container knowledge live here (plan decision
+21: no .cbv creation code in CodeBrix.VideoProcessing).
+
+All THREE projects carry the SAME date-stamped version block, so one pack run
+stamps them with one version and the dependency the presenter and the authoring
+library each declare on the core is that same number. THEY ARE PUBLISHED
+TOGETHER, as one event, at one version - core, .Skia and .Authoring.
 
 Planned siblings, elsewhere:
 
@@ -58,6 +74,17 @@ HARD RULES FOR THIS REPOSITORY
    suits the platforms it ships on, and a library that picks one for it breaks
    every other platform. The Skia test project and the sample DO reference
    SkiaSharp.NativeAssets.Linux, because they are things that run here.
+1b. THE AUTHORING LIBRARY REFERENCES THE CORE AND CodeBrix.VideoProcessing, AND
+   NOTHING ELSE. Never SkiaSharp, never a decoder package, never
+   CodeBrix.Audio.Opus, never the presenter: it writes files, it does not play
+   them or draw them. Its TEST project references the Dav1d decoder and the Opus
+   package, because proving that an authored file is a video means playing it -
+   but the library itself never does.
+1c. THE AUTHORING LIBRARY NEVER BECOMES A DEPENDENCY OF AN APPLICATION. It
+   launches ffmpeg as a child process; ffmpeg's binaries carry exactly the
+   licences this family exists to keep out of a shipped app. Nothing in src/
+   except the authoring project may reference it, and no sample that models a
+   shipped application may either.
 2. NO CODEC. There is no video decoding in src/. The uncompressed "raw" codec is
    a FORMAT (RawVideoFormat) in the library; its DECODER lives with the tests and
    is linked into the tools project.
@@ -79,8 +106,8 @@ BUILDING
 ========
     dotnet build CodeBrix.VideoPlayback.slnx -c Release
 
-Five projects: the two libraries, their two test projects, the headless tools,
-and the consumer-shape sample. `global.json` selects the
+Eight projects: the three libraries, their three test projects, the two console
+tools, and the consumer-shape sample. `global.json` selects the
 Microsoft.Testing.Platform runner, matching the rest of the family.
 
 The tools project and the sample set AllowUnsafeBlocks because the uncompressed
@@ -139,6 +166,47 @@ Where no such context can be had they skip themselves and name the reason; the
 shader itself is still measured against the core converter on Skia's raster
 backend, which works everywhere.
 
+THE "ALLOCATES NOTHING" TESTS ARE MEASURED MORE THAN ONCE, and there is a reason.
+Six tests assert that a warm loop allocates EXACTLY zero managed bytes - the frame
+pool, the frame object, the presenter mailbox, the colour converter, the whole
+decode path, and the Skia presenter's draw loop. The measurement is
+GC.GetAllocatedBytesForCurrentThread, which counts everything the THREAD did,
+including the runtime's own work - and TIERED COMPILATION charges the measuring
+thread a few kilobytes when it promotes the loop body, which a warm-up makes
+unlikely rather than impossible. The suite therefore failed roughly one full run
+in eight, on a busy machine, in a different test each time ("Expected value to be
+0L, but found 3256L"). Found and fixed 2026-08-29.
+
+The fix is tests/CodeBrix.VideoPlayback.Tests/SteadyStateAllocation.cs (LINKED
+into the Skia test project, one copy of the reasoning): it runs the loop a fixed
+five times and keeps the SMALLEST measurement. A tier-up spoils one pass; a real
+per-frame allocation spoils every pass, so the smallest is still non-zero and the
+test still fails. The assertion is exactly as strict as it was - zero, not
+"small" - and the pass count is fixed so that the tests which also assert a rent
+count or a frame count can state it.
+
+THE AUTHORING SUITE is a third test project,
+tests/CodeBrix.VideoPlayback.Authoring.Tests, and it is in three layers:
+
+  * ARGUMENT TESTS, which assert the exact ffmpeg command text a request renders
+    and the refusals a bad request earns. They run in milliseconds, touch no
+    file and need no ffmpeg at all - which is the whole point of the dry run.
+  * END-TO-END TESTS, which author real files from clips generated on the spot
+    from ffmpeg's own synthetic sources, then read them back with this
+    repository's readers. They SKIP, naming what was looked for, when ffmpeg is
+    absent.
+  * PLAYBACK TESTS, which open what was authored with the published Dav1d
+    decoder registered and decode through to a frame count and a set of frame
+    hashes. This project is the only one in the repository that references a
+    decoder package. The six CodeBrix-Mode2 corpus files are played here too,
+    and skip themselves when the corpus has not been generated.
+
+That project also references tools/CodeBrix.VideoPlayback.AssetAuthoring, for one
+test: that the authoring library still renders EXACTLY the command lines the
+committed sample-video manifest records. That test is what lets the eighteen
+FFmpeg-muxed corpus files stand unregenerated - see THE SAMPLE-VIDEO CORPUS
+below.
+
 
 PACKAGING / PUBLISHING
 ======================
@@ -167,9 +235,25 @@ appearing there is a defect - see hard rule 1a. The core must appear as a
 DEPENDENCY and not as a bundled assembly; there is one lib/net10.0 folder in each
 package and it holds one assembly.
 
-Pack both in ONE run so they agree on a version:
+The authoring library packs the same way, with its own AGENT-README from
+src/CodeBrix.VideoPlayback.Authoring/ landing at the package ROOT:
+
+    dotnet pack src/CodeBrix.VideoPlayback.Authoring/CodeBrix.VideoPlayback.Authoring.csproj -c Release -o <folder>
+    unzip -l <folder>/CodeBrix.VideoPlayback.Authoring.MitLicenseForever.<version>.nupkg
+
+It must carry exactly two dependencies: CodeBrix.VideoPlayback.MitLicenseForever
+at the version being packed, and CodeBrix.VideoProcessing.MitLicenseForever. A
+third entry is a defect - see hard rule 1b.
+
+Pack all three in ONE run so they agree on a version:
 
     dotnet pack CodeBrix.VideoPlayback.slnx -c Release -o <folder>
+
+PUBLISH ALL THREE TOGETHER. The presenter and the authoring library each declare
+the core at the exact version they were packed beside, so publishing one without
+the others leaves a package on nuget.org whose dependency does not exist. The
+release event is: pack the solution once, verify the three dependency sets, push
+the three.
 
 
 PROVENANCE / VENDORED SOURCES
@@ -843,6 +927,42 @@ declares -0.5..1.5 (honoured) and found/smol-cube/shaper_3d.cube is a combined
 shaper-plus-table with two INPUT_RANGE keywords and values up to 13.5 (accepted).
 
 
+THE STREAMABLE-PROFILE RULES, AND WHY THEY MOVED
+================================================
+Added 2026-08-29. The eight rules that decide whether a file is a "CodeBrix Video"
+file rather than merely a WebM one used to live inside
+tools/CodeBrix.VideoPlayback.Tools/CbvInfoCommand.cs, as a local function that
+printed as it went. Nothing but a shell script could reach them, and the corpus
+generator really did reach them that way: it started `dotnet`, ran the cbvinfo
+verb as a child process, and PARSED WHAT IT PRINTED.
+
+They are now CodeBrix.VideoPlayback.Containers.StreamableProfile - additive, in
+the core, with no behaviour change at all:
+
+  StreamableProfile.EvaluateFile(path)                   open, walk, judge
+  StreamableProfile.Evaluate(reader, outOfOrderPackets)  judge a reader you hold
+  StreamableProfile.CountOutOfOrderPackets(reader)       the packet walk on its own
+  StreamableProfileReport   Rules / Failed / Warnings / Passes / Verdict /
+                            FailedRules() / ToString()
+  StreamableProfileRule     Rule / Detail / Outcome / Passed / Tag / ToString()
+  StreamableProfileOutcome  Pass | Warn | Fail
+
+WHAT DID NOT CHANGE, ON PURPOSE. StreamableProfileReport.ToString() renders the
+heading, the indented rule lines, the blank line and the "result      ..." line
+exactly as cbvinfo printed them, and cbvinfo now prints that string. The verb's
+output text and its exit codes are byte for byte what they were, which is what
+lets the committed manifest's recorded rule lines stand.
+
+WHAT IT BOUGHT. The authoring library validates every file it writes with the same
+code the tool prints; the corpus generator no longer spawns a process, no longer
+needs the tools project to have been BUILT, and no longer parses console output;
+and the rules are now testable as functions (StreamableProfileTests).
+
+MediaContainers.Open moved for the same reason. The "sniff four bytes and pick a
+reader" step existed in three places - the session, cbvinfo and cbvdecode - and is
+now one public method in the core that all three, and the authoring library, call.
+
+
 BENCHMARKS
 ==========
 Measured 2026-08-28 on a 12th Gen Intel Core i7-12850HX (24 threads), LMDE 7,
@@ -877,11 +997,61 @@ SHA-256 of what is committed. Regenerating them changes the bytes, so do not do
 it casually - the committed files are the oracle.
 
 
+THE SAMPLE-VIDEO CORPUS, AND THE RULE ABOUT REGENERATING IT
+===========================================================
+tests/assets/authoring is the OTHER corpus: twenty-four files of real video, in
+four container profiles, derived from two Public-Domain phone clips. It is not an
+oracle and no byte-level assertion is made against it; it exists so that a player,
+a sample or a measurement has something to open that looks like the video people
+actually have.
+
+    MKV/              six off-the-shelf Matroska files, AV1 + Opus, cues at the end
+    WebM/             the same six as WebM
+    CodeBrix-Mode1/   the same six as WebM-profile .cbv - cues at the FRONT
+    CodeBrix-Mode2/   six BESPOKE .cbv files, AV1 + Vorbis, index-first
+
+THE RULE. CodeBrix-Mode2 was generated by the authoring library, and the other
+three folders were NOT regenerated when it was added. That was deliberate. The
+tool that made them used to build its own ffmpeg arguments; it now asks the
+authoring library instead, and the library renders the same command text byte for
+byte - which is what makes the eighteen existing files still exactly what the
+manifest beside them says they are. There is a test that says so:
+CorpusCommandEquivalenceTests in tests/CodeBrix.VideoPlayback.Authoring.Tests
+compares the committed manifest's command lines with what the library renders
+today. If that test ever fails, the corpus has to be rebuilt - which is a
+decision, taken deliberately, not something to slip into a commit.
+
+Regenerating one folder no longer leaves the manifest half stale. `--only <folder>`
+re-encodes that folder and REWRITES THE WHOLE MANIFEST: every other folder is read
+back and re-verified rather than re-encoded, its command line is re-derived from
+the plan (which is where it came from in the first place), and its encode time is
+carried over from the previous manifest. So MANIFEST.txt always describes all
+twenty-four files, and it always describes them as they are on disk now.
+
+Mode2 files cannot be probed with ffprobe - a CBVF file is not a container ffmpeg
+has ever heard of - so the generator reads them back with this repository's own
+container reader instead. The other three folders are still probed by ffprobe,
+which keeps them judged by an implementation other than the one that wrote them.
+
+
 DELIBERATE DIVERGENCES WORTH KNOWING
 ====================================
 - An absent Matroska Language element is read as "eng" per RFC 9559, which
   normalises to "en". Writers almost always state "und" explicitly, which
   normalises to an empty tag, so the golden corpus is unaffected.
+- FFmpeg's WebM muxer writes ONE untagged chapter title per chapter, so a
+  WebM-profile file cannot carry per-language chapter titles even when the
+  chapter file names them. The bespoke container carries all of them. The
+  authoring library reports the loss in its result's Notes rather than papering
+  over it (Jeremy's ruling, 2026-08-29), and the end-to-end tests assert the
+  difference in both directions. Matroska CAN express the missing titles as Tags
+  attached to a chapter's identifier; writing them is deferred work, not a bug.
+- A WebM document has NO element for the hearing-impaired track flag - Matroska
+  gained FlagHearingImpaired, WebM's element list never did - so FFmpeg's webm
+  muxer writes the default and forced flags and drops that one, even though it is
+  on the command line. Measured 2026-08-29 while building the authoring library.
+  The bespoke container carries all three flags, and so does -f matroska. The
+  authoring library reports this loss in its Notes too.
 - FFmpeg writes WebVTT tracks as D_WEBVTT/SUBTITLES with the cue identifier on
   the first line and the settings on the second; mkvmerge writes S_TEXT/WEBVTT
   with the payload in the Block and settings-then-identifier in a BlockAddition.

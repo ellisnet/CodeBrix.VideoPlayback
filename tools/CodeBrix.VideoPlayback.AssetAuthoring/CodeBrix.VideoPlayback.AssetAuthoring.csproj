@@ -12,17 +12,21 @@
   </PropertyGroup>
 
   <!--
-    The ONLY dependency is the CodeBrix video-processing wrapper. This tool never launches ffmpeg itself:
-    every command line below is built with that library's argument model and run through its process host,
-    which is the point - the tool is the working prototype of the authoring helper the library side of this
-    program will eventually expose, so the command construction has to be exercised, not imitated.
+    Every command line this tool runs is built by CodeBrix.VideoPlayback.Authoring, which is the authoring
+    helper this tool used to be a prototype of. That reference brings the playback core in with it, and it
+    has to: the CodeBrix-Mode2 files are written by the core's own bespoke muxer, and the streamable-profile
+    rules the tool judges every finished file with are the core's too.
 
-    It deliberately does NOT reference CodeBrix.VideoPlayback: the corpus is verified by the repository's own
-    reader through the TEST project (tests/CodeBrix.VideoPlayback.Tests/AuthoringCorpusTests.cs) and through
-    the cbvinfo verb, so this generator stays a pure producer with nothing of the library under test in it.
+    The video-processing wrapper stays a DIRECT reference because this tool uses it directly as well -
+    FFProbe.Analyse reads the two originals and reads every FFmpeg-muxed output back, which is what makes the
+    corpus judged by an implementation other than the one that wrote it.
   -->
   <ItemGroup>
     <PackageReference Include="CodeBrix.VideoProcessing.MitLicenseForever" Version="1.0.241.68" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\CodeBrix.VideoPlayback.Authoring\CodeBrix.VideoPlayback.Authoring.csproj" />
   </ItemGroup>
 
 </Project>

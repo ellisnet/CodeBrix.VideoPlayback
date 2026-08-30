@@ -307,9 +307,11 @@ public class FrameObjectRecyclingTests
         for (int index = 0; index < 32; index++) Cycle(pool, index);
 
         //Act
-        long before = GC.GetAllocatedBytesForCurrentThread();
-        for (int index = 0; index < 512; index++) Cycle(pool, index);
-        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        long allocated = SteadyStateAllocation.MeasureSmallest(
+            () =>
+            {
+                for (int index = 0; index < 512; index++) Cycle(pool, index);
+            });
 
         //Assert
         // Not "small". None. The buffer comes back to the pool and so does the object over it, so five

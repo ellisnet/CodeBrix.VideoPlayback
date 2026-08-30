@@ -15,6 +15,7 @@
   <Folder Name="/Tests/">
     <Project Path="tests/CodeBrix.VideoPlayback.Tests/CodeBrix.VideoPlayback.Tests.csproj" />
     <Project Path="tests/CodeBrix.VideoPlayback.Skia.Tests/CodeBrix.VideoPlayback.Skia.Tests.csproj" />
+    <Project Path="tests/CodeBrix.VideoPlayback.Authoring.Tests/CodeBrix.VideoPlayback.Authoring.Tests.csproj" />
   </Folder>
   <Folder Name="/Samples/">
     <Project Path="samples/CodeBrix.VideoPlayback.ConsumerShape/CodeBrix.VideoPlayback.ConsumerShape.csproj" />
@@ -25,4 +26,5 @@
   </Folder>
   <Project Path="src/CodeBrix.VideoPlayback/CodeBrix.VideoPlayback.csproj" />
   <Project Path="src/CodeBrix.VideoPlayback.Skia/CodeBrix.VideoPlayback.Skia.csproj" />
+  <Project Path="src/CodeBrix.VideoPlayback.Authoring/CodeBrix.VideoPlayback.Authoring.csproj" />
 </Solution>

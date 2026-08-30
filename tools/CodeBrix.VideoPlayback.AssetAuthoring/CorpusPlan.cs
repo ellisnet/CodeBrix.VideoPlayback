@@ -2,10 +2,12 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using CodeBrix.VideoPlayback.Authoring;
+using CodeBrix.VideoPlayback.Authoring.Encoding;
 
 namespace CodeBrix.VideoPlayback.AssetAuthoring;
 
-/// <summary>The three sibling folders this tool writes, and the muxing each of them asks for.</summary>
+/// <summary>The four sibling folders this tool writes, and the muxing each of them asks for.</summary>
 public enum CorpusProfile
 {
     /// <summary>Off-the-shelf Matroska: <c>-f matroska</c> with FFmpeg's default muxing, so the cues land wherever FFmpeg puts them.</summary>
@@ -16,6 +18,12 @@ public enum CorpusProfile
 
     /// <summary>CodeBrix Video Mode1: <c>-f webm</c> with the cues moved to the FRONT, written with a <c>.cbv</c> extension.</summary>
     Mode1,
+
+    /// <summary>
+    /// CodeBrix Video Mode2: the BESPOKE container. Two FFmpeg passes - AV1 into an IVF wrapper and Vorbis
+    /// into an Ogg stream - which the playback library's own muxer turns into a <c>CBVF</c> file.
+    /// </summary>
+    Mode2,
 }
 
 /// <summary>One of the two Public-Domain phone recordings the corpus is derived from.</summary>
@@ -68,6 +76,27 @@ public sealed class CorpusItem
     /// <summary>The container profile, which decides the folder, the muxer flags and the extension.</summary>
     public CorpusProfile Profile { get; set; }
 
+    /// <summary>Which authoring flavour writes the file - one FFmpeg pass, or two passes and a managed mux.</summary>
+    public VideoAuthoringFlavour Flavour { get; set; }
+
+    /// <summary>The Matroska-family muxer, for the three profiles FFmpeg muxes. Ignored by Mode2.</summary>
+    public AuthoringContainerFormat Container { get; set; }
+
+    /// <summary>True when the seek index is moved to the front. Only Mode1 asks for it. Ignored by Mode2.</summary>
+    public bool CuesToFront { get; set; }
+
+    /// <summary>The audio codec this profile's files carry.</summary>
+    public AuthoringAudioCodec AudioCodec { get; set; }
+
+    /// <summary>The FFmpeg encoder name behind <see cref="AudioCodec" />, for logs and the manifest.</summary>
+    public string AudioEncoderName =>
+        AudioCodec == AuthoringAudioCodec.LibVorbis
+            ? AuthoringEncoderNames.LibVorbis
+            : AuthoringEncoderNames.LibOpus;
+
+    /// <summary>The codec name a probe or a container reader reports for this profile's audio.</summary>
+    public string ExpectedAudioCodecName => AudioCodec == AuthoringAudioCodec.LibVorbis ? "vorbis" : "opus";
+
     /// <summary>The output frame width in pixels - the TRUE pixel width, with rotation already applied.</summary>
     public int Width { get; set; }
 
@@ -79,9 +108,6 @@ public sealed class CorpusItem
 
     /// <summary>The output file's name, extension included.</summary>
     public string FileName { get; set; }
-
-    /// <summary>The value handed to <c>-f</c>.</summary>
-    public string ContainerFormat { get; set; }
 
     /// <summary>The relative path of the file inside the authoring folder, for logs and the manifest.</summary>
     public string RelativePath => FolderName + "/" + FileName;
@@ -98,7 +124,7 @@ public sealed class CorpusItem
 }
 
 /// <summary>
-/// The whole corpus, as data: two clips by three resolutions by three container profiles, eighteen files.
+/// The whole corpus, as data: two clips by three resolutions by four container profiles, twenty-four files.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -154,8 +180,20 @@ public static class CorpusPlan
     /// <summary>The FFmpeg encoder name for the video.</summary>
     public const string VideoEncoder = "libsvtav1";
 
-    /// <summary>The FFmpeg encoder name for the audio.</summary>
+    /// <summary>The FFmpeg encoder name for the audio of the three FFmpeg-muxed profiles.</summary>
     public const string AudioEncoder = "libopus";
+
+    /// <summary>
+    /// The FFmpeg encoder name for Mode2's audio.
+    /// </summary>
+    /// <remarks>
+    /// Vorbis, not Opus, and the reason is what an APPLICATION has to carry: a Vorbis bespoke file plays with
+    /// the core playback package alone, while an Opus one needs the application to reference
+    /// CodeBrix.Audio.Opus and call its Register(). Mode2 is the flavour an application ships INSIDE itself,
+    /// so its convention is the one that needs nothing extra. The bit rates are the same as the Opus rungs,
+    /// so the two ladders stay comparable.
+    /// </remarks>
+    public const string Mode2AudioEncoder = "libvorbis";
 
     /// <summary>The scaler the resize filter is asked for.</summary>
     public const string ScalerFlags = "lanczos";
@@ -175,13 +213,19 @@ public static class CorpusPlan
         new OutputTier { Key = "720p", LongSide = 1280, ShortSide = 720, Preset = 4, Crf = 24, AudioKilobitsPerSecond = 96 },
     };
 
-    /// <summary>Builds the whole eighteen-file plan.</summary>
+    /// <summary>The four profiles, in the order they are written.</summary>
+    public static IReadOnlyList<CorpusProfile> Profiles { get; } = new[]
+    {
+        CorpusProfile.Matroska, CorpusProfile.WebM, CorpusProfile.Mode1, CorpusProfile.Mode2,
+    };
+
+    /// <summary>Builds the whole twenty-four-file plan.</summary>
     /// <returns>Every file the tool produces, grouped folder by folder in the order they are written.</returns>
     public static IReadOnlyList<CorpusItem> Build()
     {
-        List<CorpusItem> items = new List<CorpusItem>(18);
+        List<CorpusItem> items = new List<CorpusItem>(24);
 
-        foreach (CorpusProfile profile in new[] { CorpusProfile.Matroska, CorpusProfile.WebM, CorpusProfile.Mode1 })
+        foreach (CorpusProfile profile in Profiles)
         {
             foreach (SourceClip source in Sources)
             {
@@ -202,7 +246,10 @@ public static class CorpusPlan
                         Height = height,
                         FolderName = FolderFor(profile),
                         FileName = source.Key + "_" + tier.Key + ExtensionFor(profile),
-                        ContainerFormat = ContainerFormatFor(profile),
+                        Flavour = FlavourFor(profile),
+                        Container = ContainerFor(profile),
+                        CuesToFront = profile == CorpusProfile.Mode1,
+                        AudioCodec = AudioCodecFor(profile),
                     });
                 }
             }
@@ -221,6 +268,7 @@ public static class CorpusPlan
             case CorpusProfile.Matroska: return "MKV";
             case CorpusProfile.WebM: return "WebM";
             case CorpusProfile.Mode1: return "CodeBrix-Mode1";
+            case CorpusProfile.Mode2: return "CodeBrix-Mode2";
             default: throw new ArgumentOutOfRangeException(nameof(profile));
         }
     }
@@ -235,23 +283,52 @@ public static class CorpusPlan
             case CorpusProfile.Matroska: return ".mkv";
             case CorpusProfile.WebM: return ".webm";
             case CorpusProfile.Mode1: return ".cbv";
+            case CorpusProfile.Mode2: return ".cbv";
             default: throw new ArgumentOutOfRangeException(nameof(profile));
         }
     }
 
-    /// <summary>The value a profile hands to FFmpeg's <c>-f</c>.</summary>
+    /// <summary>Which authoring flavour writes a profile's files.</summary>
     /// <param name="profile">The container profile.</param>
-    /// <returns>The muxer name.</returns>
-    public static string ContainerFormatFor(CorpusProfile profile)
+    /// <returns>The flavour.</returns>
+    public static VideoAuthoringFlavour FlavourFor(CorpusProfile profile) =>
+        profile == CorpusProfile.Mode2 ? VideoAuthoringFlavour.Bespoke : VideoAuthoringFlavour.WebMProfile;
+
+    /// <summary>The Matroska-family muxer a profile hands to FFmpeg's <c>-f</c>.</summary>
+    /// <param name="profile">The container profile.</param>
+    /// <returns>The muxer. Meaningless for Mode2, whose container is written by managed code.</returns>
+    public static AuthoringContainerFormat ContainerFor(CorpusProfile profile)
     {
         switch (profile)
         {
-            case CorpusProfile.Matroska: return "matroska";
-            case CorpusProfile.WebM: return "webm";
+            case CorpusProfile.Matroska: return AuthoringContainerFormat.Matroska;
 
             // Mode1 IS WebM - the same muxer, the same doctype, the same streams. The only difference is
             // where the cues sit and what the file is called.
-            case CorpusProfile.Mode1: return "webm";
+            case CorpusProfile.WebM:
+            case CorpusProfile.Mode1:
+            case CorpusProfile.Mode2: return AuthoringContainerFormat.WebM;
+            default: throw new ArgumentOutOfRangeException(nameof(profile));
+        }
+    }
+
+    /// <summary>The audio codec a profile's files carry.</summary>
+    /// <param name="profile">The container profile.</param>
+    /// <returns>Opus for the three FFmpeg-muxed profiles, Vorbis for Mode2.</returns>
+    public static AuthoringAudioCodec AudioCodecFor(CorpusProfile profile) =>
+        profile == CorpusProfile.Mode2 ? AuthoringAudioCodec.LibVorbis : AuthoringAudioCodec.LibOpus;
+
+    /// <summary>The one-line description of what a profile's folder holds.</summary>
+    /// <param name="profile">The container profile.</param>
+    /// <returns>The description used in logs and the manifest.</returns>
+    public static string DescriptionFor(CorpusProfile profile)
+    {
+        switch (profile)
+        {
+            case CorpusProfile.Matroska: return "off-the-shelf Matroska, AV1 + Opus, cues at the end";
+            case CorpusProfile.WebM: return "off-the-shelf WebM, AV1 + Opus, cues at the end";
+            case CorpusProfile.Mode1: return "CodeBrix Video Mode1: WebM with the cues moved to the FRONT";
+            case CorpusProfile.Mode2: return "CodeBrix Video Mode2: the bespoke CBVF container, AV1 + Vorbis";
             default: throw new ArgumentOutOfRangeException(nameof(profile));
         }
     }
