@@ -58,21 +58,29 @@ public class LutPanelPolicyTests
     }
 
     [Theory]
-    //  applied  transport                          effects  can bake
-    [InlineData(2, VideoTransportState.Playing, true, true)]
-    [InlineData(2, VideoTransportState.Paused, true, true)]
-    [InlineData(2, VideoTransportState.Stopped, true, false)]
-    [InlineData(0, VideoTransportState.Playing, true, false)]
-    [InlineData(2, VideoTransportState.Playing, false, false)]
-    [InlineData(0, VideoTransportState.Stopped, false, false)]
-    public void CanBake_needs_a_chain_that_is_on_screen(
-        int appliedTableCount,
+    //  ticked  backend                             transport                          can bake
+    [InlineData(2, VideoRenderBackendOption.Gpu, VideoTransportState.Paused, true)]
+    //  Stopped covers a video that was stopped AND one that played to its end: both are bakeable
+    [InlineData(2, VideoRenderBackendOption.Gpu, VideoTransportState.Stopped, true)]
+    //  Ticked but never played - the whole point: a bake owes nothing to what is on screen
+    [InlineData(1, VideoRenderBackendOption.Gpu, VideoTransportState.Stopped, true)]
+    //  The panel is read-only while the picture runs, and the button is part of the panel
+    [InlineData(2, VideoRenderBackendOption.Gpu, VideoTransportState.Playing, false)]
+    //  Nothing ticked, so there is no chain to compose
+    [InlineData(0, VideoRenderBackendOption.Gpu, VideoTransportState.Paused, false)]
+    [InlineData(0, VideoRenderBackendOption.Gpu, VideoTransportState.Stopped, false)]
+    //  The processor path disables every part of the panel, this button included
+    [InlineData(2, VideoRenderBackendOption.Cpu, VideoTransportState.Paused, false)]
+    [InlineData(2, VideoRenderBackendOption.Cpu, VideoTransportState.Stopped, false)]
+    [InlineData(2, VideoRenderBackendOption.Cpu, VideoTransportState.Playing, false)]
+    public void CanBake_follows_the_panel_and_counts_what_is_ticked(
+        int tickedTableCount,
+        VideoRenderBackendOption backend,
         VideoTransportState transport,
-        bool effectsActive,
         bool expected)
     {
         //Act
-        var canBake = LutPanelPolicy.CanBake(appliedTableCount, transport, effectsActive);
+        var canBake = LutPanelPolicy.CanBake(tickedTableCount, backend, transport);
 
         //Assert
         canBake.Should().Be(expected);

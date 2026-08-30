@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <!-- SkiaSharp.Views.WPF ships net10.0-windows10.0.19041 assets, so the TFM must
+         carry (at least) that Windows platform version -->
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <!-- The view models live in SimpleCbxVideoPlayer.ViewModels, exactly as they do in the
+         CodeBrix.Platform head, so the root namespace drops the ".Wpf" -->
+    <RootNamespace>$(MSBuildProjectName.Replace(" ", "_").Replace(".Wpf", ""))</RootNamespace>
+    <!-- Lets the project compile (not run) on Linux/macOS build hosts -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+  </PropertyGroup>
+
+  <!--
+    SimpleCbxVideoPlayer.SkiaVideo is the seam: this head talks to a VideoPlaybackController and
+    never names a type from CodeBrix.VideoPlayback, CodeBrix.VideoPlayback.Skia,
+    CodeBrix.VideoPlayback.Dav1d or CodeBrix.Audio.Opus. The library is referenced UNCHANGED -
+    it is the same project the CodeBrix.Platform head uses.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\libs\SimpleCbxVideoPlayer.SkiaVideo\SimpleCbxVideoPlayer.SkiaVideo.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The "Simple" MVVM toolkit (SimpleViewModel, SimpleCommand, SimpleServiceResolver) for WPF -->
+    <PackageReference Include="CodeBrix.Platform.WPF.ApacheLicenseForever" Version="1.0.193.1013" />
+    <!-- The concrete generic host SimpleServiceResolver builds its container from; the toolkit
+         package itself depends on the .Abstractions only -->
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.11" />
+    <!--
+      SKGLElement - a real OpenGL surface that hands out the GRContext the video presenter needs for
+      its graphics path - and SKElement, the processor-side fallback. Unlike the CodeBrix.Platform
+      heads, native WPF needs no extra package to get a graphics context: SkiaSharp's own WPF views
+      supply one.
+    -->
+    <PackageReference Include="SkiaSharp.Views.WPF" Version="4.151.0" />
+  </ItemGroup>
+
+</Project>

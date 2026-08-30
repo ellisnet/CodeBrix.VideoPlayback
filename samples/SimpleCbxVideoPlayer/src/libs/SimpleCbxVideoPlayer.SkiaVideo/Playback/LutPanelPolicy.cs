@@ -45,17 +45,23 @@ public static class LutPanelPolicy
         return transport == VideoTransportState.Playing ? PlayingNote : string.Empty;
     }
 
-    /// <summary>Whether the applied chain can be baked to a ".cube" file.</summary>
-    /// <param name="appliedTableCount">How many tables the presenter's chain actually holds.</param>
+    /// <summary>Whether the panel's chain can be baked to a ".cube" file.</summary>
+    /// <param name="tickedTableCount">How many tables are TICKED IN THE PANEL, applied or not.</param>
+    /// <param name="backend">The path the picture is actually being composed on.</param>
     /// <param name="transport">Where the transport is.</param>
-    /// <param name="effectsActive">Whether the chain is actually being applied to the picture.</param>
     /// <returns>
-    /// True when there is a chain, it is on screen, and there is a picture for it to be on: a bake writes
-    /// WHAT IS SHOWING, so a chain that has been ticked but not yet applied, or one the processor path is
-    /// ignoring, has nothing to bake.
+    /// True when the panel is accepting input at all and something is ticked in it.
     /// </returns>
-    public static bool CanBake(int appliedTableCount, VideoTransportState transport, bool effectsActive) =>
-        appliedTableCount > 0
-        && effectsActive
-        && transport != VideoTransportState.Stopped;
+    /// <remarks>
+    /// The Bake button is part of the panel and follows the panel: it is the panel's export, not the
+    /// picture's. So it counts what is TICKED rather than what is applied - a chain that has never been
+    /// played bakes perfectly well, because composing a chain is arithmetic on the tables and owes nothing
+    /// to the frame on screen - and it is disabled exactly when the rest of the panel is: while the
+    /// picture is running, and on the processor path.
+    /// </remarks>
+    public static bool CanBake(
+        int tickedTableCount,
+        VideoRenderBackendOption backend,
+        VideoTransportState transport) =>
+        tickedTableCount > 0 && IsEditable(backend, transport);
 }

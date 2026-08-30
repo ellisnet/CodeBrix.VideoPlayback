@@ -1,0 +1,37 @@
+<Solution>
+  <!-- SimpleCbxVideoPlayer.Windows.slnx
+       The Windows-only solution: everything in SimpleCbxVideoPlayer.slnx PLUS the
+       native (non-Skia) WinUI 3 and WPF heads, which require Windows-host-only
+       build tooling. Open this one on a Windows machine. -->
+  <!-- SimpleCbxVideoPlayer.WinUI only declares Platforms x86/x64/ARM64 (no Any CPU),
+       so the solution platforms are restricted to match - otherwise VS offers
+       "Any CPU" and fails to map it to the WinUI project. -->
+  <Configurations>
+    <Platform Name="x86" />
+    <Platform Name="x64" />
+    <Platform Name="ARM64" />
+  </Configurations>
+  <Folder Name="/CodeBrixPlatform/">
+    <Project Path="src/CodeBrixPlatform/SimpleCbxVideoPlayer.UI/SimpleCbxVideoPlayer.UI.shproj" />
+    <Project Path="src/CodeBrixPlatform/SimpleCbxVideoPlayer.Core/SimpleCbxVideoPlayer.Core.csproj" />
+    <Project Path="src/CodeBrixPlatform/SimpleCbxVideoPlayer.LinuxX11/SimpleCbxVideoPlayer.LinuxX11.csproj" />
+    <Project Path="src/CodeBrixPlatform/SimpleCbxVideoPlayer.LinuxWayland/SimpleCbxVideoPlayer.LinuxWayland.csproj" />
+    <Project Path="src/CodeBrixPlatform/SimpleCbxVideoPlayer.LinuxFrameBuffer/SimpleCbxVideoPlayer.LinuxFrameBuffer.csproj" />
+    <Project Path="src/CodeBrixPlatform/SimpleCbxVideoPlayer.MacOS/SimpleCbxVideoPlayer.MacOS.csproj" />
+    <Project Path="src/CodeBrixPlatform/SimpleCbxVideoPlayer.Win32Skia/SimpleCbxVideoPlayer.Win32Skia.csproj" />
+    <Project Path="src/CodeBrixPlatform/SimpleCbxVideoPlayer.WinWpfSkia/SimpleCbxVideoPlayer.WinWpfSkia.csproj" />
+  </Folder>
+  <Folder Name="/Libraries/">
+    <Project Path="src/libs/SimpleCbxVideoPlayer.SkiaVideo/SimpleCbxVideoPlayer.SkiaVideo.csproj" />
+  </Folder>
+  <Folder Name="/Tests/">
+    <Project Path="tests/libs/SimpleCbxVideoPlayer.SkiaVideo.Tests/SimpleCbxVideoPlayer.SkiaVideo.Tests.csproj" />
+  </Folder>
+  <Project Path="src/SimpleCbxVideoPlayer.WinUI/SimpleCbxVideoPlayer.WinUI.csproj">
+    <Platform Solution="*|x86" Project="x86" />
+    <Platform Solution="*|x64" Project="x64" />
+    <Platform Solution="*|ARM64" Project="ARM64" />
+    <Deploy Solution="Debug|x64" />
+  </Project>
+  <Project Path="src/SimpleCbxVideoPlayer.Wpf/SimpleCbxVideoPlayer.Wpf.csproj" />
+</Solution>

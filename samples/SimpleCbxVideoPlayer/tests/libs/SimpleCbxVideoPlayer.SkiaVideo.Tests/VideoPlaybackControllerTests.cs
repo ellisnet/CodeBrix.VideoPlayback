@@ -160,18 +160,17 @@ public class VideoPlaybackControllerTests
     }
 
     [Fact]
-    public void BakeAppliedChain_writes_a_cube_file_that_reads_back()
+    public void BakeChain_writes_a_cube_file_that_reads_back()
     {
-        //Arrange
+        //Arrange - NOTHING is applied to the presenter; the chain is handed straight to the bake
         using TempFolder temp = new TempFolder();
         var folder = temp.CreateFolder("luts");
         var cube = temp.CreateCube(folder, "sepia_33.cube", "Sepia 33");
         var baked = Path.Combine(temp.Path, "baked", "chain.cube");
         using VideoPlaybackController controller = new VideoPlaybackController(playAudio: false);
-        controller.ApplyLutChain([new LutChainEntry(cube, 40)]);
 
         //Act
-        BakedLut result = controller.BakeAppliedChain(baked);
+        BakedLut result = controller.BakeChain([new LutChainEntry(cube, 40)], baked);
 
         //Assert
         result.Should().NotBeNull();
@@ -186,7 +185,7 @@ public class VideoPlaybackControllerTests
     }
 
     [Fact]
-    public void BakeAppliedChain_with_no_chain_reports_it_and_writes_nothing()
+    public void BakeChain_with_no_chain_reports_it_and_writes_nothing()
     {
         //Arrange
         using TempFolder temp = new TempFolder();
@@ -196,13 +195,36 @@ public class VideoPlaybackControllerTests
         controller.Failed += (_, args) => messages.Add(args.Message);
 
         //Act
-        BakedLut result = controller.BakeAppliedChain(baked);
+        BakedLut result = controller.BakeChain([], baked);
 
         //Assert
         result.Should().BeNull();
         File.Exists(baked).Should().BeFalse();
         messages.Count.Should().Be(1);
-        messages[0].Should().Contain("no lookup table is applied");
+        messages[0].Should().Contain("no lookup table is ticked");
+    }
+
+    [Fact]
+    public void BakeChain_bakes_what_it_is_given_and_never_the_applied_chain()
+    {
+        //Arrange - the presenter is holding one table while a DIFFERENT one is handed to the bake
+        using TempFolder temp = new TempFolder();
+        var folder = temp.CreateFolder("luts");
+        var applied = temp.CreateCube(folder, "sepia_33.cube", "Sepia 33");
+        var ticked = temp.CreateCube(folder, "cool_33.cube", "Cool 33");
+        var baked = Path.Combine(temp.Path, "chain.cube");
+        using VideoPlaybackController controller = new VideoPlaybackController(playAudio: false);
+        controller.ApplyLutChain([new LutChainEntry(applied, 40)]);
+
+        //Act
+        BakedLut result = controller.BakeChain([new LutChainEntry(ticked, 65)], baked);
+
+        //Assert - the file is the TICKED chain, and the applied chain is left exactly as it was
+        result.Should().NotBeNull();
+        result.Title.Should().Be("SimpleCbxVideoPlayer: cool_33@65");
+        CubeLutFile.ReadFile(baked).Title.Should().Be("SimpleCbxVideoPlayer: cool_33@65");
+        controller.LutEntries.Count.Should().Be(1);
+        controller.LutEntries[0].FilePath.Should().Be(applied);
     }
 
     [Fact]

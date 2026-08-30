@@ -307,31 +307,55 @@ public sealed class VideoPlaybackController : IDisposable
         return true;
     }
 
-    /// <summary>Names the applied chain the way a baked file's TITLE should read.</summary>
+    /// <summary>Names the APPLIED chain the way a baked file's TITLE should read.</summary>
     /// <returns>
     /// Something like <c>SimpleCbxVideoPlayer: sepia_33@40 + cool_33@40</c>, or a bare product name when
     /// the chain is empty.
     /// </returns>
-    public string GetChainTitle()
-    {
-        if (lutChain.Entries.Count == 0) { return ChainTitlePrefix; }
+    public string GetChainTitle() => GetChainTitle(lutChain.Entries);
 
-        var tables = lutChain.Entries.Select(entry =>
-            $"{Path.GetFileNameWithoutExtension(entry.FilePath)}@{entry.ApplyAtPercent:0.#}");
+    /// <summary>Names any chain the way a baked file's TITLE should read.</summary>
+    /// <param name="entries">The chain to name, in the order its tables are applied.</param>
+    /// <returns>
+    /// Something like <c>SimpleCbxVideoPlayer: sepia_33@40 + cool_33@40</c>, or a bare product name when
+    /// the chain is empty.
+    /// </returns>
+    public static string GetChainTitle(IReadOnlyList<LutChainEntry> entries)
+    {
+        if (entries == null || entries.Count == 0) { return ChainTitlePrefix; }
+
+        var tables = entries
+            .Where(entry => entry != null)
+            .Select(entry => $"{Path.GetFileNameWithoutExtension(entry.FilePath)}@{entry.ApplyAtPercent:0.#}");
 
         return ChainTitlePrefix + ": " + string.Join(" + ", tables);
     }
 
-    /// <summary>Bakes the APPLIED chain - what is on screen - into one ".cube" file.</summary>
+    /// <summary>Composes a chain of lookup tables and writes the result as one ".cube" file.</summary>
+    /// <param name="entries">The chain to bake, in the order its tables are applied.</param>
     /// <param name="cubeFilePath">Where to write the file.</param>
     /// <returns>What was written, or null when there was nothing to write.</returns>
     /// <remarks>
-    /// The table comes from the presenter's own <c>GetResultantLut()</c>, which is the very table the
-    /// shader is sampling: the same composition, at the same size, with the same interpolation. Composing
-    /// the chain a second time here would be the same arithmetic on paper and a second chance to drift in
-    /// practice.
+    /// <para>
+    /// A bake is INDEPENDENT of the picture. The chain handed in here is read and composed from scratch;
+    /// the presenter showing the video is not read and not touched, and NEITHER IS ANY OTHER PRESENTER.
+    /// Composing a chain is arithmetic on the tables - <see cref="LutComposer" /> in the core package does
+    /// it with no video, no graphics context, no frame and no window anywhere in sight. So a chain can be
+    /// baked that has never been played, and a chain that is playing can be baked while the panel above it
+    /// holds something else entirely: the two are simply not connected.
+    /// </para>
+    /// <para>
+    /// The output size is pinned to <see cref="SkiaVideoPresenter.DefaultEffectLutSize" /> - the size the
+    /// presenter composes at - rather than left to <c>LutComposer.GetOutputSize</c>. That is what keeps a
+    /// baked file and a played chain agreeing to the last bit even though nothing connects them: same
+    /// size, same tetrahedral sampling, same arithmetic.
+    /// </para>
+    /// <para>
+    /// An application already holding <see cref="IVideoFrameEffect" />s rather than file paths wants
+    /// <c>EffectComposer.Compose</c> instead, which is the same arithmetic reached from the Skia side.
+    /// </para>
     /// </remarks>
-    public BakedLut BakeAppliedChain(string cubeFilePath)
+    public BakedLut BakeChain(IReadOnlyList<LutChainEntry> entries, string cubeFilePath)
     {
         if (isDisposed) { return null; }
 
@@ -341,19 +365,48 @@ public sealed class VideoPlaybackController : IDisposable
             return null;
         }
 
-        if (lutChain.Entries.Count == 0)
+        List<LutChainEntry> chain = (entries ?? []).Where(entry => entry != null).ToList();
+
+        if (chain.Count == 0)
         {
-            Report("There is no chain to bake: no lookup table is applied.");
+            Report("There is no chain to bake: no lookup table is ticked.");
+            return null;
+        }
+
+        List<LutLayer> layers = [];
+        List<string> failures = [];
+
+        foreach (LutChainEntry entry in chain)
+        {
+            try
+            {
+                layers.Add(LutLayer.FromCubeFile(entry.FilePath, entry.ApplyAtPercent));
+            }
+            catch (Exception exception) when (exception is IOException or FormatException or InvalidDataException
+                                                  or UnauthorizedAccessException or ArgumentException)
+            {
+                //One unreadable table is that table's problem, not the bake's.
+                failures.Add($"{entry.FileName}: {exception.Message}");
+            }
+        }
+
+        if (failures.Count > 0) { Report(string.Join("; ", failures)); }
+
+        if (layers.Count == 0)
+        {
+            Report("None of the ticked lookup tables could be read, so there is nothing to bake.");
             return null;
         }
 
         try
         {
-            Lut3D table = presenter.GetResultantLut();
+            Lut3D table = LutComposer.Compose(
+                layers,
+                new LutComposerOptions { OutputSize = SkiaVideoPresenter.DefaultEffectLutSize });
 
             if (table == null)
             {
-                Report("The applied chain composed to nothing, so there is no table to bake.");
+                Report("The ticked chain composed to nothing, so there is no table to bake.");
                 return null;
             }
 
@@ -361,10 +414,10 @@ public sealed class VideoPlaybackController : IDisposable
 
             if (!string.IsNullOrEmpty(folder)) { Directory.CreateDirectory(folder); }
 
-            var title = GetChainTitle();
+            var title = GetChainTitle(chain);
             CubeLutFile.Write(table, cubeFilePath, title);
 
-            return new BakedLut(cubeFilePath, title, table.Size, lutChain.Entries.Count);
+            return new BakedLut(cubeFilePath, title, table.Size, chain.Count);
         }
         catch (Exception exception)
         {

@@ -6,19 +6,9 @@
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>
 
-  <!--
-    THE ONLY PROJECT IN THIS SAMPLE THAT NAMES THE VIDEO LIBRARIES. The .Core project, the shared .UI
-    project and the six heads see nothing but this library's own types, so the same library can be dropped
-    into a WinUI or WPF version of this sample unchanged.
-
-    They are PROJECT references because this sample lives in the repository that builds them - the
-    CodeBrix.VideoPlayback.ConsumerShape sample is the precedent. A standalone application would write:
-        <PackageReference Include="CodeBrix.VideoPlayback.MitLicenseForever" Version="*" />
-        <PackageReference Include="CodeBrix.VideoPlayback.Skia.MitLicenseForever" Version="*" />
-  -->
   <ItemGroup>
-    <ProjectReference Include="..\..\..\..\..\src\CodeBrix.VideoPlayback\CodeBrix.VideoPlayback.csproj" />
-    <ProjectReference Include="..\..\..\..\..\src\CodeBrix.VideoPlayback.Skia\CodeBrix.VideoPlayback.Skia.csproj" />
+    <PackageReference Include="CodeBrix.VideoPlayback.MitLicenseForever" Version="1.0.241.1343" />
+    <PackageReference Include="CodeBrix.VideoPlayback.Skia.MitLicenseForever" Version="1.0.241.1343" />
   </ItemGroup>
 
   <!--
