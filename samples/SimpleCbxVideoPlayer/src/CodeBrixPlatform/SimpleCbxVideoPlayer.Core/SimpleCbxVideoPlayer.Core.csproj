@@ -9,7 +9,7 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.11" />
     <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.11" />
-    <PackageReference Include="CodeBrix.Platform.ApacheLicenseForever" Version="1.0.231.233" />
+    <PackageReference Include="CodeBrix.Platform.ApacheLicenseForever" Version="1.0.243.226" />
     <PackageReference Include="CodeBrix.Platform.Fonts.Roboto.OflLicenseForever" Version="1.0.240.51" />
     <!-- SKXamlCanvas - the CPU Skia drawing surface hosted in CodeBrix.Platform XAML -->
     <PackageReference Include="CodeBrix.Platform.SkiaSharp.Views.MitLicenseForever" Version="4.151.0" />
@@ -18,7 +18,7 @@
       graphics path. SKXamlCanvas cannot supply one (SKSwapChainPanel is a non-functional placeholder on
       these heads), so this package is what makes the GPU render path and its colour lookup tables real.
     -->
-    <PackageReference Include="CodeBrix.Platform.Graphics3DGL.ApacheLicenseForever" Version="1.0.231.233" />
+    <PackageReference Include="CodeBrix.Platform.Graphics3DGL.ApacheLicenseForever" Version="1.0.243.226" />
   </ItemGroup>
 
   <ItemGroup>

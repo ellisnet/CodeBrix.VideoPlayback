@@ -18,6 +18,6 @@
 
   <!-- EXACTLY ONE platform head package; all other packages come from SimpleCbxVideoPlayer.Core -->
   <ItemGroup>
-    <PackageReference Include="CodeBrix.Platform.Runtime.Skia.Wayland.ApacheLicenseForever" Version="1.0.231.233" />
+    <PackageReference Include="CodeBrix.Platform.Runtime.Skia.Wayland.ApacheLicenseForever" Version="1.0.243.226" />
   </ItemGroup>
 </Project>
