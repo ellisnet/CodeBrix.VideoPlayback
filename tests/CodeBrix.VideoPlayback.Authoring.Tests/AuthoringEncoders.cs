@@ -53,6 +53,20 @@ internal static class AuthoringEncoders
     /// </summary>
     internal static int FastestSpeedPreset => HasSvtAv1 ? 13 : 8;
 
+    /// <summary>
+    /// A speed setting slow enough that an encode is CERTAINLY still running a second or two in, and quick
+    /// enough per frame that abandoning one costs no noticeable time. The cancellation test needs both.
+    /// </summary>
+    /// <remarks>
+    /// SVT-AV1 gives both at its slowest setting, so that is what it is asked for. libaom does not: at
+    /// <c>-cpu-used 0</c> one frame takes so long that a cancelled pass is still winding down two minutes
+    /// later - which measures the wind-down rather than the cancel. Its <c>-cpu-used 4</c> takes about
+    /// eighteen seconds over the clip that test encodes, which is far longer than the cancel needs to land,
+    /// and it stops when it is told. Its fastest setting is over in a handful of seconds, which is too close
+    /// to the cancel to rely on.
+    /// </remarks>
+    internal static int SpeedPresetSlowEnoughToCancel => HasSvtAv1 ? 0 : 4;
+
     /// <summary>Says what was looked for, for a skip message.</summary>
     internal static string Problem =>
         "Authoring needs an AV1 encoder, and neither '" + SvtAv1 + "' nor '" + AomAv1 + "' is in this "

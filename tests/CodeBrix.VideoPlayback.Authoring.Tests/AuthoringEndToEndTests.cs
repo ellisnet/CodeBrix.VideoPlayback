@@ -419,7 +419,7 @@ public class AuthoringEndToEndTests
 
         // The kept file is the file the lookup read: the command line names it, and nothing was left in the
         // temporary folder to be a second, differently-written copy of it.
-        result.Commands[0].Arguments.Should().Contain("lut3d=file=" + kept.Replace("\\", "\\\\\\\\") + ":");
+        result.Commands[0].Arguments.Should().Contain("lut3d=file=" + FilterGraphPath.Escape(kept) + ":");
         Directory.GetFiles(work.Path, "*.effective.cube").Length.Should().Be(0);
 
         CubeLut readBack = CubeLutFile.ReadFile(kept);
@@ -461,7 +461,7 @@ public class AuthoringEndToEndTests
         File.Exists(kept).Should().BeTrue();
         File.ReadAllBytes(kept).Should().Equal(File.ReadAllBytes(sepia));
 
-        result.Commands[0].Arguments.Should().Contain("lut3d=file=" + sepia.Replace("\\", "\\\\\\\\") + ":");
+        result.Commands[0].Arguments.Should().Contain("lut3d=file=" + FilterGraphPath.Escape(sepia) + ":");
         result.Commands[0].Arguments.Should().NotContain("effective.cube");
 
         string notes = string.Join(" | ", result.Notes);
@@ -495,8 +495,10 @@ public class AuthoringEndToEndTests
     [Fact]
     public void A_cancel_part_way_through_an_encode_stops_promptly_and_leaves_no_file()
     {
-        //Arrange - fifteen seconds of source, upscaled and encoded at the SLOWEST speed setting there is, so
-        // the pass is certainly still running two seconds in and the cancel lands mid-flight.
+        //Arrange - fifteen seconds of source, upscaled and encoded slowly, so the pass is certainly still
+        // running two seconds in and the cancel lands mid-flight. How slow is asked of the encoder rather
+        // than stated here: the setting has to leave the encode running, and it also has to let go of one
+        // when it is cancelled, and the two encoders do not say that with the same number.
         SyntheticSource.SkipWithoutFFmpeg();
         using WorkFolder work = new WorkFolder("cancel-mid-encode");
         string source = SyntheticSource.WriteClip(work.File("source.mkv"), 320, 180, 15);
@@ -504,7 +506,7 @@ public class AuthoringEndToEndTests
         VideoAuthoringRequest request = NewRequest(
             VideoAuthoringFlavour.WebMProfile, source, work.File("cancelled.cbv"), work);
 
-        request.Video.SpeedPreset = 0;
+        request.Video.SpeedPreset = AuthoringEncoders.SpeedPresetSlowEnoughToCancel;
         request.Video.ConstantRateFactor = 20;
         request.Video.FrameSize = AuthoringFrameSize.Exact(1280, 720);
 

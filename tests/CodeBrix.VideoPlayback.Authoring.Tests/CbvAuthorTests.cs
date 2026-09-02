@@ -324,11 +324,9 @@ public class CbvAuthorTests
         //Act
         string line = CbvAuthor.RenderCommands(request)[0].Arguments;
 
-        //Assert - the composed table is named with the platform's own separator, and a backslash one is
-        // then escaped for both of ffmpeg's unescape passes on its way into the filter, exactly as the
-        // colon and the space are in the test above. On a platform whose separator is a forward slash
-        // there is nothing to escape and the expectation is the text it always was.
-        string composed = Path.Combine("/work", "clip.effective.cube").Replace("\\", "\\\\\\\\");
+        //Assert - the composed table is named with the platform's own separator, which the filtergraph
+        // then escapes as it does the colon and the space in the test above.
+        string composed = FilterGraphPath.Escape(Path.Combine("/work", "clip.effective.cube"));
         line.Should().Contain("lut3d=file=" + composed + ":interp=tetrahedral");
     }
 
@@ -910,7 +908,7 @@ public class CbvAuthorTests
         string line = CbvAuthor.RenderCommands(request)[0].Arguments;
 
         //Assert
-        line.Should().Contain("lut3d=file=" + kept.Replace("\\", "\\\\\\\\") + ":interp=tetrahedral");
+        line.Should().Contain("lut3d=file=" + FilterGraphPath.Escape(kept) + ":interp=tetrahedral");
         line.Should().NotContain("clip.effective.cube");
         File.Exists(kept).Should().BeFalse();
     }

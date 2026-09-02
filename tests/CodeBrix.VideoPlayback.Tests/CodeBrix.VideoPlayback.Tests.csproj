@@ -17,7 +17,7 @@
       The TEST project may reference the Opus package - it proves the Opus path works once an
       application registers it. The LIBRARY never does; see MAINTAINER-README.txt.
     -->
-    <PackageReference Include="CodeBrix.Audio.Opus.BsdLicenseForever" Version="1.0.241.1040" />
+    <PackageReference Include="CodeBrix.Audio.Opus.BsdLicenseForever" Version="1.0.245.260" />
   </ItemGroup>
 
   <ItemGroup>
