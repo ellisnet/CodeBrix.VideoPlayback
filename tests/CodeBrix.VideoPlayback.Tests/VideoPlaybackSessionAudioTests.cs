@@ -6,7 +6,6 @@ using CodeBrix.VideoPlayback;
 using CodeBrix.VideoPlayback.Containers.Cbv;
 using CodeBrix.VideoPlayback.Decoding;
 using CodeBrix.VideoPlayback.Playback;
-using CodeBrix.VideoPlayback.RawCodec;
 using SilverAssertions;
 using Xunit;
 
@@ -437,12 +436,7 @@ public class VideoPlaybackSessionAudioTests
         return session.AudioPlayerPosition;
     }
 
-    private static VideoPlaybackSession NewSession()
-    {
-        VideoPlaybackSession session = new VideoPlaybackSession();
-        session.RegisterDecoderFactory(new RawVideoDecoderFactory());
-        return session;
-    }
+    private static VideoPlaybackSession NewSession() => new VideoPlaybackSession();
 
     private static void SkipUnlessAudioIsEnabled() =>
         Assert.SkipUnless(

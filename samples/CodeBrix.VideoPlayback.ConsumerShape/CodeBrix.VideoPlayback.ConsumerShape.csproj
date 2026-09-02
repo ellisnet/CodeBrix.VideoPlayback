@@ -35,15 +35,10 @@
   </ItemGroup>
 
   <!--
-    The uncompressed-video decoder is a test and diagnostics codec whose source lives with the tests; it is
-    LINKED here exactly as the tools project links it, so this sample can play a file with no codec package
-    installed at all. A real application would reference a real decoder package instead.
+    Nothing is linked in for the decoder. The uncompressed-video codec ships in the playback library and
+    registers itself, so this sample plays its clip with no codec package installed at all. A real
+    application playing a coded clip would reference a real decoder package instead.
   -->
-  <ItemGroup>
-    <Compile Include="..\..\tests\CodeBrix.VideoPlayback.Tests\RawVideoDecoder.cs" Link="RawCodec\RawVideoDecoder.cs" />
-    <Compile Include="..\..\tests\CodeBrix.VideoPlayback.Tests\RawVideoDecoderFactory.cs" Link="RawCodec\RawVideoDecoderFactory.cs" />
-  </ItemGroup>
-
   <ItemGroup>
     <Content Include="..\..\tests\assets\raw-vorbis.cbv">
       <Link>assets\raw-vorbis.cbv</Link>

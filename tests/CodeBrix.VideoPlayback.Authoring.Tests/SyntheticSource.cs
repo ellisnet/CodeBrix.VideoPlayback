@@ -58,16 +58,29 @@ public static class SyntheticSource
     /// <param name="width">The frame width. Must be at least 64 for SVT-AV1.</param>
     /// <param name="height">The frame height. Must be at least 64 for SVT-AV1.</param>
     /// <returns>The path it was written to.</returns>
-    public static string WriteClip(string path, int width, int height)
+    public static string WriteClip(string path, int width, int height) =>
+        WriteClip(path, width, height, DurationSeconds);
+
+    /// <summary>Writes a test clip of a given size and length.</summary>
+    /// <param name="path">Where to write it.</param>
+    /// <param name="width">The frame width. Must be at least 64 for SVT-AV1.</param>
+    /// <param name="height">The frame height. Must be at least 64 for SVT-AV1.</param>
+    /// <param name="durationSeconds">How long the clip runs.</param>
+    /// <returns>The path it was written to.</returns>
+    /// <remarks>
+    /// The length is a parameter for one reason: the cancellation test needs a clip whose encode is still
+    /// running a second or two in, and two seconds of 128 by 72 is over before a cancel can reach it.
+    /// </remarks>
+    public static string WriteClip(string path, int width, int height, double durationSeconds)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path));
 
         string size = width.ToString(CultureInfo.InvariantCulture) + "x" + height.ToString(CultureInfo.InvariantCulture);
         string video = "testsrc2=size=" + size
             + ":rate=" + FramesPerSecond.ToString(CultureInfo.InvariantCulture)
-            + ":duration=" + DurationSeconds.ToString("0.###", CultureInfo.InvariantCulture);
+            + ":duration=" + durationSeconds.ToString("0.###", CultureInfo.InvariantCulture);
         string audio = "sine=frequency=440:sample_rate=48000:duration="
-            + DurationSeconds.ToString("0.###", CultureInfo.InvariantCulture);
+            + durationSeconds.ToString("0.###", CultureInfo.InvariantCulture);
 
         FFMpegArguments
             .FromFileInput(video, false, input => input.ForceFormat("lavfi"))

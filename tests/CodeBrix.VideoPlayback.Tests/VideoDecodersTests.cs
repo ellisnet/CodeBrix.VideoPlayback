@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using CodeBrix.VideoPlayback;
+using CodeBrix.VideoPlayback.Codecs;
 using CodeBrix.VideoPlayback.Decoding;
 using CodeBrix.VideoPlayback.Frames;
 using SilverAssertions;
@@ -9,22 +10,95 @@ using Xunit;
 namespace CodeBrix.VideoPlayback.Tests;
 
 /// <summary>
-/// Checks the decoder registry: registration is idempotent on the instance, priority decides who is asked
-/// first, a factory that declines lets the next one try, and a factory that throws does not end the search.
+/// Checks the decoder registry: the built-in uncompressed factory is always in it, registration is idempotent
+/// on the instance, priority decides who is asked first, a factory that declines lets the next one try, and a
+/// factory that throws does not end the search.
 /// </summary>
 /// <remarks>
+/// <para>
 /// The registry is process-wide, so every test here clears it first and clears it again afterwards. Nothing
 /// else in the suite REGISTERS a process-wide video decoder - sessions get theirs through
 /// <see cref="VideoPlaybackSession.RegisterDecoderFactory" /> instead - but
-/// <see cref="VideoPlaybackFailureTests" /> READS the registry and needs it empty, so every class that
-/// depends on a process-wide registry shares the one collection and none of them run at the same time.
+/// <see cref="VideoPlaybackFailureTests" /> READS the registry and needs nothing in it for 'av01', so every
+/// class that depends on a process-wide registry shares the one collection and none of them run at the same
+/// time.
+/// </para>
+/// <para>
+/// A cleared registry is not an EMPTY one: <see cref="VideoDecoders.Clear" /> puts the built-in uncompressed
+/// factory back, because that one is part of the library rather than something an application registered.
+/// That is why the counts below are one higher than the number of factories a test registers - and it is what
+/// lets the rest of the suite play uncompressed clips while this class is clearing the registry beside it.
+/// </para>
 /// </remarks>
 [Collection("Process-wide registries")]
 public class VideoDecodersTests : IDisposable
 {
+    private const int BuiltInFactories = 1;
+
     public VideoDecodersTests() => VideoDecoders.Clear();
 
     public void Dispose() => VideoDecoders.Clear();
+
+    [Fact]
+    public void The_uncompressed_factory_is_in_the_registry_with_nothing_registered()
+    {
+        //Arrange & Act
+        IReadOnlyList<IVideoDecoderFactory> factories = VideoDecoders.RegisteredFactories;
+
+        //Assert
+        factories.Count.Should().Be(BuiltInFactories);
+        (factories[0] is RawVideoDecoderFactory).Should().BeTrue();
+        VideoDecoders.IsCodecSupported(VideoCodecIds.Raw).Should().BeTrue();
+    }
+
+    [Fact]
+    public void Clearing_the_registry_leaves_the_built_in_factory_behind()
+    {
+        //Arrange
+        VideoDecoders.Register(new FakeFactory("one", 0, VideoCodecIds.Av1));
+
+        //Act
+        VideoDecoders.Clear();
+
+        //Assert
+        VideoDecoders.RegisteredFactories.Count.Should().Be(BuiltInFactories);
+        VideoDecoders.IsCodecSupported(VideoCodecIds.Raw).Should().BeTrue();
+        VideoDecoders.IsCodecSupported(VideoCodecIds.Av1).Should().BeFalse();
+    }
+
+    [Fact]
+    public void The_built_in_factory_property_is_the_instance_that_is_registered()
+    {
+        //Arrange
+        IReadOnlyList<IVideoDecoderFactory> factories = VideoDecoders.RegisteredFactories;
+
+        //Act
+        IVideoDecoderFactory named = VideoDecoders.BuiltInRawVideoFactory;
+
+        //Assert
+        ReferenceEquals(named, factories[0]).Should().BeTrue();
+        (named is RawVideoDecoderFactory).Should().BeTrue();
+
+        // It is the same object every time, and Clear puts that very object back.
+        ReferenceEquals(named, VideoDecoders.BuiltInRawVideoFactory).Should().BeTrue();
+        VideoDecoders.Unregister(named).Should().BeTrue();
+        VideoDecoders.IsCodecSupported(VideoCodecIds.Raw).Should().BeFalse();
+
+        VideoDecoders.Clear();
+        ReferenceEquals(VideoDecoders.RegisteredFactories[0], named).Should().BeTrue();
+    }
+
+    [Fact]
+    public void The_built_in_factory_can_never_shadow_another_codec()
+    {
+        //Arrange
+        IVideoDecoderFactory builtIn = VideoDecoders.RegisteredFactories[0];
+
+        //Act & Assert
+        builtIn.Priority.Should().Be(0);
+        builtIn.SupportedCodecIds.Count.Should().Be(1);
+        builtIn.SupportedCodecIds.Should().Contain(VideoCodecIds.Raw);
+    }
 
     [Fact]
     public void Register_ignores_the_same_instance_twice()
@@ -37,7 +111,7 @@ public class VideoDecodersTests : IDisposable
         VideoDecoders.Register(factory);
 
         //Assert
-        VideoDecoders.RegisteredFactories.Count.Should().Be(1);
+        VideoDecoders.RegisteredFactories.Count.Should().Be(BuiltInFactories + 1);
     }
 
     [Fact]
@@ -48,7 +122,7 @@ public class VideoDecodersTests : IDisposable
         VideoDecoders.Register(new FakeFactory("two", 0, VideoCodecIds.Av1));
 
         //Assert
-        VideoDecoders.RegisteredFactories.Count.Should().Be(2);
+        VideoDecoders.RegisteredFactories.Count.Should().Be(BuiltInFactories + 2);
     }
 
     [Fact]
@@ -171,7 +245,7 @@ public class VideoDecodersTests : IDisposable
         //Assert
         removed.Should().BeTrue();
         removedAgain.Should().BeFalse();
-        VideoDecoders.RegisteredFactories.Count.Should().Be(0);
+        VideoDecoders.RegisteredFactories.Count.Should().Be(BuiltInFactories);
     }
 
     [Fact]
@@ -185,7 +259,8 @@ public class VideoDecodersTests : IDisposable
         IReadOnlyCollection<string> ids = VideoDecoders.SupportedCodecIds;
 
         //Assert
-        ids.Count.Should().Be(2);
+        ids.Count.Should().Be(BuiltInFactories + 2);
+        ids.Should().Contain(VideoCodecIds.Raw);
     }
 
     [Fact]

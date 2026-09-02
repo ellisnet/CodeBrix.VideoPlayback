@@ -12,7 +12,6 @@ using CodeBrix.VideoPlayback.Containers.Matroska;
 using CodeBrix.VideoPlayback.Decoding;
 using CodeBrix.VideoPlayback.Internal;
 using CodeBrix.VideoPlayback.Playback;
-using CodeBrix.VideoPlayback.RawCodec;
 using CodeBrix.VideoPlayback.Sources;
 using SilverAssertions;
 using Xunit;
@@ -235,8 +234,6 @@ public class AudioTrailingTrimTests
 
         using VideoPlaybackSession session = new VideoPlaybackSession(
             new VideoPlaybackOptions { PlayAudio = false });
-
-        session.RegisterDecoderFactory(new RawVideoDecoderFactory());
 
         int ended = 0;
         session.PlaybackEnded += (s, e) => Interlocked.Increment(ref ended);

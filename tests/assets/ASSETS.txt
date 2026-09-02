@@ -320,7 +320,7 @@ af6c7bab970e7269051972968d5516c28b10778c5853786520918f4d731a1948  chapters.ffmet
 ================================================================================
 BESPOKE .cbv SAMPLES  (added 2026-08-28 by the Phase B core work)
 ================================================================================
-These three are NOT produced by generate-assets.sh, because they are not produced
+These four are NOT produced by generate-assets.sh, because they are not produced
 by FFmpeg at all: they are written by this repository's own muxer from the files
 above. Rebuild them with
 
@@ -330,20 +330,37 @@ which needs only the .NET SDK - no FFmpeg, no mkvmerge. That is the point of the
 bespoke format: authoring it requires nothing that is not either an encoder or
 CodeBrix code.
 
-  av1-opus.cbv                         9,285 bytes
-      cbvmux --video av1-video-only.ivf --audio opus-audio.ogg
+EVERY BESPOKE SAMPLE HERE CARRIES VORBIS, AND THAT IS THE RULE RATHER THAN THE
+HABIT. A bespoke ".cbv" exists so that it plays with CodeBrix.VideoPlayback -
+whose CodeBrix.Audio dependency has Vorbis built in - plus a video decoder
+package, and nothing else. Opus would put a third package (CodeBrix.Audio.Opus,
+plus its Register() call) between the file and the machine that plays it, so
+cbvmux refuses an Opus Ogg outright and the authoring library refuses a bespoke
+request whose audio would be Opus. Opus is fully supported, and is the default,
+in the WebM-profile files listed above - av1-opus.webm and its relatives are
+still here and are still correct.
+
+  av1-vorbis-captions-chapters.cbv    10,708 bytes
+      cbvmux --video av1-video-only.ivf --audio vorbis-audio.ogg
              --chapters chapters.ffmeta --audio-language en
              --video-name picture --audio-name sound
              --captions captions-en.vtt:en:English:default
              --captions srt-captions.srt:fr:Francais:sdh
       Exercises: the whole authoring path; an av1C configuration record
       synthesised from the elementary stream's own sequence header (it is byte
-      for byte identical to the one FFmpeg wrote into av1-opus.webm, and a test
-      asserts that); Opus pre-skip and trailing trim recorded on the track;
+      for byte identical to the one FFmpeg wrote into av1-vorbis.webm, whose
+      video is the same elementary stream as av1-opus.webm's - same 16-byte
+      av1C, same 12 packets of 1,655 bytes - and a test asserts that);
+      the Vorbis setup headers packed as codec-private data;
       two caption tracks of different formats stored complete in the header
       region; a three-chapter table with per-language titles; both CRC-32
       checksums; video and audio interleaved in presentation order.
-      4 tracks, 12 video frames, 51 audio packets, 8 caption cues, 3 chapters.
+      4 tracks, 12 video frames, 49 audio packets, 8 caption cues, 3 chapters.
+      It carries a SubRip caption track on purpose, so it does NOT pass the
+      streamable profile, which reserves captions for WebVTT. That is the point
+      of it: the reader has to read what the muxer wrote either way.
+      (This file replaced av1-opus.cbv on 2026-09-01, same recipe with the
+      Vorbis Ogg in place of the Opus one.)
 
   av1-vorbis.cbv                       9,841 bytes
       cbvmux --video av1-video-only.ivf --audio vorbis-audio.ogg
@@ -369,8 +386,8 @@ CodeBrix code.
              --audio-language en --audio-name "sound"
              --video-name "uncompressed test pattern"
       Exercises: the WHOLE playback path with nothing installed - uncompressed
-      video that the test decoder plays and Vorbis audio that CodeBrix.Audio
-      plays without the Opus package being present anywhere. It is what the
+      video that the core's built-in decoder plays and Vorbis audio that
+      CodeBrix.Audio plays without the Opus package being present anywhere. It is what the
       consumer-shape sample under samples/ plays, and what proves that an
       application shipping Vorbis-only .cbv files needs no Opus binary.
       2 tracks, 25 video frames (one second), 49 Vorbis packets (one second).
@@ -378,7 +395,8 @@ CodeBrix code.
       clip whose audio ends first is legal but exercises a clock hand-off that
       has its own test, and this file is meant to be the ordinary case.
 
-Verification, on the machine that built them (2026-08-28):
+Verification, on the machine that built them (2026-08-28, and again 2026-09-01
+when av1-vorbis-captions-chapters.cbv replaced av1-opus.cbv):
   cbvinfo reads all four and reports matching track, caption, chapter and index
   counts with both checksums verified; cbvdecode decodes raw-synthetic.cbv to 60
   frames with the stream hash
@@ -395,7 +413,7 @@ generate-cbv-assets.sh produces identical bytes on every run from identical
 inputs.
 
   SHA256 of the four bespoke samples:
-    29903f04af8483c80136827d5940f16409b1d98f0977ea4b3d7ae3b5907535ce  av1-opus.cbv
+    e822ee92bfee8318a3e068ca72d9d0104331e6281b7eea43fdc4784fdd21bee8  av1-vorbis-captions-chapters.cbv
     ea81ebb0defa4f8b8cffe9dcd73a298128ee509e6415207430f459b98baa7efa  av1-vorbis.cbv
     cc8e3771cade5bdbe3bae1bfc3805ad08845354266b771fd87017e103a32e353  raw-synthetic.cbv
     c19931a8403a8bd71b3ad00f6bc608c32fec1afdbc81a608c896aeb20916b0e3  raw-vorbis.cbv

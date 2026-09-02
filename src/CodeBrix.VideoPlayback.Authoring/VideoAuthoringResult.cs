@@ -38,6 +38,52 @@ public sealed class VideoAuthoringResult
         TimeSpan elapsed,
         string composedLutTitle = null,
         int composedLutSize = 0)
+        : this(
+            outputPath,
+            sizeInBytes,
+            flavour,
+            ranCommands,
+            profile,
+            mux,
+            runNotes,
+            elapsed,
+            composedLutTitle,
+            composedLutSize,
+            null)
+    {
+    }
+
+    /// <summary>Creates a result that also records where a composed colour table was kept.</summary>
+    /// <param name="outputPath">Where the file was written.</param>
+    /// <param name="sizeInBytes">How big it is.</param>
+    /// <param name="flavour">Which flavour was written.</param>
+    /// <param name="ranCommands">The command lines that were run, in order.</param>
+    /// <param name="profile">What the streamable profile made of the file, or null when it was not checked.</param>
+    /// <param name="mux">The muxer's own summary for a bespoke file, or null for a WebM-profile one.</param>
+    /// <param name="runNotes">Anything the run wants the caller to know.</param>
+    /// <param name="elapsed">How long the whole run took.</param>
+    /// <param name="composedLutTitle">The title of the composed colour table, or null when none was composed.</param>
+    /// <param name="composedLutSize">The composed colour table's nodes a side, or 0 when none was composed.</param>
+    /// <param name="composedLutPath">
+    /// Where the composed table was kept, or null when it was a temporary file and has been deleted.
+    /// </param>
+    /// <exception cref="ArgumentNullException"><paramref name="ranCommands" /> or <paramref name="runNotes" /> is null.</exception>
+    /// <remarks>
+    /// The shorter constructor above is kept as it was, so that a caller written against an earlier version
+    /// still compiles: this package's surface only ever grows.
+    /// </remarks>
+    public VideoAuthoringResult(
+        string outputPath,
+        long sizeInBytes,
+        VideoAuthoringFlavour flavour,
+        IReadOnlyList<AuthoringCommand> ranCommands,
+        StreamableProfileReport profile,
+        CbvAuthoringResult mux,
+        IReadOnlyList<string> runNotes,
+        TimeSpan elapsed,
+        string composedLutTitle,
+        int composedLutSize,
+        string composedLutPath)
     {
         if (ranCommands == null) throw new ArgumentNullException(nameof(ranCommands));
         if (runNotes == null) throw new ArgumentNullException(nameof(runNotes));
@@ -52,6 +98,7 @@ public sealed class VideoAuthoringResult
         Elapsed = elapsed;
         ComposedLutTitle = composedLutTitle;
         ComposedLutSize = composedLutSize;
+        ComposedLutPath = composedLutPath;
     }
 
     /// <summary>Where the file was written.</summary>
@@ -91,14 +138,27 @@ public sealed class VideoAuthoringResult
     /// table used as it stands, or empty altogether.
     /// </summary>
     /// <remarks>
-    /// The composed table itself is a temporary file and is deleted with the rest of them; what is worth
-    /// keeping is the fact that composing happened and what it produced, which is what this and
-    /// <see cref="ComposedLutSize" /> record.
+    /// The composed table is a temporary file and is deleted with the rest of them unless the request asked
+    /// for it to be kept - see <see cref="ComposedLutPath" />. What is always recorded is the fact that
+    /// composing happened and what it produced, which is what this and <see cref="ComposedLutSize" /> say.
     /// </remarks>
     public string ComposedLutTitle { get; }
 
     /// <summary>The composed colour table's nodes a side, or 0 when no table was composed.</summary>
     public int ComposedLutSize { get; }
+
+    /// <summary>
+    /// Where the effective colour table was KEPT - the table this file was graded with - or null when the
+    /// request asked to keep nothing, or had no grade at all.
+    /// </summary>
+    /// <remarks>
+    /// It is set by <c>request.Video.ComposedLutPath</c> and it is populated whenever that path is set and
+    /// the request carried a grade. When the chain was COMPOSED the file here is the very file FFmpeg's
+    /// lookup read, not a copy written afterwards. When ONE table was used at full strength FFmpeg read the
+    /// caller's own file and this is a byte-for-byte copy of it - <see cref="ComposedLutSize" /> is 0 and
+    /// <see cref="ComposedLutTitle" /> is null in that case, which is how the two are told apart.
+    /// </remarks>
+    public string ComposedLutPath { get; }
 
     /// <summary>
     /// True when the file was checked and passes the streamable profile. False both when it fails and when

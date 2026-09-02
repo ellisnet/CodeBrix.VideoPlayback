@@ -1,11 +1,9 @@
 using System;
 using System.Collections.Generic;
-using CodeBrix.VideoPlayback;
-using CodeBrix.VideoPlayback.Codecs;
 using CodeBrix.VideoPlayback.Decoding;
 using CodeBrix.VideoPlayback.Frames;
 
-namespace CodeBrix.VideoPlayback.RawCodec;
+namespace CodeBrix.VideoPlayback.Codecs;
 
 /// <summary>
 /// Decodes the uncompressed video codec: it copies each packet's tightly packed planes into a frame buffer
@@ -18,8 +16,11 @@ namespace CodeBrix.VideoPlayback.RawCodec;
 /// installed at all, and it gives the headless tools something to decode.
 /// </para>
 /// <para>
-/// This type is deliberately NOT part of the shipped package. Its source lives with the tests and is linked
-/// into the tools project as well, so there is one copy of it and it never reaches an application.
+/// It SHIPS in this package and is always available: <see cref="RawVideoDecoderFactory" /> is built into
+/// <see cref="VideoDecoders" />, so a <c>V_UNCOMPRESSED</c> track - in a Matroska file or in a bespoke
+/// <c>.cbv</c> - plays with no codec package installed and no registration call at all. It stays a
+/// diagnostics and test codec rather than a distribution format: uncompressed video is enormous, and a real
+/// clip wants a real codec package.
 /// </para>
 /// </remarks>
 public sealed class RawVideoDecoder : IVideoDecoder

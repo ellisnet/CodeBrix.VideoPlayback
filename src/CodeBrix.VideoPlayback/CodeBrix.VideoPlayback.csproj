@@ -54,7 +54,7 @@
     <Product>CodeBrix.VideoPlayback</Product>
     <Title>CodeBrix.VideoPlayback</Title>
     <Authors>Jeremy Ellis</Authors>
-    <Description>Royalty-free video playback for .NET: reads WebM and Matroska files and the bespoke .cbv container, demultiplexes AV1 video with Opus or Vorbis audio plus text captions and chapters, and drives a codec-neutral video decoder seam, a pinned zero-copy frame-buffer pool, a newest-frame presenter mailbox and a managed SIMD YUV-to-BGRA converter. Audio plays through CodeBrix.Audio; video decoders and a drawing surface arrive as separate packages, so this one has no native binaries and no drawing dependency at all.</Description>
+    <Description>Royalty-free video playback for .NET: reads WebM and Matroska files and the bespoke .cbv container, demultiplexes AV1 video with Opus or Vorbis audio plus text captions and chapters, and drives a codec-neutral video decoder seam, a pinned zero-copy frame-buffer pool, a newest-frame presenter mailbox and a managed SIMD YUV-to-BGRA converter. Audio plays through CodeBrix.Audio; uncompressed video decodes out of the box, while decoders for coded formats and a drawing surface arrive as separate packages, so this one has no native binaries and no drawing dependency at all.</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageProjectUrl>https://github.com/ellisnet/CodeBrix.VideoPlayback</PackageProjectUrl>
     <RepositoryUrl>https://github.com/ellisnet/CodeBrix.VideoPlayback</RepositoryUrl>

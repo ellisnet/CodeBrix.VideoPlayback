@@ -5,12 +5,12 @@ using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 using CodeBrix.VideoPlayback;
+using CodeBrix.VideoPlayback.Codecs;
 using CodeBrix.VideoPlayback.Containers;
 using CodeBrix.VideoPlayback.Containers.Cbv;
 using CodeBrix.VideoPlayback.Containers.Matroska;
 using CodeBrix.VideoPlayback.Decoding;
 using CodeBrix.VideoPlayback.Frames;
-using CodeBrix.VideoPlayback.RawCodec;
 using CodeBrix.VideoPlayback.Sources;
 
 namespace CodeBrix.VideoPlayback.Tools;
@@ -153,18 +153,19 @@ public static class CbvDecodeCommand
         if (string.Equals(track.CodecId, VideoCodecIds.Raw, StringComparison.OrdinalIgnoreCase)
             && codecPrivate.IsEmpty)
         {
-            Codecs.RawVideoDescriptor descriptor = new Codecs.RawVideoDescriptor(
+            RawVideoDescriptor descriptor = new RawVideoDescriptor(
                 track.Width,
                 track.Height,
                 track.BitDepth > 0 ? track.BitDepth : 8,
                 track.Layout == VideoPixelLayout.Unknown ? VideoPixelLayout.I420 : track.Layout,
                 track.Color);
 
-            if (descriptor.IsValid) codecPrivate = Codecs.RawVideoFormat.CreateDescriptor(descriptor);
+            if (descriptor.IsValid) codecPrivate = RawVideoFormat.CreateDescriptor(descriptor);
         }
 
-        IVideoDecoder decoder = new RawVideoDecoderFactory().CreateDecoder(track.CodecId, codecPrivate, options);
-        return decoder ?? VideoDecoders.TryCreateDecoder(track.CodecId, codecPrivate, options);
+        // One registry, one answer: the uncompressed decoder is built into the library and is already in it,
+        // so nothing has to be registered here for a raw file, and a coded stream still needs its package.
+        return VideoDecoders.TryCreateDecoder(track.CodecId, codecPrivate, options);
     }
 
     private static int Decode(

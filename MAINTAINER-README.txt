@@ -31,8 +31,9 @@ This repository produces THREE NuGet packages:
 
 The first is the Skia-free core of a video-playback family: containers, a
 playback session, a frame-buffer pool, a frame presenter, a CPU colour converter
-and an authoring muxer. It contains no video codec and no drawing surface, on
-purpose.
+and an authoring muxer. It contains no CODED video decoder and no drawing
+surface, on purpose - only the uncompressed decoder, which is built in so that
+everything else works with no codec package installed.
 
 The second draws what the first decodes, and is THE ONE SANCTIONED EXCEPTION to
 the family's "no Skia outside the platform library" rule. It is a separate
@@ -91,9 +92,12 @@ HARD RULES FOR THIS REPOSITORY
    licences this family exists to keep out of a shipped app. Nothing in src/
    except the authoring project may reference it, and no sample that models a
    shipped application may either.
-2. NO CODEC. There is no video decoding in src/. The uncompressed "raw" codec is
-   a FORMAT (RawVideoFormat) in the library; its DECODER lives with the tests and
-   is linked into the tools project.
+2. NO CODED CODEC. There is no coded-video decoding in src/, and no native
+   binary. The one decoder that ships is the uncompressed one -
+   Codecs/RawVideoDecoder.cs and Codecs/RawVideoDecoderFactory.cs, beside the
+   FORMAT (RawVideoFormat) it reads - and it is seeded into VideoDecoders so an
+   application needs no registration call for it. It is managed, tiny and
+   licence-free; anything that decompresses arrives in its own package.
 3. NRT IS OFF. No `?` on a reference type anywhere, and no `!` operator. Nullable
    value types are fine.
 4. XML DOC COMMENTS ON EVERY PUBLIC MEMBER. CS1591 is fixed at source, never
@@ -116,9 +120,11 @@ Eight projects: the three libraries, their three test projects, the two console
 tools, and the consumer-shape sample. `global.json` selects the
 Microsoft.Testing.Platform runner, matching the rest of the family.
 
-The tools project and the sample set AllowUnsafeBlocks because the uncompressed
-decoder they link in writes through plane pointers. Both libraries set it for the
-same reason - the converter and the plane uploads work in pointers throughout.
+The core library sets AllowUnsafeBlocks because the converter, the plane uploads
+and the uncompressed decoder all write through plane pointers; the presenter
+library sets it for the same reason. The tools project and the consumer-shape
+sample keep the switch although they no longer link the decoder's source in,
+because it costs nothing and a diagnostic verb may need it again.
 
 
 TESTING
@@ -1084,7 +1090,10 @@ tests/assets holds the golden corpus. Two scripts rebuild it:
                            .ivf and .ogg file, their ffprobe oracles, and
                            ASSETS.txt.
   generate-cbv-assets.sh   needs only the .NET SDK. Rebuilds the .cbv samples
-                           through this repository's own muxer.
+                           through this repository's own muxer. Their sound is
+                           always Vorbis - cbvmux refuses an Ogg Opus, because a
+                           bespoke .cbv has to play with the core package and a
+                           video decoder and nothing else.
 
 The FFmpeg-produced files are NOT byte-reproducible (FFmpeg picks random track
 UIDs and Ogg serial numbers); the mkvmerge ones are. ASSETS.txt records the
@@ -1129,6 +1138,50 @@ container reader instead. The other three folders are still probed by ffprobe,
 which keeps them judged by an implementation other than the one that wrote them.
 
 
+THE VORBIS BIT-RATE BANDS, AND WHERE THE NUMBERS CAME FROM
+==========================================================
+src/CodeBrix.VideoPlayback.Authoring/Internal/VorbisBitrateBands.cs is a table of
+MEASUREMENTS, not of rules this repository invented, and it is the only thing in
+the family that makes a claim about somebody else's encoder. Treat it as evidence
+with a date on it.
+
+WHAT WAS MEASURED, AND AGAINST WHAT. Every bit rate this library can name - 6 to
+512 kbit/s, one at a time - was offered to libvorbis at fourteen sample rates and
+eight channel counts, 56,784 encoder-open attempts, on 2026-09-01:
+
+    ffmpeg -v error -f lavfi -i "sine=frequency=440:duration=0.2:sample_rate=48000" \
+           -c:a libvorbis -b:a <N>k -ar <rate> -ac <channels> -f ogg -y /dev/null
+
+The encoder was DEBIAN 13's ffmpeg 7.1.5-0+deb13u1 and the libvorbis it links,
+on the machine that wrote this file. The summarised results - floor, ceiling,
+count accepted and whether the band was contiguous, for every combination - are
+kept outside the repository at:
+
+    /home/jeremy/ClaudeHome/vorbis_floor_probe_2026-09-01.txt
+
+The floors were encoded first (W3); the ceilings and the "nothing opens above
+48 kHz" rows followed (W6), and a sample of forty-four boundary values was
+re-measured against the same ffmpeg before the second batch went in.
+
+WHY IT IS A TABLE AND NOT A FORMULA. The numbers come from libvorbis's own setup
+templates, chosen by sample rate and channel count, and they are not smooth in
+either axis: six channels at 48 kHz open LOWER than five (84 against 160), and
+the ceiling collapses below 16 kHz (8 kHz stereo tops out at 84, so this
+library's own maximum of 512 is refused there). Any interpolation would refuse
+requests libvorbis accepts, which is the one mistake these checks must never
+make - so an unmeasured sample rate is not checked at all.
+
+IF THE FAMILY EVER SHIPS OR SUPPORTS A PRIVATE FFMPEG BUILD, RE-RUN THE PROBE.
+The templates have been stable in libvorbis for many years and no drift is
+expected, but the table is a statement about one build of one library, and the
+moment we hand somebody a different one it stops being evidence and becomes an
+assumption. Re-derive the table from a fresh sweep, note the new build and date
+here and in the Authoring AGENT-README, and update the boundary theories in
+CbvAuthorTests along with it. The same applies if a future ffmpeg changes its
+libvorbis: nothing in the code detects that, and a wrong table refuses work that
+would have succeeded.
+
+
 DELIBERATE DIVERGENCES WORTH KNOWING
 ====================================
 - An absent Matroska Language element is read as "eng" per RFC 9559, which
@@ -1159,9 +1212,45 @@ DELIBERATE DIVERGENCES WORTH KNOWING
 - Cluster CRC-32 checking is OFF by default (MatroskaReader.VerifyClusterChecksums),
   because verifying a cluster means reading it twice. The metadata checksums are
   always verified.
-- The uncompressed decoder is not shipped. Its source is
-  tests/CodeBrix.VideoPlayback.Tests/RawVideoDecoder*.cs and the tools project
-  LINKS those two files rather than duplicating them.
+- The uncompressed decoder SHIPS, in the core package, and registers itself:
+  src/CodeBrix.VideoPlayback/Codecs/RawVideoDecoder*.cs. VideoDecoders seeds one
+  RawVideoDecoderFactory (priority 0, serving "raw" only) in its static
+  initialiser, and VideoDecoders.Clear() puts it back rather than removing it, so
+  a test that clears the registry cannot leave the rest of the suite - or another
+  thread - without the built-in codec. It moved out of the test project on
+  2026-09-01; before that the tools project and the consumer-shape sample linked
+  its two files, and neither needs to now.
+- CANCELLING AN AUTHORING RUN KILLS FFMPEG OUTRIGHT rather than sending it the
+  graceful "q" quit first. That is not laziness: ffmpeg's graceful quit HANGS on
+  this host, which is why every runtime-cancellation test in
+  CodeBrix.VideoProcessing's own suite is skipped there. CbvAuthor therefore uses
+  CancellableThrough(token) with its DEFAULT timeout of 0, which kills at once,
+  and deletes the part-written output. If a future ffmpeg fixes the graceful
+  quit, a timeout above zero would be the polite change - but nothing is lost by
+  killing a process whose output is being thrown away.
+- THE CONTAINER WRITERS (Containers/Ivf/IvfWriter.cs, Containers/Ogg/
+  OggStreamWriter.cs and OggAudioWriter.cs) were adapted from the working
+  versions in the CodeBrixVideoTool sample application, which had already been
+  round-trip-tested against these very readers. They are the OUT direction of the
+  bespoke container and they exist because a consumer that wants to take a ".cbv"
+  apart should not have to write a thirty-two byte header or an Ogg lacing table
+  itself. Their tests read what they write back through IvfReader, OggAudioStream
+  and OggReader; nothing there starts ffmpeg, because the golden corpus already
+  holds an IVF, an Ogg Vorbis file and an Ogg Opus file an encoder wrote.
+- THE STATED FINAL GRANULE, OggAudioWriter.Complete(long), IS THE ONLY WAY AN END
+  TRIM CAN BE WRITTEN. Neither format has a header field for an encoder's tail
+  padding: it lives in the final page's granule position being SMALLER than
+  decoding every packet would produce, and a granule derived from a packet's end
+  timestamp is by definition the untrimmed number. The overload takes the value
+  the last page is to carry and holds it to three rules - not negative, not above
+  the granule the packets' own timestamps reach, not below one an already-written
+  page carries. It is deliberately NOT held to a tighter floor such as "the trim
+  may not reach back past the final packet": how much tail an encoder padded is
+  not this library's business to second-guess, and the timestamp conventions of
+  the two sources that feed this writer differ by the pre-skip (OggAudioStream
+  times from the first DECODED sample, a container from the first PLAYED one), so
+  a tighter floor would refuse real files. Validation runs before anything is
+  written, so a refusal leaves the file completable.
 - CubeLutFile.Parse USED to refuse a domain other than 0..1 and to refuse a file
   stating both LUT_1D_SIZE and LUT_3D_SIZE. Both are now supported (see THE
   COLOUR LOOKUP ENGINE above). The corpus README.txt and MANIFEST.txt in

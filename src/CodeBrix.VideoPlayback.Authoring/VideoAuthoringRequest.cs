@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using CodeBrix.VideoPlayback.Authoring.Captions;
 using CodeBrix.VideoPlayback.Authoring.Commands;
 using CodeBrix.VideoPlayback.Authoring.Encoding;
@@ -141,4 +142,31 @@ public sealed class VideoAuthoringRequest
     /// Called as each pass advances, or null. Needs <see cref="SourceDuration" /> to be set.
     /// </summary>
     public Action<AuthoringProgress> ProgressCallback { get; set; }
+
+    /// <summary>
+    /// The token that stops the run. <see cref="System.Threading.CancellationToken.None" /> by default, which
+    /// never stops anything.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="CbvAuthor.Write" /> observes it BETWEEN stages and DURING every FFmpeg pass, so a request
+    /// cancelled while an encode is running stops within moments rather than at the end of the encode.
+    /// </para>
+    /// <para>
+    /// WHAT CANCELLING DOES. The child process is killed OUTRIGHT rather than asked to finish tidily. FFmpeg
+    /// offers a graceful "q" quit, and it is not used here: on the machine this library is developed on, that
+    /// quit HANGS, which would turn a cancel into a wait of unbounded length - and the file being written is
+    /// being thrown away in any case, so there is nothing for a tidy finish to protect. The partly written
+    /// output file is deleted, the intermediate files are deleted exactly as they are after any run, and
+    /// <see cref="OperationCanceledException" /> is thrown - the ordinary .NET contract, so an application
+    /// that already handles a cancelled task handles this with no new catch block. An effective colour table
+    /// the request asked to KEEP is left where it is: it was written whole before any encoding started, and
+    /// it is not a partial anything.
+    /// </para>
+    /// <para>
+    /// <see cref="CbvAuthor.RenderCommands" /> checks it once, before it renders, and never again: a dry run
+    /// starts no process, touches no disk and returns in microseconds, so there is nothing to interrupt.
+    /// </para>
+    /// </remarks>
+    public CancellationToken CancellationToken { get; set; }
 }

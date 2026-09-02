@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
+using System.Threading;
 using CodeBrix.VideoPlayback.Authoring.Captions;
 using CodeBrix.VideoPlayback.Authoring.Effects;
 using CodeBrix.VideoPlayback.Authoring.Encoding;
@@ -10,9 +12,16 @@ using CodeBrix.VideoPlayback.Color.Luts;
 using CodeBrix.VideoPlayback.Containers;
 using CodeBrix.VideoPlayback.Containers.Cbv;
 using CodeBrix.VideoPlayback.Containers.Matroska;
+using CodeBrix.VideoPlayback.Containers.Ogg;
 using CodeBrix.VideoPlayback.Decoding;
+using CodeBrix.VideoPlayback.Sources;
+using CodeBrix.VideoProcessing;
 using SilverAssertions;
 using Xunit;
+
+// Both libraries have a Chapter type; the one this class means is the container's - the same alias
+// CbvAuthor itself uses.
+using Chapter = CodeBrix.VideoPlayback.Chapters.Chapter;
 
 namespace CodeBrix.VideoPlayback.Authoring.Tests;
 
@@ -373,6 +382,227 @@ public class AuthoringEndToEndTests
         string notes = string.Join(" | ", result.Notes);
         notes.Should().Contain("composed into one");
         Directory.GetFiles(work.Path, "*.effective.cube").Length.Should().Be(0);
+        result.ComposedLutPath.Should().BeNull();
+    }
+
+    [Fact]
+    public void A_composed_grade_chain_is_kept_where_the_request_asks_for_it()
+    {
+        //Arrange
+        SyntheticSource.SkipWithoutFFmpeg();
+        using WorkFolder work = new WorkFolder("lut-kept");
+        string source = SyntheticSource.WriteClip(work.File("source.mkv"));
+
+        string warm = AuthoringTestAssets.Lut("warm_33.cube");
+        string cool = AuthoringTestAssets.Lut("cool_33.cube");
+        Assert.SkipUnless(File.Exists(warm) && File.Exists(cool), "The generated lookup tables are not beside the test assembly.");
+
+        string kept = Path.Combine(work.Path, "kept", "effective.cube");
+
+        VideoAuthoringRequest request = NewRequest(VideoAuthoringFlavour.Bespoke, source, work.File("graded.cbv"), work);
+        request.Video.ComposedLutPath = kept;
+        request.Video.Luts.Add(new AuthoringLutInput(warm, 40));
+        request.Video.Luts.Add(new AuthoringLutInput(cool, 65));
+
+        Lut3D expected = LutComposer.Compose(new List<LutLayer>
+        {
+            LutLayer.FromCubeFile(warm, 40),
+            LutLayer.FromCubeFile(cool, 65),
+        });
+
+        //Act
+        VideoAuthoringResult result = CbvAuthor.Write(request);
+
+        //Assert
+        result.ComposedLutPath.Should().Be(kept);
+        File.Exists(kept).Should().BeTrue();
+
+        // The kept file is the file the lookup read: the command line names it, and nothing was left in the
+        // temporary folder to be a second, differently-written copy of it.
+        result.Commands[0].Arguments.Should().Contain("lut3d=file=" + kept.Replace("\\", "\\\\\\\\") + ":");
+        Directory.GetFiles(work.Path, "*.effective.cube").Length.Should().Be(0);
+
+        CubeLut readBack = CubeLutFile.ReadFile(kept);
+        readBack.Lut3D.Size.Should().Be(expected.Size);
+        readBack.Lut3D.Values.ToArray().Should().Equal(expected.Values.ToArray());
+        readBack.Title.Should().Be(result.ComposedLutTitle);
+
+        string notes = string.Join(" | ", result.Notes);
+        notes.Should().Contain("KEPT at");
+        result.PassesProfile.Should().BeTrue();
+    }
+
+    [Fact]
+    public void A_kept_path_copies_the_one_table_when_the_chain_needs_no_composing()
+    {
+        //Arrange
+        SyntheticSource.SkipWithoutFFmpeg();
+        using WorkFolder work = new WorkFolder("lut-kept-copy");
+        string source = SyntheticSource.WriteClip(work.File("source.mkv"));
+
+        string sepia = AuthoringTestAssets.Lut("sepia_33.cube");
+        Assert.SkipUnless(File.Exists(sepia), "The generated lookup tables are not beside the test assembly.");
+
+        string kept = Path.Combine(work.Path, "kept", "effective.cube");
+
+        VideoAuthoringRequest request = NewRequest(VideoAuthoringFlavour.WebMProfile, source, work.File("graded.cbv"), work);
+        request.Video.ComposedLutPath = kept;
+        request.Video.Luts.Add(new AuthoringLutInput(sepia));
+
+        //Act
+        VideoAuthoringResult result = CbvAuthor.Write(request);
+
+        //Assert - nothing was composed, so FFmpeg read the caller's own table and the command still names it;
+        // the kept path holds a byte-for-byte COPY of that same table.
+        result.ComposedLutPath.Should().Be(kept);
+        result.ComposedLutSize.Should().Be(0);
+        result.ComposedLutTitle.Should().BeNull();
+
+        File.Exists(kept).Should().BeTrue();
+        File.ReadAllBytes(kept).Should().Equal(File.ReadAllBytes(sepia));
+
+        result.Commands[0].Arguments.Should().Contain("lut3d=file=" + sepia.Replace("\\", "\\\\\\\\") + ":");
+        result.Commands[0].Arguments.Should().NotContain("effective.cube");
+
+        string notes = string.Join(" | ", result.Notes);
+        notes.Should().Contain("a COPY of it was KEPT at");
+        result.PassesProfile.Should().BeTrue();
+    }
+
+    [Fact]
+    public void A_request_with_no_grade_at_all_keeps_nothing_however_the_path_is_set()
+    {
+        //Arrange
+        SyntheticSource.SkipWithoutFFmpeg();
+        using WorkFolder work = new WorkFolder("lut-kept-none");
+        string source = SyntheticSource.WriteClip(work.File("source.mkv"));
+
+        string kept = work.File("effective.cube");
+
+        VideoAuthoringRequest request = NewRequest(VideoAuthoringFlavour.WebMProfile, source, work.File("plain.cbv"), work);
+        request.Video.ComposedLutPath = kept;
+
+        //Act
+        VideoAuthoringResult result = CbvAuthor.Write(request);
+
+        //Assert
+        File.Exists(kept).Should().BeFalse();
+        result.ComposedLutPath.Should().BeNull();
+        result.Commands[0].Arguments.Should().NotContain("lut3d");
+        result.PassesProfile.Should().BeTrue();
+    }
+
+    [Fact]
+    public void A_cancel_part_way_through_an_encode_stops_promptly_and_leaves_no_file()
+    {
+        //Arrange - fifteen seconds of source, upscaled and encoded at the SLOWEST speed setting there is, so
+        // the pass is certainly still running two seconds in and the cancel lands mid-flight.
+        SyntheticSource.SkipWithoutFFmpeg();
+        using WorkFolder work = new WorkFolder("cancel-mid-encode");
+        string source = SyntheticSource.WriteClip(work.File("source.mkv"), 320, 180, 15);
+
+        VideoAuthoringRequest request = NewRequest(
+            VideoAuthoringFlavour.WebMProfile, source, work.File("cancelled.cbv"), work);
+
+        request.Video.SpeedPreset = 0;
+        request.Video.ConstantRateFactor = 20;
+        request.Video.FrameSize = AuthoringFrameSize.Exact(1280, 720);
+
+        using CancellationTokenSource cancellation = new CancellationTokenSource();
+        request.CancellationToken = cancellation.Token;
+        cancellation.CancelAfter(TimeSpan.FromSeconds(2));
+
+        //Act
+        Stopwatch clock = Stopwatch.StartNew();
+        Assert.ThrowsAny<OperationCanceledException>(() => CbvAuthor.Write(request));
+        clock.Stop();
+
+        //Assert - the child is killed outright rather than asked to quit tidily, so "promptly" means seconds,
+        // not the length of the encode that was abandoned.
+        (clock.Elapsed < TimeSpan.FromSeconds(60)).Should().BeTrue();
+        File.Exists(request.OutputPath).Should().BeFalse();
+        Directory.GetFiles(work.Path, "*.ivf").Length.Should().Be(0);
+        Directory.GetFiles(work.Path, "*.ogg").Length.Should().Be(0);
+    }
+
+    [Fact]
+    public void An_ogg_written_from_a_bespoke_files_own_audio_is_one_ffprobe_accepts()
+    {
+        //Arrange - the core's Ogg writer is proven against the core's own readers in the core suite. This is
+        // the OUTSIDE opinion: take the sound back out of a ".cbv" this library just authored, write it as an
+        // Ogg Vorbis file, and let ffprobe - which has never heard of CBVF - judge the result.
+        SyntheticSource.SkipWithoutFFmpeg();
+        using WorkFolder work = new WorkFolder("ogg-writer-ffprobe");
+        string source = SyntheticSource.WriteClip(work.File("source.mkv"));
+
+        VideoAuthoringResult authored = CbvAuthor.Write(
+            NewRequest(VideoAuthoringFlavour.Bespoke, source, work.File("bespoke.cbv"), work));
+
+        byte[] codecPrivate;
+        int sampleRate;
+        int channels;
+        List<byte[]> packets = new List<byte[]>();
+        List<TimeSpan> ends = new List<TimeSpan>();
+
+        using (CbvReader reader = new CbvReader(new FileMediaSource(authored.OutputPath)))
+        {
+            MediaTrackInfo audio = FirstOfKind(reader, MediaTrackKind.Audio);
+            audio.CodecId.Should().Be(VideoCodecIds.Vorbis);
+
+            codecPrivate = audio.CodecPrivate.ToArray();
+            sampleRate = audio.SampleRate;
+            channels = audio.Channels;
+
+            // A packet's bytes are borrowed from the reader and are gone on the next read, so they are copied.
+            while (reader.TryReadPacket(out MediaPacket packet))
+            {
+                if (packet.TrackId != audio.Id) continue;
+                packets.Add(packet.Data.ToArray());
+                ends.Add(packet.Timestamp + packet.Duration);
+            }
+        }
+
+        string ogg = work.File("extracted.ogg");
+
+        //Act
+        using (OggAudioWriter writer = OggAudioWriter.CreateVorbis(ogg, codecPrivate, sampleRate))
+        {
+            for (int i = 0; i < packets.Count; i++) writer.WritePacket(packets[i], ends[i]);
+            writer.Complete();
+        }
+
+        IMediaAnalysis analysis = FFProbe.Analyse(ogg);
+
+        //Assert
+        packets.Count.Should().BeGreaterThan(0);
+        analysis.AudioStreams.Count.Should().Be(1);
+        analysis.AudioStreams[0].CodecName.Should().Be("vorbis");
+        analysis.AudioStreams[0].SampleRateHz.Should().Be(sampleRate);
+        analysis.AudioStreams[0].Channels.Should().Be(channels);
+        (analysis.Duration > TimeSpan.Zero).Should().BeTrue();
+    }
+
+    [Fact]
+    public void A_run_with_a_token_that_is_never_cancelled_authors_exactly_as_before()
+    {
+        //Arrange
+        SyntheticSource.SkipWithoutFFmpeg();
+        using WorkFolder work = new WorkFolder("cancel-unused");
+        string source = SyntheticSource.WriteClip(work.File("source.mkv"));
+
+        using CancellationTokenSource cancellation = new CancellationTokenSource();
+
+        VideoAuthoringRequest request = NewRequest(
+            VideoAuthoringFlavour.Bespoke, source, work.File("with-token.cbv"), work);
+        request.CancellationToken = cancellation.Token;
+
+        //Act
+        VideoAuthoringResult result = CbvAuthor.Write(request);
+
+        //Assert
+        File.Exists(result.OutputPath).Should().BeTrue();
+        (result.SizeInBytes > 0).Should().BeTrue();
+        result.Commands.Count.Should().Be(2);
     }
 
     [Fact]

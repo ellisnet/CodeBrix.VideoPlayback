@@ -11,11 +11,11 @@ AGENT-README FILES (consumer documentation, one per NuGet package)
 ------------------------------------------------------------------
   AGENT-README.txt
       CodeBrix.VideoPlayback.MitLicenseForever - Royalty-free video playback for
-      .NET: reads WebM, Matroska and .cbv containers, demultiplexes AV1 video
-      with Opus or Vorbis audio plus captions and chapters, and drives a
-      codec-neutral decoder seam, a zero-copy frame pool, a frame presenter and
-      a managed SIMD colour converter. No native binaries, no drawing
-      dependency, one NuGet dependency.
+      .NET: reads WebM, Matroska and .cbv containers and writes .cbv, IVF and
+      Ogg, demultiplexes AV1 video with Opus or Vorbis audio plus captions and
+      chapters, and drives a codec-neutral decoder seam, a zero-copy frame pool,
+      a frame presenter and a managed SIMD colour converter. No native binaries,
+      no drawing dependency, one NuGet dependency.
 
   src/CodeBrix.VideoPlayback.Skia/AGENT-README.txt
       CodeBrix.VideoPlayback.Skia.MitLicenseForever - Draws the frames the

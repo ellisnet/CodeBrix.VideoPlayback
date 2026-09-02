@@ -282,6 +282,96 @@ public sealed class OggAudioStream : IDisposable
         return result;
     }
 
+    /// <summary>
+    /// Splits the Xiph-laced block a container stores as a Vorbis track's codec-private data back into the
+    /// three setup headers Vorbis actually wants - the exact inverse of <see cref="BuildXiphCodecPrivate" />.
+    /// </summary>
+    /// <param name="codecPrivate">The block as the container stored it.</param>
+    /// <param name="identification">The Vorbis identification header, packet type 1.</param>
+    /// <param name="comment">The Vorbis comment header, packet type 3.</param>
+    /// <param name="setup">The Vorbis setup header, packet type 5, which is the rest of the block.</param>
+    /// <exception cref="VideoPlaybackException">
+    /// The block is too short, declares a packet count other than three, ends inside one of its laced
+    /// lengths, declares header lengths longer than the data it carries, or carries no setup header.
+    /// </exception>
+    /// <remarks>
+    /// <para>
+    /// A count byte holding the number of packets MINUS ONE - so 2 - comes first, then the length of each
+    /// packet except the last, each written as a run of 0xFF bytes followed by a remainder below 0xFF, then
+    /// the packets themselves back to back. The last header's length is not stored: it is whatever is left.
+    /// </para>
+    /// <para>
+    /// This is what anything writing an Ogg Vorbis file out of a container needs, and it is published so that
+    /// nobody has to re-derive the length decoding - which looks simple and is easy to get subtly wrong when
+    /// a header is an exact multiple of 255 bytes long.
+    /// </para>
+    /// </remarks>
+    public static void SplitXiphCodecPrivate(
+        ReadOnlySpan<byte> codecPrivate,
+        out byte[] identification,
+        out byte[] comment,
+        out byte[] setup)
+    {
+        if (codecPrivate.Length < 4)
+        {
+            throw new VideoPlaybackException(
+                $"A Vorbis codec-private block of {codecPrivate.Length} byte(s) is too short to hold the count "
+                + "byte, two laced lengths and three setup headers.");
+        }
+
+        int packetCount = codecPrivate[0] + 1;
+        if (packetCount != 3)
+        {
+            throw new VideoPlaybackException(
+                $"This Vorbis codec-private block declares {packetCount} packet(s); Vorbis has exactly three "
+                + "setup headers, so its count byte is always 2.");
+        }
+
+        int offset = 1;
+        int identificationLength = ReadLacedLength(codecPrivate, ref offset);
+        int commentLength = ReadLacedLength(codecPrivate, ref offset);
+
+        long declared = (long)identificationLength + commentLength;
+        if (declared > codecPrivate.Length - offset)
+        {
+            throw new VideoPlaybackException(
+                $"This Vorbis codec-private block declares header lengths totalling {declared} byte(s) but "
+                + $"carries only {codecPrivate.Length - offset} byte(s) of headers.");
+        }
+
+        identification = codecPrivate.Slice(offset, identificationLength).ToArray();
+        offset += identificationLength;
+
+        comment = codecPrivate.Slice(offset, commentLength).ToArray();
+        offset += commentLength;
+
+        setup = codecPrivate.Slice(offset).ToArray();
+
+        if (setup.Length == 0)
+        {
+            throw new VideoPlaybackException(
+                "This Vorbis codec-private block carries no setup header, so nothing could decode the audio.");
+        }
+    }
+
+    private static int ReadLacedLength(ReadOnlySpan<byte> data, ref int offset)
+    {
+        int length = 0;
+
+        while (true)
+        {
+            if (offset >= data.Length)
+            {
+                throw new VideoPlaybackException(
+                    "This Vorbis codec-private block ended inside one of its laced header lengths.");
+            }
+
+            byte value = data[offset++];
+            length += value;
+            if (value != 255) return length;
+        }
+    }
+
     private static int LacedLength(int value) => (value / 255) + 1;
 
     private static int WriteLacedLength(byte[] destination, int offset, int value)

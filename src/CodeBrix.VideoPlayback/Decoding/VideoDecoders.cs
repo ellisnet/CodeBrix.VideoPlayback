@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using CodeBrix.VideoPlayback.Codecs;
 
 namespace CodeBrix.VideoPlayback.Decoding;
 
@@ -9,9 +10,15 @@ namespace CodeBrix.VideoPlayback.Decoding;
 /// </summary>
 /// <remarks>
 /// <para>
-/// This library ships no video decoder at all. A decoder arrives as a separate package, because a decoder
-/// carries a licence and a set of native binaries that not every application wants, and it makes itself
-/// available with one call at start-up:
+/// One decoder is BUILT IN: <see cref="RawVideoDecoderFactory" />, for uncompressed video, is in the registry
+/// from the moment it is first touched. Nothing has to be called for it, so a <c>V_UNCOMPRESSED</c> track
+/// plays with no codec package installed at all - the same bargain Vorbis audio makes. It has priority 0 and
+/// serves only <see cref="VideoCodecIds.Raw" />, so it never shadows a factory that arrives for another
+/// codec.
+/// </para>
+/// <para>
+/// Every CODED format arrives as a separate package, because a decoder carries a licence and a set of native
+/// binaries that not every application wants, and it makes itself available with one call at start-up:
 /// </para>
 /// <code>
 /// VideoDecoders.Register(SomeDecoderPackage.Factory);
@@ -31,7 +38,24 @@ namespace CodeBrix.VideoPlayback.Decoding;
 public static class VideoDecoders
 {
     private static readonly object Gate = new object();
-    private static readonly List<IVideoDecoderFactory> Factories = new List<IVideoDecoderFactory>();
+
+    // The built-in uncompressed-video factory. It is seeded into the list below by the static initialiser -
+    // which the runtime runs exactly once, before any member of this class can be reached - so it is in the
+    // registry with no registration call, exactly once, however many threads arrive at the same moment.
+    private static readonly IVideoDecoderFactory BuiltInRawVideo = new RawVideoDecoderFactory();
+
+    private static readonly List<IVideoDecoderFactory> Factories =
+        new List<IVideoDecoderFactory> { BuiltInRawVideo };
+
+    /// <summary>The built-in uncompressed-video factory - the one instance the registry starts life with.</summary>
+    /// <remarks>
+    /// It is here so that the built-in decoder can be named without hunting for it in
+    /// <see cref="RegisteredFactories" /> and guessing which entry it is. It is an ORDINARY entry: pass it to
+    /// <see cref="Unregister" /> to take uncompressed video out of a process that must not have it, and
+    /// <see cref="Clear" /> puts this same instance back. It is the same object every time, so
+    /// <c>ReferenceEquals</c> against it is the reliable way to ask "is that the built-in one?".
+    /// </remarks>
+    public static IVideoDecoderFactory BuiltInRawVideoFactory => BuiltInRawVideo;
 
     /// <summary>Adds a factory to the registry, or does nothing if that same instance is already registered.</summary>
     /// <param name="factory">The factory to register.</param>
@@ -55,6 +79,10 @@ public static class VideoDecoders
     /// <param name="factory">The factory instance that was registered.</param>
     /// <returns>True when it was registered and has now been removed.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="factory" /> is null.</exception>
+    /// <remarks>
+    /// The built-in uncompressed-video factory is an ordinary entry and can be removed the same way - take it
+    /// from <see cref="RegisteredFactories" /> to get the instance. <see cref="Clear" /> puts it back.
+    /// </remarks>
     public static bool Unregister(IVideoDecoderFactory factory)
     {
         if (factory == null) throw new ArgumentNullException(nameof(factory));
@@ -146,10 +174,22 @@ public static class VideoDecoders
         return TryCreateDecoder(ordered, codecId, codecPrivate, options);
     }
 
-    /// <summary>Clears the registry. Intended for tests; an application has no reason to call it.</summary>
+    /// <summary>
+    /// Removes every factory that was registered, and puts the built-in uncompressed-video factory back.
+    /// Intended for tests; an application has no reason to call it.
+    /// </summary>
+    /// <remarks>
+    /// The built-in factory is part of what this library IS rather than something an application added, so a
+    /// cleared registry still serves <see cref="VideoCodecIds.Raw" />. That also means a test which clears
+    /// the registry cannot leave another test - or another thread - without the built-in codec.
+    /// </remarks>
     public static void Clear()
     {
-        lock (Gate) Factories.Clear();
+        lock (Gate)
+        {
+            Factories.Clear();
+            Factories.Add(BuiltInRawVideo);
+        }
     }
 
     internal static IVideoDecoder TryCreateDecoder(

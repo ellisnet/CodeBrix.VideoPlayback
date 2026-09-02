@@ -49,10 +49,11 @@ namespace CodeBrix.VideoPlayback;
 /// <see cref="VideoFramePresenter.TryTakeLatest" /> on its own thread.
 /// </para>
 /// <para>
-/// <b>What has to be registered.</b> A video decoder arrives as a separate package and registers itself with
-/// <see cref="VideoDecoders" /> (or with this session through
-/// <see cref="RegisterDecoderFactory" />). Vorbis audio needs nothing; Opus audio needs the Opus package
-/// registered. A file whose codec has no decoder fails with a message that names the package to add.
+/// <b>What has to be registered.</b> Nothing, to begin with: uncompressed video and Vorbis audio are built
+/// in, so a <c>V_UNCOMPRESSED</c> file with Vorbis sound plays out of the box. A CODED video format arrives
+/// as a separate package and registers itself with <see cref="VideoDecoders" /> (or with this session through
+/// <see cref="RegisterDecoderFactory" />); Opus audio needs the Opus package registered. A file whose codec
+/// has no decoder fails with a message that names the package to add.
 /// </para>
 /// <para>
 /// <b>Threads.</b> Two of the session's own: one reading and demultiplexing, one decoding video. Audio is

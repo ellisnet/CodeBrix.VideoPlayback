@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Threading;
 using CodeBrix.VideoPlayback.Authoring.Captions;
 using CodeBrix.VideoPlayback.Authoring.Commands;
 using CodeBrix.VideoPlayback.Authoring.Encoding;
@@ -52,15 +53,26 @@ public static class CbvAuthor
     /// <returns>One command for a WebM-profile file, two for a bespoke one.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="request" /> is null.</exception>
     /// <exception cref="VideoAuthoringException">The request cannot be honoured as it stands.</exception>
+    /// <exception cref="OperationCanceledException">
+    /// <c>request.CancellationToken</c> was already cancelled when this was called. Nothing was rendered and
+    /// nothing was touched.
+    /// </exception>
     /// <remarks>
-    /// Nothing is read from the disk and no temporary file is written, so this works on a machine with no
-    /// FFmpeg installed and with the source file absent. Where a colour-grade chain would be composed into
-    /// one table, the command names the temporary file that composing WOULD write - the same path a real run
-    /// uses, so the two render identically.
+    /// Nothing is read from the disk and no file is written, so this works on a machine with no FFmpeg
+    /// installed and with the source file absent. Where a colour-grade chain would be composed into one
+    /// table, the command names the file that composing WOULD write - the temporary one, or the one
+    /// <c>request.Video.ComposedLutPath</c> asks to keep - which is the same path a real run uses, so the
+    /// two render identically. Where ONE table is used at full strength the command names that table, whether
+    /// or not a kept path is set, because that is the file FFmpeg reads; the copy a kept path asks for
+    /// appears only when <see cref="Write" /> runs.
     /// </remarks>
     public static IReadOnlyList<AuthoringCommand> RenderCommands(VideoAuthoringRequest request)
     {
         Validate(request, false);
+
+        // A dry run starts no process and touches no disk, so one look at the token is all it can honour -
+        // and all it needs to, because there is nothing here to interrupt.
+        request.CancellationToken.ThrowIfCancellationRequested();
 
         string temporaryFolder = ResolveTemporaryFolder(request);
         ResolvedLutChain lut = LutChainResolver.Resolve(
@@ -68,7 +80,8 @@ public static class CbvAuthor
             request.OutputPath,
             temporaryFolder,
             false,
-            null);
+            null,
+            request.Video.ComposedLutPath);
 
         if (request.Flavour == VideoAuthoringFlavour.WebMProfile)
         {
@@ -103,9 +116,19 @@ public static class CbvAuthor
     /// The request cannot be honoured, FFmpeg is not installed, an encode failed, or the finished file does
     /// not pass the streamable profile and the request asked to be told so.
     /// </exception>
+    /// <exception cref="OperationCanceledException">
+    /// <c>request.CancellationToken</c> was cancelled. The partly written output file has been deleted and so
+    /// have the intermediate files; an effective colour table the request asked to keep is left where it is,
+    /// because it was written whole before any encoding began.
+    /// </exception>
     public static VideoAuthoringResult Write(VideoAuthoringRequest request)
     {
         Validate(request, true);
+
+        CancellationToken cancellationToken = request.CancellationToken;
+
+        // Before the tool check, so a request cancelled before it started never even looks for FFmpeg.
+        cancellationToken.ThrowIfCancellationRequested();
         AuthoringTools.Verify();
 
         Stopwatch clock = Stopwatch.StartNew();
@@ -128,9 +151,12 @@ public static class CbvAuthor
                 request.OutputPath,
                 temporaryFolder,
                 true,
-                notes);
+                notes,
+                request.Video.ComposedLutPath);
 
             if (!string.IsNullOrEmpty(lut.TemporaryPath)) temporaryFiles.Add(lut.TemporaryPath);
+
+            cancellationToken.ThrowIfCancellationRequested();
 
             if (request.Flavour == VideoAuthoringFlavour.WebMProfile)
             {
@@ -160,8 +186,21 @@ public static class CbvAuthor
                     Run(audioPass, request, "audio pass", 2, passCount);
                 }
 
+                // The mux is managed code over two finished files and takes a fraction of a second, so it is
+                // not interrupted part-way; it is only started when the token still allows it.
+                cancellationToken.ThrowIfCancellationRequested();
                 mux = Mux(request, ivf, request.Audio.Include ? ogg : null);
             }
+
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+        catch (OperationCanceledException)
+        {
+            // A cancelled run leaves a partly written file behind, and a partly written video file is worse
+            // than no file at all: it looks playable. The intermediate files go in the finally below, exactly
+            // as they do after a successful run and after a failed one.
+            DeleteQuietly(request.OutputPath);
+            throw;
         }
         finally
         {
@@ -191,7 +230,8 @@ public static class CbvAuthor
             notes,
             clock.Elapsed,
             lut.WasComposed ? lut.Title : null,
-            lut.WasComposed ? lut.Size : 0);
+            lut.WasComposed ? lut.Size : 0,
+            lut.KeptPath);
     }
 
     /// <summary>Reports whether the one tool authoring needs is installed.</summary>
@@ -230,15 +270,27 @@ public static class CbvAuthor
                 request.SourceDuration);
         }
 
+        // The default timeout of zero KILLS the child outright instead of asking it to quit tidily first.
+        // That is deliberate: FFmpeg's graceful "q" quit hangs on the machine this library is developed on,
+        // and the half-written file is being thrown away anyway, so there is nothing a tidy finish protects.
+        processor.CancellableThrough(request.CancellationToken);
+
         try
         {
             processor.ProcessSynchronously();
         }
         catch (Exception ex)
         {
+            // A cancelled pass comes back looking like any other failed process, because that is what a
+            // killed process is. The token is the authority on which it was.
+            request.CancellationToken.ThrowIfCancellationRequested();
+
             throw new VideoAuthoringException(
                 "The " + label + " failed. The command was: ffmpeg " + processor.Arguments, ex);
         }
+
+        // And a pass that was killed cleanly enough to report success is still a cancelled pass.
+        request.CancellationToken.ThrowIfCancellationRequested();
     }
 
     private static CbvAuthoringResult Mux(VideoAuthoringRequest request, string ivfPath, string oggPath)
@@ -355,18 +407,92 @@ public static class CbvAuthor
             throw new VideoAuthoringException("There is no source file at '" + request.SourcePath + "'.");
         }
 
-        if (request.Audio.Include
-            && request.RequireNoExtraPlaybackPackages
-            && string.Equals(
-                AuthoringCommandFactory.AudioEncoderNameFor(request.Audio.Codec, request.Flavour),
-                AuthoringEncoderNames.LibOpus,
-                StringComparison.Ordinal))
+        string audioEncoder = request.Audio.Include
+            ? AuthoringCommandFactory.AudioEncoderNameFor(request.Audio.Codec, request.Flavour)
+            : null;
+
+        bool opus = string.Equals(audioEncoder, AuthoringEncoderNames.LibOpus, StringComparison.Ordinal);
+
+        // THE BESPOKE FILE'S REASON TO EXIST. A ".cbv" in the bespoke flavour must play with
+        // CodeBrix.VideoPlayback - whose CodeBrix.Audio dependency has Vorbis built in - plus a video decoder
+        // package, and nothing else. Opus would need a third package on the playing machine, so it never goes
+        // into a bespoke file through this surface. This refusal is UNCONDITIONAL: it is not what
+        // RequireNoExtraPlaybackPackages is for, and that switch stays what it was - an opt-in for
+        // WebM-profile authors who want Vorbis-only output. Opus itself is fully supported, and is the
+        // default, in the WebM-profile flavour.
+        if (opus && request.Flavour == VideoAuthoringFlavour.Bespoke)
+        {
+            throw new VideoAuthoringException(
+                "The request asks for Opus audio in a bespoke '.cbv' file. A bespoke file has to play with "
+                + "CodeBrix.VideoPlayback and a video decoder package and NOTHING else, and Opus needs the "
+                + "application to reference CodeBrix.Audio.Opus and call CodeBrixAudioOpus.Register(); Vorbis "
+                + "plays with the core package alone. Choose AuthoringAudioCodec.LibVorbis, which is what the "
+                + "bespoke flavour uses by default, or author VideoAuthoringFlavour.WebMProfile, where Opus is "
+                + "the default and is fully supported.");
+        }
+
+        if (request.Audio.Include && request.RequireNoExtraPlaybackPackages && opus)
         {
             throw new VideoAuthoringException(
                 "The request asks for Opus audio and also asks that the finished file need no extra package to "
                 + "play. Opus needs the application to reference CodeBrix.Audio.Opus and call "
                 + "CodeBrixAudioOpus.Register(); Vorbis needs neither. Choose AuthoringAudioCodec.LibVorbis, or "
                 + "clear RequireNoExtraPlaybackPackages.");
+        }
+
+        // libvorbis opens only inside a BAND of bit rates that depends on BOTH the sample rate and the
+        // channel count, and it refuses at setup - so a request naming a bit rate outside that band would die
+        // part-way through the encode with FFmpeg's own message. The bands are measured rather than assumed;
+        // see VorbisBitrateBands. Above 48 kHz the bit-rate mode mostly does not open at all, which is the
+        // third refusal below. The quality path is untouched by every one of them: -q:a has no band.
+        if (request.Audio.Include
+            && !request.Audio.VorbisQuality.HasValue
+            && string.Equals(audioEncoder, AuthoringEncoderNames.LibVorbis, StringComparison.Ordinal)
+            && VorbisBitrateBands.TryGetBand(
+                request.Audio.SampleRateHz, request.Audio.Channels, out int floor, out int ceiling))
+        {
+            string asked = request.Audio.BitrateKilobitsPerSecond.ToString(CultureInfo.InvariantCulture);
+            string rate = request.Audio.SampleRateHz.ToString(CultureInfo.InvariantCulture);
+            string channels = request.Audio.Channels.ToString(CultureInfo.InvariantCulture);
+
+            if (floor == 0)
+            {
+                // Measured, and libvorbis accepted no bit rate whatsoever there. This is a statement about
+                // the SAMPLE RATE rather than about the number asked for, so the message says so and does not
+                // suggest a different bit rate - there isn't one.
+                throw new VideoAuthoringException(
+                    "The request asks libvorbis for " + asked + " kbit/s at " + rate + " Hz in " + channels
+                    + " channel(s), and libvorbis's bit-rate mode does not open at that sample rate at all - "
+                    + "no bit rate in this library's whole range was accepted there - so the encode would fail "
+                    + "as the encoder was being set up. Set VorbisQuality to rate-control by quality instead, "
+                    + "which does open at every sample rate measured, or choose a sample rate of 48000 Hz or "
+                    + "below.");
+            }
+
+            if (request.Audio.BitrateKilobitsPerSecond < floor)
+            {
+                throw new VideoAuthoringException(
+                    "The request asks libvorbis for " + asked + " kbit/s at " + rate + " Hz in " + channels
+                    + " channel(s), and libvorbis will not open below "
+                    + floor.ToString(CultureInfo.InvariantCulture)
+                    + " kbit/s for that rate and channel count - the encode would fail as the encoder was being "
+                    + "set up. Ask for " + floor.ToString(CultureInfo.InvariantCulture)
+                    + " kbit/s or more, set VorbisQuality to rate-control by quality instead, which has no such "
+                    + "floor, or use fewer channels.");
+            }
+
+            if (request.Audio.BitrateKilobitsPerSecond > ceiling)
+            {
+                throw new VideoAuthoringException(
+                    "The request asks libvorbis for " + asked + " kbit/s at " + rate + " Hz in " + channels
+                    + " channel(s), and libvorbis opens only between "
+                    + floor.ToString(CultureInfo.InvariantCulture) + " and "
+                    + ceiling.ToString(CultureInfo.InvariantCulture)
+                    + " kbit/s for that rate and channel count - the encode would fail as the encoder was being "
+                    + "set up. Ask for " + ceiling.ToString(CultureInfo.InvariantCulture)
+                    + " kbit/s or less, set VorbisQuality to rate-control by quality instead, which has no such "
+                    + "ceiling, or use a higher sample rate.");
+            }
         }
 
         if (request.Audio.Language != null

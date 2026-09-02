@@ -11,7 +11,6 @@ using CodeBrix.VideoPlayback.Containers;
 using CodeBrix.VideoPlayback.Decoding;
 using CodeBrix.VideoPlayback.Frames;
 using CodeBrix.VideoPlayback.Playback;
-using CodeBrix.VideoPlayback.RawCodec;
 using CodeBrix.VideoPlayback.Sources;
 using SilverAssertions;
 using Xunit;
@@ -524,13 +523,14 @@ public class VideoPlaybackSessionTests
     }
 
     [Fact]
-    public void A_session_plays_a_webm_file_when_a_decoder_for_its_codec_is_registered()
+    public void A_session_plays_a_matroska_file_of_uncompressed_video_with_nothing_registered()
     {
-        //Arrange
+        //Arrange - a real V_UNCOMPRESSED track in a real Matroska file, opened by a session that was handed
+        // no decoder at all. The precedence of a factory registered on top of the built-in one is proved in
+        // RawVideoDecoderFactoryTests.
         string path = TestAssets.Path("raw-opus.mkv");
         VideoPlaybackOptions options = new VideoPlaybackOptions { PlayAudio = false };
         using VideoPlaybackSession session = new VideoPlaybackSession(options);
-        session.RegisterDecoderFactory(new RawVideoDecoderFactory());
 
         //Act
         session.Open(path);
@@ -635,14 +635,14 @@ public class VideoPlaybackSessionTests
         session.Duration.Should().Be(TimeSpan.FromSeconds(2.4));
     }
 
+    // Nothing is registered here: the uncompressed decoder is built into the library, so a session plays these
+    // clips as an application's would, out of the box.
     private static VideoPlaybackSession NewSession(VideoPlaybackOptions options = null)
     {
         VideoPlaybackOptions effective = options ?? new VideoPlaybackOptions { PlayAudio = false };
         effective.PlayAudio = false;
 
-        VideoPlaybackSession session = new VideoPlaybackSession(effective);
-        session.RegisterDecoderFactory(new RawVideoDecoderFactory());
-        return session;
+        return new VideoPlaybackSession(effective);
     }
 
     private static string WriteClip(

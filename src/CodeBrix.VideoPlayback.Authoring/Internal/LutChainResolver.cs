@@ -17,6 +17,12 @@ namespace CodeBrix.VideoPlayback.Authoring.Internal;
 /// (tetrahedral sampling, the automatic output size, the 0-to-1 domain), and written to a temporary file.
 /// </para>
 /// <para>
+/// A request that asks for the effective table to be KEPT gets one either way, and the two ways differ in a
+/// way the caller can see: when the chain composes, the kept file IS the file FFmpeg's lookup read; when one
+/// table is used as it stands, the kept file is a byte-for-byte COPY of that table and the command line goes
+/// on naming the caller's own file. Either way the kept path holds the table this video was graded with.
+/// </para>
+/// <para>
 /// That composer is the same code the playback presenter uses to fold ITS chain, which is the whole point:
 /// a grade baked into a file and the same grade applied live are the same arithmetic, so they are the same
 /// colour.
@@ -46,13 +52,20 @@ internal static class LutChainResolver
     /// what a dry run wants.
     /// </param>
     /// <param name="notes">Collects a line describing what was composed.</param>
+    /// <param name="keepAtPath">
+    /// Where the effective table is to be KEPT, or null to write a composed one beside the other intermediate
+    /// files and delete it with them. A COMPOSED table is written to that exact path and the lookup reads it
+    /// from there, so what is left on the disk is the file the encode consumed; a single table at 100 percent
+    /// is COPIED there instead, because FFmpeg reads the caller's own file in that case.
+    /// </param>
     /// <returns>What the chain reduced to.</returns>
     internal static ResolvedLutChain Resolve(
         IList<AuthoringLutInput> luts,
         string outputPath,
         string temporaryFolder,
         bool write,
-        IList<string> notes)
+        IList<string> notes,
+        string keepAtPath = null)
     {
         List<AuthoringLutInput> applied = new List<AuthoringLutInput>();
 
@@ -71,14 +84,48 @@ internal static class LutChainResolver
             // A dry run touches no disk at all, so the file is only insisted on when it is about to be read.
             if (write) RequireFile(applied[0].Path);
 
-            return new ResolvedLutChain { FilterPath = applied[0].Path };
+            ResolvedLutChain single = new ResolvedLutChain { FilterPath = applied[0].Path };
+
+            if (string.IsNullOrWhiteSpace(keepAtPath)) return single;
+
+            // NOTHING IS COMPOSED HERE - FFmpeg reads the caller's own table as it stands, and that is still
+            // what the command line names. But the kept path means "the table this file was graded with", and
+            // that is exactly what this one table is, so a COPY of it goes there. The copy is what makes the
+            // property uniformly populated whenever any grade exists.
+            string copyPath = Path.GetFullPath(keepAtPath);
+            single.KeptPath = copyPath;
+
+            if (!write) return single;
+
+            Directory.CreateDirectory(FolderOf(copyPath));
+
+            bool alreadyThere = string.Equals(
+                copyPath, Path.GetFullPath(applied[0].Path), StringComparison.Ordinal);
+
+            if (!alreadyThere) File.Copy(applied[0].Path, copyPath, true);
+
+            notes?.Add(
+                "the colour-grade chain was the single table '" + applied[0].Path
+                + "' at 100 percent, which FFmpeg read as it stands; "
+                + (alreadyThere
+                    ? "it is already the file the request asked to keep."
+                    : "a COPY of it was KEPT at '" + copyPath + "'."));
+
+            return single;
         }
 
-        string composedPath = ComposedPathFor(outputPath, temporaryFolder);
+        // A kept table is written where the request asked for it and read from there, so the file left
+        // behind is the very file the lookup consumed rather than a copy of it.
+        bool keep = !string.IsNullOrWhiteSpace(keepAtPath);
+        string composedPath = keep
+            ? Path.GetFullPath(keepAtPath)
+            : ComposedPathFor(outputPath, temporaryFolder);
+
         ResolvedLutChain resolved = new ResolvedLutChain
         {
             FilterPath = composedPath,
-            TemporaryPath = composedPath,
+            TemporaryPath = keep ? null : composedPath,
+            KeptPath = keep ? composedPath : null,
             WasComposed = true,
         };
 
@@ -94,7 +141,7 @@ internal static class LutChainResolver
         Lut3D effective = LutComposer.Compose(layers);
         string title = BuildTitle(applied);
 
-        Directory.CreateDirectory(temporaryFolder);
+        Directory.CreateDirectory(keep ? FolderOf(composedPath) : temporaryFolder);
         CubeLutFile.Write(effective, composedPath, title);
 
         resolved.Title = title;
@@ -103,7 +150,8 @@ internal static class LutChainResolver
         notes?.Add(
             "the colour-grade chain of " + applied.Count.ToString(CultureInfo.InvariantCulture)
             + " table(s) was composed into one " + effective.Size.ToString(CultureInfo.InvariantCulture)
-            + "-node table titled \"" + title + "\", which is the one lookup FFmpeg ran.");
+            + "-node table titled \"" + title + "\", which is the one lookup FFmpeg ran."
+            + (keep ? " It was KEPT at '" + composedPath + "'." : string.Empty));
 
         return resolved;
     }
@@ -114,6 +162,14 @@ internal static class LutChainResolver
         foreach (AuthoringLutInput lut in applied) parts.Add(lut.ToString());
 
         return string.Join(" then ", parts);
+    }
+
+    // A kept table may name a folder that does not exist yet - "grades/effective.cube" beside an output that
+    // is itself about to be created - and a bare file name has no folder at all.
+    private static string FolderOf(string path)
+    {
+        string folder = Path.GetDirectoryName(path);
+        return string.IsNullOrEmpty(folder) ? Directory.GetCurrentDirectory() : folder;
     }
 
     private static void RequireFile(string path)

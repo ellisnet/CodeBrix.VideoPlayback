@@ -3,10 +3,10 @@ using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using CodeBrix.VideoPlayback;
+using CodeBrix.VideoPlayback.Codecs;
 using CodeBrix.VideoPlayback.Decoding;
 using CodeBrix.VideoPlayback.Frames;
 using CodeBrix.VideoPlayback.Playback;
-using CodeBrix.VideoPlayback.RawCodec;
 using SilverAssertions;
 using Xunit;
 
@@ -44,7 +44,6 @@ public class FrameDataPathGuaranteeTests
         using VideoPlaybackSession session = new VideoPlaybackSession(
             new VideoPlaybackOptions { PlayAudio = false });
 
-        session.RegisterDecoderFactory(new RawVideoDecoderFactory());
         session.Open(path);
         WaitFor(() => session.Presenter.HasFrame);
 
@@ -91,7 +90,6 @@ public class FrameDataPathGuaranteeTests
         using VideoPlaybackSession session = new VideoPlaybackSession(
             new VideoPlaybackOptions { PlayAudio = false });
 
-        session.RegisterDecoderFactory(new RawVideoDecoderFactory());
         session.Open(path);
         session.Play();
         WaitFor(() => session.Presenter.GetStatistics().Posted > 20);

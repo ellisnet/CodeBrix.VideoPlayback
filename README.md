@@ -9,7 +9,7 @@ library writes and reads, laid out so that the whole index and every caption cue
 sit in front of the media data, which is what makes a shipped-with-the-app clip
 start instantly and a seek cost one read.
 
-What it gives you is the machinery around a codec, and no codec:
+What it gives you is the machinery around a codec, and no *coded* codec:
 
 - a **playback session** with a transport, a clock, A/V sync, seeking, looping,
   captions and chapters;
@@ -27,9 +27,15 @@ What it gives you is the machinery around a codec, and no codec:
 - and a **streamable-profile checker** that says whether a file really is laid
   out the way a `.cbv` promises.
 
-The video decoder itself arrives as a separate package and registers itself;
-audio plays through [CodeBrix.Audio](https://github.com/ellisnet/CodeBrix.Audio).
-A file whose codec has no decoder fails with a message naming the package to add.
+One video decoder ships in the box: the uncompressed one, for Matroska's
+`V_UNCOMPRESSED` tracks and the `.cbv` files built from them. It is registered for
+you, so that container, session, clock, seek, pool and presenter all work with no
+codec package installed at all — it is a diagnostics and test codec, not a
+distribution format. A decoder for a CODED format arrives as a separate package
+and registers itself; audio plays through
+[CodeBrix.Audio](https://github.com/ellisnet/CodeBrix.Audio), which has Vorbis
+built in. A file whose codec has no decoder fails with a message naming the
+package to add.
 
 ## The presenter
 

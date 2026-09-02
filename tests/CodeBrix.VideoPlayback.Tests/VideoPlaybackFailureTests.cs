@@ -6,7 +6,6 @@ using CodeBrix.VideoPlayback;
 using CodeBrix.VideoPlayback.Containers.Cbv;
 using CodeBrix.VideoPlayback.Decoding;
 using CodeBrix.VideoPlayback.Playback;
-using CodeBrix.VideoPlayback.RawCodec;
 using SilverAssertions;
 using Xunit;
 
@@ -22,8 +21,9 @@ namespace CodeBrix.VideoPlayback.Tests;
 /// package to add, and the words are the whole point.
 /// </para>
 /// <para>
-/// Every test here needs a PROCESS-WIDE registry to be in a particular state - the video decoder registry
-/// empty, and the Opus packet codec unregistered. <see cref="VideoDecodersTests" /> fills the video registry
+/// Every test here needs a PROCESS-WIDE registry to be in a particular state - nothing registered for
+/// 'av01', and the Opus packet codec unregistered. (The built-in uncompressed factory is always there and is
+/// no trouble: it serves 'raw' and nothing else.) <see cref="VideoDecodersTests" /> fills the video registry
 /// with factories serving 'av01' and clears it again, and the opt-in audible tests register the Opus packet
 /// codec for the rest of the process. Classes in different collections run in parallel, so all of them share
 /// the one collection: without it, an av01 file opened here can find one of those factories and succeed, and
@@ -163,7 +163,6 @@ public class VideoPlaybackFailureTests
         using VideoPlaybackSession session = new VideoPlaybackSession(
             new VideoPlaybackOptions { PlayAudio = false });
 
-        session.RegisterDecoderFactory(new RawVideoDecoderFactory());
         session.Open(path);
         session.Close();
 

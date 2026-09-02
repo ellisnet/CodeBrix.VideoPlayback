@@ -1,18 +1,31 @@
 using System;
 using System.Collections.Generic;
-using CodeBrix.VideoPlayback;
-using CodeBrix.VideoPlayback.Codecs;
 using CodeBrix.VideoPlayback.Decoding;
 
-namespace CodeBrix.VideoPlayback.RawCodec;
+namespace CodeBrix.VideoPlayback.Codecs;
 
 /// <summary>
 /// Supplies decoders for the uncompressed video codec.
 /// </summary>
 /// <remarks>
-/// Register it with a session - <c>session.RegisterDecoderFactory(new RawVideoDecoderFactory())</c> - or
-/// process-wide with <see cref="VideoDecoders.Register" />. It is not part of the shipped package: its source
-/// lives with the tests and is linked into the tools project.
+/// <para>
+/// It is BUILT IN. <see cref="VideoDecoders" /> holds one of these from the moment the registry is first
+/// touched, so <see cref="VideoDecoders.IsCodecSupported" /> answers true for
+/// <see cref="VideoCodecIds.Raw" /> and a session plays a <c>V_UNCOMPRESSED</c> track with no registration
+/// call and no codec package installed - the same bargain Vorbis audio makes. Registration is what an
+/// EXTERNAL codec package does: <c>CodeBrixVideoPlaybackDav1d.Register()</c> and its like.
+/// </para>
+/// <para>
+/// Its <see cref="Priority" /> is 0 and it serves only the uncompressed codec, so it can never shadow a
+/// factory that arrives for any other codec. An application that wants to decorate or replace it registers
+/// its own: for one session with <c>session.RegisterDecoderFactory(...)</c>, which is always tried first, or
+/// process-wide with <see cref="VideoDecoders.Register" /> at a priority ABOVE 0 - at the same priority the
+/// built-in one was in the registry first and wins the tie.
+/// </para>
+/// <para>
+/// It remains a diagnostics and test codec rather than a distribution format: uncompressed video is
+/// enormous, and a real clip wants a real codec package.
+/// </para>
 /// </remarks>
 public sealed class RawVideoDecoderFactory : IVideoDecoderFactory
 {

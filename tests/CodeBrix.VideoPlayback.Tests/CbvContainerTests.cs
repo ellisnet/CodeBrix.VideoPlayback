@@ -368,7 +368,9 @@ public class CbvContainerTests
     public void The_committed_av1_sample_reads_back_everything_the_muxer_put_in_it()
     {
         //Arrange
-        string path = TestAssets.Path("av1-opus.cbv");
+        // The sound in a bespoke sample is ALWAYS Vorbis: the file exists to play with the core package and
+        // a video decoder and nothing else, and Opus would need one more package on the playing machine.
+        string path = TestAssets.Path("av1-vorbis-captions-chapters.cbv");
 
         //Act
         using CbvReader reader = new CbvReader(new FileMediaSource(path));
@@ -383,23 +385,26 @@ public class CbvContainerTests
         //Assert
         reader.Tracks.Count.Should().Be(4);
         reader.Tracks[0].CodecId.Should().Be(VideoCodecIds.Av1);
-        reader.Tracks[1].CodecId.Should().Be(VideoCodecIds.Opus);
+        reader.Tracks[1].CodecId.Should().Be(VideoCodecIds.Vorbis);
         reader.CaptionTracks.Count.Should().Be(2);
         reader.Chapters.Count.Should().Be(3);
         reader.HeaderChecksumVerified.Should().BeTrue();
         reader.IndexChecksumVerified.Should().BeTrue();
         video.Should().Be(12);
-        audio.Should().Be(51);
+        audio.Should().Be(49);
     }
 
     [Fact]
     public void The_committed_av1_sample_carries_the_same_codec_data_as_the_webm_file()
     {
         //Arrange
-        string path = TestAssets.Path("av1-opus.cbv");
+        // av1-vorbis.webm and av1-opus.webm carry the SAME AV1 elementary stream - the same source through
+        // the same encoder settings, and both files hold 12 video packets of 1,655 bytes and the identical
+        // 16-byte av1C - so the Vorbis one is the right partner for the Vorbis bespoke sample.
+        string path = TestAssets.Path("av1-vorbis-captions-chapters.cbv");
         byte[] fromWebM;
         using (Containers.Matroska.MatroskaReader webm =
-            new Containers.Matroska.MatroskaReader(new FileMediaSource(TestAssets.Path("av1-opus.webm"))))
+            new Containers.Matroska.MatroskaReader(new FileMediaSource(TestAssets.Path("av1-vorbis.webm"))))
         {
             fromWebM = webm.Tracks[0].CodecPrivate.ToArray();
         }

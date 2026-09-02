@@ -137,7 +137,9 @@ CbvAuthor (static) - the whole front door
         The real run. Validates, checks that ffmpeg is there, composes the grade
         chain if it needs composing, encodes, muxes where muxing is needed,
         deletes every temporary file, reads the finished file back and checks it
-        against the streamable profile.
+        against the streamable profile. It watches request.CancellationToken
+        throughout and throws OperationCanceledException if it is cancelled,
+        having deleted the part-written output.
 
     bool TryVerifyTools(out string problem)
     void VerifyTools()
@@ -169,6 +171,27 @@ VideoAuthoringRequest - one file's worth of decisions
     string TemporaryFolder                   null means the system's own
     TimeSpan SourceDuration                  needed for progress
     Action<AuthoringProgress> ProgressCallback
+    CancellationToken CancellationToken      None by default
+
+  CancellationToken STOPS A RUN IN PROGRESS. Write watches it between stages and
+  through every ffmpeg pass, so a cancel lands within moments instead of at the
+  end of the encode:
+
+      using CancellationTokenSource cancellation = new CancellationTokenSource();
+      request.CancellationToken = cancellation.Token;
+      // ... from the Cancel button:
+      cancellation.Cancel();
+
+  The child process is KILLED OUTRIGHT rather than asked to quit tidily. ffmpeg
+  offers a graceful "q" quit and it is deliberately not used: it hangs on the
+  machine this library is developed on, which would turn a cancel into a wait of
+  unbounded length, and the file being written is being thrown away in any case.
+  The partly written output file is DELETED - a half-written video file is worse
+  than none, because it looks playable - the intermediate files are deleted just
+  as they are after any run, and OperationCanceledException is thrown, which is
+  the ordinary .NET contract. An effective colour table the request asked to KEEP
+  is left alone: it was written whole before any encoding began. RenderCommands
+  checks the token once and never again; a dry run starts nothing.
 
   Container and CuesToFront are WebM-profile settings; the bespoke flavour
   writes its own container and is index-first by construction. Setting Container
@@ -184,11 +207,13 @@ VideoAuthoringRequest - one file's worth of decisions
   creation time and device strings. A chapter file overrides it, because that is
   where the chapters have to come from.
 
-  RequireNoExtraPlaybackPackages refuses a request whose audio would be Opus.
-  Opus needs the PLAYING application to reference CodeBrix.Audio.Opus and call
-  CodeBrixAudioOpus.Register(); Vorbis needs nothing. Set it when the point of
+  RequireNoExtraPlaybackPackages refuses a WEBM-PROFILE request whose audio would
+  be Opus. Opus needs the PLAYING application to reference CodeBrix.Audio.Opus and
+  call CodeBrixAudioOpus.Register(); Vorbis needs nothing. Set it when the point of
   the file is that the shipped application carries no Opus binary at all, and the
-  refusal happens at authoring time rather than on a customer's machine.
+  refusal happens at authoring time rather than on a customer's machine. It is not
+  needed for a BESPOKE request, and setting it there changes nothing: a bespoke
+  file never carries Opus in the first place - see THE ONE RULE ABOUT SOUND below.
 
 
 AuthoringVideoSettings - the picture
@@ -203,6 +228,7 @@ AuthoringVideoSettings - the picture
     int KeyframeIntervalFrames               0 leaves the encoder's default
     bool AutoRotate                          true by default
     IList<AuthoringLutInput> Luts            the colour grade, in order
+    string ComposedLutPath                   keep the effective table here
     string TrackName                         bespoke flavour only
 
     const string PixelFormat = "yuv420p"     NOT a setting - see below
@@ -265,11 +291,77 @@ AuthoringAudioSettings - the sound
   flavour an application ships inside itself. That is the whole reason for the
   split - a Vorbis file plays with the core package alone.
 
+  THE ONE RULE ABOUT SOUND: A BESPOKE ".cbv" NEVER CARRIES OPUS. That flavour
+  exists so that the file plays with CodeBrix.VideoPlayback - whose one
+  dependency, CodeBrix.Audio, has Vorbis built in - plus a video decoder package,
+  and NOTHING else. Opus would need the playing application to reference
+  CodeBrix.Audio.Opus and call CodeBrixAudioOpus.Register(), which is one package
+  more than the flavour promises, so a bespoke request that asks for Opus is
+  REFUSED - always, whatever the switches say, before anything runs. Opus is
+  fully supported, and is the DEFAULT, in the WEBM-PROFILE flavour, which is the
+  one to author for the web. The headless cbvmux tool holds the same line and
+  refuses an Ogg Opus input.
+
   FFMPEG'S BUILT-IN vorbis ENCODER IS NEVER NAMED. It is experimental and poor.
   This library asks for libvorbis, always.
 
-  libvorbis refuses very low bit rates for stereo - 96 kbit/s and up is safe at
-  48 kHz. Below that, use VorbisQuality instead, or fewer channels.
+  THE BIT RATE HAS A BAND, AND IT IS libvorbis's, NOT THIS LIBRARY'S. libvorbis
+  opens only BETWEEN a floor and a ceiling that both depend on the sample rate
+  AND the channel count, and it refuses at SETUP - the run would die part-way
+  through with ffmpeg's own message. A request that names a bit rate outside the
+  band for its rate and channel count is refused HERE instead, before any process
+  starts, and the message names the band. The bands, measured against ffmpeg
+  7.1.5's libvorbis on 2026-09-01 rather than assumed (kbit/s, by channel count;
+  "none" means no bit rate in this library's whole 6..512 range was accepted):
+
+                   1        2        3        4        5        6        7        8
+       8000    8..42   12..84  24..126  32..168  40..210  48..252  56..294  64..336
+      11025   12..50  16..100  36..150  48..200  60..250  72..300  84..350  96..400
+      12000   12..50  16..100  36..150  48..200  60..250  72..300  84..350  96..400
+      16000  16..100  24..200  48..300  64..400  80..500  96..512 112..512 128..512
+      22050   16..90  30..180  48..270  64..360  80..450  96..512 112..512 128..512
+      24000   16..90  30..180  48..270  64..360  80..450  96..512 112..512 128..512
+      32000  30..190  36..380  90..512 120..512 150..512 180..512 210..512 240..512
+      44100  32..240  45..500  96..512 128..512 160..512  84..512 224..512 256..512
+      48000  32..240  45..500  96..512 128..512 160..512  84..512 224..512 256..512
+      64000     none     none     none     none     none  84..512     none     none
+      88200     none     none     none     none     none     none     none     none
+      96000     none     none     none     none     none     none     none     none
+     176400     none     none     none     none     none     none     none     none
+     192000     none     none     none     none     none     none     none     none
+
+  Every band came out CONTIGUOUS: every value between the floor and the ceiling
+  opened and every value outside it failed. Three of the numbers surprise people,
+  so they are stated rather than smoothed. 48 kHz STEREO opens from 45 kbit/s,
+  not from the 64 or 96 that older notes in this repository claimed. SIX channels
+  at 44.1 or 48 kHz open LOWER than five do, because libvorbis has a coupled 5.1
+  setup that the odd channel counts do not get. And below 16 kHz the CEILING is
+  low enough to matter: 8 kHz stereo tops out at 84 kbit/s, so this library's own
+  maximum of 512 is refused there by the encoder.
+
+  ABOVE 48 kHz THE BIT-RATE MODE MOSTLY DOES NOT OPEN AT ALL, and that is now
+  refused up front too. At 88.2, 96, 176.4 and 192 kHz nothing opened at any
+  channel count at any bit rate - 4,056 attempts per rate, all refused - and at
+  64 kHz only the coupled six-channel setup opened, from 84 kbit/s up. A request
+  naming a bit rate at one of those rates is refused with a message that says the
+  bit-rate mode does not open there and points at VorbisQuality; the 64 kHz
+  six-channel band is enforced as an ordinary band, floor and ceiling. Author
+  high-rate sound with VorbisQuality, or resample to 48 kHz - which is what the
+  default does.
+
+  THE CHECKS ARE APPLIED ONLY AT THE MEASURED SAMPLE RATES, the ones in that
+  table. The bands do not move smoothly with the rate, so a value guessed between
+  two rows could refuse something libvorbis would have accepted; an unmeasured
+  rate therefore behaves exactly as it did before, and the failure stays ffmpeg's.
+
+  THE QUALITY PATH HAS NEITHER FLOOR NOR CEILING. Set VorbisQuality and the bit
+  rate is not emitted at all; -q:a opened at every rate and channel count in the
+  sweep, INCLUDING every rate above 48 kHz. That is why every refusal above
+  points at it. Fewer channels is the other way out of a floor, and a higher
+  sample rate the way out of a ceiling.
+
+  NONE OF THIS APPLIES TO OPUS, which has no such bands and is never held to
+  them.
 
 
 AuthoringCaptionInput - one text track
@@ -307,6 +399,45 @@ AuthoringLutInput - one step of a colour grade
 
   A table applied at 0 percent is skipped entirely.
 
+  KEEPING THE TABLE THE FILE WAS GRADED WITH. Set Video.ComposedLutPath and the
+  run leaves the ONE effective table behind for you:
+
+      request.Video.Luts.Add(new AuthoringLutInput("film-stock.cube", 70));
+      request.Video.Luts.Add(new AuthoringLutInput("cool-shadows.cube", 40));
+      request.Video.ComposedLutPath = "grades/intro.effective.cube";
+
+      VideoAuthoringResult result = CbvAuthor.Write(request);
+      Console.WriteLine(result.ComposedLutPath);   // grades/intro.effective.cube
+
+  The path means the same thing whatever the chain was - "the table this file was
+  graded with" - and it is populated whenever the request carried any grade at
+  all. It gets there by two routes, and the difference is visible:
+
+    * WHEN THE CHAIN COMPOSES - two or more tables, or one at any percentage
+      other than 100 - the folded table is written to exactly that path and
+      ffmpeg's lookup reads it FROM there. What is on the disk afterwards is the
+      file the encode consumed, byte for byte, not a copy written afterwards, and
+      the rendered command line names that path.
+
+    * WHEN ONE TABLE IS USED AT FULL STRENGTH there is nothing to fold: ffmpeg
+      reads your own file and the command line goes on naming THAT file. A
+      byte-for-byte COPY of it is placed at the kept path, so the property still
+      holds the table the picture was graded with. ComposedLutSize is 0 and
+      ComposedLutTitle is null in that case, which is how the two are told apart.
+
+  So it is the thing to inspect, to diff against last week's grade, or to commit
+  beside the video it produced. Any folder in the path is created. A composed
+  table reads back through the playback library's own CubeLutFile.ReadFile and
+  holds what LutComposer.Compose would have produced from the same chain, written
+  in the invariant culture like every other table this family writes.
+
+  A REQUEST WITH NO GRADE KEEPS NOTHING. With an empty Luts list there is no
+  table to record, nothing is written whatever this is set to, and the result's
+  ComposedLutPath is null. RenderCommands writes nothing in any case, because a
+  dry run touches no disk. Leaving the setting unset changes nothing whatsoever:
+  a composed table is then a temporary file and is deleted exactly as it always
+  was.
+
 
 VideoAuthoringResult - what came out
 -------------------------------------
@@ -318,6 +449,7 @@ VideoAuthoringResult - what came out
     CbvAuthoringResult Mux                   bespoke only; frame and packet counts
     IReadOnlyList<string> Notes              what could not be kept
     string ComposedLutTitle                  int ComposedLutSize
+    string ComposedLutPath                   where the effective table was kept
 
 
 DeviceClassPresets - starting numbers, not limits
@@ -398,13 +530,14 @@ COMPLETE EXAMPLES
     }
 
 3. A clip to ship inside an application: bespoke, Vorbis, nothing extra needed.
+   The sound is Vorbis because the flavour says so - a bespoke file never carries
+   Opus - so there is no switch to set here at all.
 
     VideoAuthoringRequest request = new VideoAuthoringRequest
     {
         Flavour = VideoAuthoringFlavour.Bespoke,
         SourcePath = "master.mov",
         OutputPath = "intro.cbv",
-        RequireNoExtraPlaybackPackages = true,
     };
 
     DeviceClassPresets.Pi1080p.ApplyTo(request);
@@ -567,9 +700,27 @@ COMMON PITFALLS TO AVOID
     WEBM-PROFILE FLAVOUR. See THE TWO ASYMMETRIES. The result's Notes say so
     every time it happens; read them.
 
-  * DO NOT SET A LOW VORBIS BIT RATE FOR STEREO. libvorbis refuses to open below
-    roughly 64 kbit/s at 48 kHz, and the failure comes from ffmpeg rather than
-    from a validation here. Use 96 and up, or VorbisQuality.
+  * DO NOT ASK FOR OPUS IN A BESPOKE FILE. It is refused outright, and not
+    because of a switch: a bespoke ".cbv" has to play with the core package and a
+    video decoder and nothing else. Use Vorbis, which is that flavour's default
+    anyway, or author the WebM-profile flavour, where Opus is the default and is
+    fully supported.
+
+  * DO NOT SET A VORBIS BIT RATE OUTSIDE libvorbis's BAND FOR YOUR RATE AND
+    CHANNEL COUNT. 48 kHz stereo opens from 45 to 500 kbit/s, 48 kHz mono from 32
+    to 240; the whole measured table is under AuthoringAudioSettings above. There
+    is a CEILING as well as a floor and it bites hardest at low sample rates -
+    8 kHz stereo tops out at 84, so this library's own maximum of 512 is refused
+    there. Outside the band the request is refused here, with the band named,
+    rather than dying part-way through the encode. VorbisQuality has no band at
+    all.
+
+  * DO NOT SET A VORBIS BIT RATE AT ALL ABOVE 48 kHz, WITH ONE EXCEPTION.
+    libvorbis's bit-rate mode does not open at 88.2, 96, 176.4 or 192 kHz for any
+    channel count, and at 64 kHz it opens only for the coupled six-channel setup.
+    Those requests are refused up front and told to use VorbisQuality, which does
+    open everywhere. This is about the SAMPLE RATE, so there is no other bit rate
+    to try.
 
   * DO NOT PASS AN ODD FRAME DIMENSION. It is refused at the point of
     construction, because 4:2:0 chroma has no home for the last sample.
@@ -648,6 +799,7 @@ Make scrubbing quick                  Video.KeyframeIntervalFrames = 60
 Use the reference encoder             Video.Encoder = AuthoringVideoEncoder.LibAomAv1
 Bake one colour grade                 Video.Luts.Add(new AuthoringLutInput(path))
 Bake a chain, dialled back            Video.Luts.Add(new AuthoringLutInput(path, 40))
+Keep the table it was graded with     Video.ComposedLutPath = "grades/intro.cube"
 Choose the audio codec                Audio.Codec = AuthoringAudioCodec.LibVorbis
 Rate-control Vorbis by quality        Audio.VorbisQuality = 5
 Leave the sound out                   Audio.Include = false
@@ -657,6 +809,7 @@ Refuse anything needing Opus          request.RequireNoExtraPlaybackPackages = t
 Author a deliberate non-profile file  Container = Matroska; CuesToFront = false;
                                         FailWhenProfileFails = false
 Report progress                       SourceDuration + ProgressCallback
+Stop a run in progress                request.CancellationToken = source.Token
 See what could not be kept            result.Notes
 See the profile report                result.Profile
 Judge somebody else's file            StreamableProfile.EvaluateFile(path)

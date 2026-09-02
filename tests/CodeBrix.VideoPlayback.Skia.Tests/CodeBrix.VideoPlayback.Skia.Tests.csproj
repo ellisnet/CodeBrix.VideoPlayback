@@ -25,16 +25,6 @@
   </ItemGroup>
 
   <!--
-    The uncompressed-video decoder is a test and diagnostics codec whose source lives with the core's tests.
-    It is LINKED here, exactly as the tools project links it, so there is one copy of the code and it never
-    reaches a shipped package.
-  -->
-  <ItemGroup>
-    <Compile Include="..\CodeBrix.VideoPlayback.Tests\RawVideoDecoder.cs" Link="RawCodec\RawVideoDecoder.cs" />
-    <Compile Include="..\CodeBrix.VideoPlayback.Tests\RawVideoDecoderFactory.cs" Link="RawCodec\RawVideoDecoderFactory.cs" />
-  </ItemGroup>
-
-  <!--
     The steady-state allocation helper is LINKED from the core test project for the same reason: one copy of
     the reasoning about why an "allocates nothing" assertion has to be measured more than once. So are the
     two hand-built grading tables, so that the effect tests in the core suite and the presenter tests here

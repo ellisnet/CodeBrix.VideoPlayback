@@ -181,8 +181,6 @@ public class AudioDecoderProbeTests
         using VideoPlaybackSession session = new VideoPlaybackSession(
             new VideoPlaybackOptions { PlayAudio = false });
 
-        session.RegisterDecoderFactory(new CodeBrix.VideoPlayback.RawCodec.RawVideoDecoderFactory());
-
         //Act
         session.Open(path);
         MediaTrackInfo audio = session.Tracks.First(t => t.Kind == MediaTrackKind.Audio);

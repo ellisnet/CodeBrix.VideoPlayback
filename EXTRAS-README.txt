@@ -14,10 +14,10 @@ a shell, and so that a colour grade can be baked for the authoring pipeline.
 
     dotnet run --project tools/CodeBrix.VideoPlayback.Tools -c Release -- <verb> ...
 
-It links the uncompressed video decoder in from the test project
-(tests/CodeBrix.VideoPlayback.Tests/RawVideoDecoder*.cs) rather than duplicating
-it, so cbvdecode can decode an uncompressed file with no codec package
-installed. There is one copy of that code and it never reaches the NuGet package.
+It links nothing in and registers nothing. The uncompressed video decoder ships
+in the core package (src/CodeBrix.VideoPlayback/Codecs/RawVideoDecoder*.cs) and is
+in the decoder registry from the start, so cbvdecode decodes an uncompressed file
+with no codec package installed, through the same registry an application uses.
 
 
 cbvinfo
@@ -97,10 +97,18 @@ cbvmux
            [--synthetic-video <frames>x<width>x<height>@<fps>]
 
 Builds a bespoke .cbv file from an encoder's output: an IVF file holding an AV1
-elementary stream, an Ogg Opus or Ogg Vorbis file, any number of WebVTT or SubRip
-caption files, and a chapter file in FFmpeg's metadata format. The codec
-configuration record is synthesised from the video's own sequence header, so
-nothing has to be told what the video is.
+elementary stream, an Ogg VORBIS file, any number of WebVTT or SubRip caption
+files, and a chapter file in FFmpeg's metadata format. The codec configuration
+record is synthesised from the video's own sequence header, so nothing has to be
+told what the video is.
+
+THE SOUND MUST BE VORBIS, and this verb refuses an Ogg Opus outright - it prints
+the reason and exits 1 without writing anything. A bespoke ".cbv" exists so that
+it plays with CodeBrix.VideoPlayback, whose CodeBrix.Audio dependency has Vorbis
+built in, plus a video decoder package, and NOTHING else; Opus would need the
+playing application to reference CodeBrix.Audio.Opus and call
+CodeBrixAudioOpus.Register(). Opus is fully supported, and is the default, in the
+WebM-profile flavour that the authoring library writes.
 
 --synthetic-video writes an uncompressed test clip instead, needing no encoder at
 all. That is how tests/assets/raw-synthetic.cbv is made.
@@ -219,8 +227,14 @@ The container files, in outline:
                                      the reference for av1C synthesis
     opus-audio.ogg, vorbis-audio.ogg the audio, as an encoder wrote it
     captions-en.vtt, srt-captions.srt, chapters.ffmeta    authoring inputs
-    av1-opus.cbv, av1-vorbis.cbv     bespoke samples built by this repository's
-                                     own muxer from the files above
+    av1-vorbis-captions-chapters.cbv, av1-vorbis.cbv
+                                     bespoke samples built by this repository's
+                                     own muxer from the files above. Their sound
+                                     is ALWAYS Vorbis: a bespoke ".cbv" has to
+                                     play with the core package and a video
+                                     decoder and nothing else, so cbvmux refuses
+                                     an Opus Ogg. Opus lives in the WebM-profile
+                                     samples beside them.
     raw-synthetic.cbv                an uncompressed bespoke sample, decodable
                                      with no codec package at all
 
@@ -345,17 +359,20 @@ WHAT IT REFERENCES, and why:
   * SkiaSharp.NativeAssets.Linux, because it is an APPLICATION and applications
     choose their native assets. The presenter library deliberately does not -
     see hard rule 1a in MAINTAINER-README.txt.
-  * the uncompressed decoder's two source files, LINKED from the test project
-    exactly as the tools project links them, so the sample needs no codec
-    package installed. A real application would reference a real decoder.
+  * nothing else at all. The uncompressed decoder it plays with is built into the
+    playback library and registers itself, so the sample needs no codec package
+    installed. A real application playing a coded clip would reference a real
+    decoder package.
 
 
 tests/CodeBrix.VideoPlayback.Tests
 ==================================
-Not shipped, but worth reading as documentation: the uncompressed decoder
-(RawVideoDecoder.cs and RawVideoDecoderFactory.cs) is the smallest complete
-example of implementing IVideoDecoderFactory and IVideoDecoder, including
-renting from the host's pool and publishing a reference-counted frame.
+The whole suite plays uncompressed clips with nothing registered, because the
+uncompressed decoder is part of the core package now. It is worth reading as
+documentation as well: src/CodeBrix.VideoPlayback/Codecs/RawVideoDecoder.cs and
+RawVideoDecoderFactory.cs are the smallest complete example of implementing
+IVideoDecoderFactory and IVideoDecoder, including renting from the host's pool
+and publishing a reference-counted frame.
 
 Two opt-in gates:
 

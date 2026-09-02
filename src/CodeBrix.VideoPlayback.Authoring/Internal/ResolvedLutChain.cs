@@ -11,6 +11,13 @@ internal sealed class ResolvedLutChain
     /// <summary>The temporary file that has to be deleted afterwards, or null when none was written.</summary>
     internal string TemporaryPath { get; set; }
 
+    /// <summary>
+    /// The effective table the request asked to KEEP, or null when none was kept. When the chain was
+    /// composed this is the very file the lookup read; when one table was used as it stands it is a copy of
+    /// that table. Either way it is never also a temporary file.
+    /// </summary>
+    internal string KeptPath { get; set; }
+
     /// <summary>True when the chain was folded into a new table rather than used as it stands.</summary>
     internal bool WasComposed { get; set; }
 

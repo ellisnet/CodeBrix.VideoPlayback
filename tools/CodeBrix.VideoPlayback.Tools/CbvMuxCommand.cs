@@ -93,11 +93,47 @@ public static class CbvMuxCommand
             return 2;
         }
 
+        if (RefusesOpusAudio(request.AudioOggPath)) return 1;
+
         if (synthetic != null) return WriteSyntheticVideo(request, synthetic);
 
         CbvAuthoringResult result = CbvAuthoring.Write(request);
         Console.WriteLine(result.ToString());
         return 1 - Math.Sign(new FileInfo(result.Path).Length);
+    }
+
+    // THE BESPOKE FILE'S REASON TO EXIST. This verb writes the bespoke container and nothing else, and a
+    // bespoke ".cbv" has to play with CodeBrix.VideoPlayback - whose CodeBrix.Audio dependency has Vorbis
+    // built in - plus a video decoder package, and nothing else. An Ogg full of Opus would put a third
+    // package between the file and the machine that plays it, so it is refused here rather than muxed. The
+    // core muxer itself stays permissive on purpose: it is the vehicle for the packet-seam session tests.
+    private static bool RefusesOpusAudio(string oggPath)
+    {
+        if (string.IsNullOrWhiteSpace(oggPath) || !File.Exists(oggPath)) return false;
+
+        string codec;
+
+        try
+        {
+            using OggAudioStream audio = OggAudioStream.Open(oggPath);
+            codec = audio.CodecId;
+        }
+        catch (VideoPlaybackException)
+        {
+            // Not a readable Ogg stream: let the ordinary path report that in its own words.
+            return false;
+        }
+
+        if (!string.Equals(codec, VideoCodecIds.Opus, StringComparison.Ordinal)) return false;
+
+        Console.Error.WriteLine(
+            $"cbvmux: '{oggPath}' carries Opus audio, and a bespoke '.cbv' file must play with "
+            + "CodeBrix.VideoPlayback and a video decoder package and NOTHING else. Opus needs the playing "
+            + "application to reference CodeBrix.Audio.Opus and call CodeBrixAudioOpus.Register(); Vorbis "
+            + "plays with the core package alone. Encode the sound as Vorbis, or author the WebM-profile "
+            + "flavour with the authoring library, where Opus is the default and is fully supported.");
+
+        return true;
     }
 
     private static int WriteSyntheticVideo(CbvAuthoringRequest request, string specification)
@@ -365,5 +401,9 @@ public static class CbvMuxCommand
         Console.Error.WriteLine("         [--audio-name <name>] [--video-name <name>]");
         Console.Error.WriteLine("         [--captions <path>:<bcp47>[:<name>[:default+forced+sdh]]] ...");
         Console.Error.WriteLine("         [--synthetic-video <frames>x<width>x<height>@<fps>]");
+        Console.Error.WriteLine();
+        Console.Error.WriteLine("  The --audio stream must be Vorbis. A bespoke '.cbv' file plays with");
+        Console.Error.WriteLine("  CodeBrix.VideoPlayback and a video decoder package and nothing else, and");
+        Console.Error.WriteLine("  Opus would need CodeBrix.Audio.Opus on the machine that plays it.");
     }
 }

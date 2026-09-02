@@ -16,11 +16,12 @@ It reads two container families:
   * ".cbv" - a bespoke container this package writes and reads, laid out so that
     the whole index and every caption cue sit in front of the media data.
 
-It gives you the machinery around a codec, and no codec: a demultiplexer, a
+It gives you the machinery around a codec, and no CODED codec: a demultiplexer, a
 playback session with a transport and a clock, a zero-copy frame-buffer pool, a
 one-slot frame mailbox, a managed SIMD YUV-to-BGRA converter, and an authoring
-muxer. The video decoder itself arrives as a separate package and registers
-itself; audio plays through CodeBrix.Audio.
+muxer. One video decoder is built in - the uncompressed one, for V_UNCOMPRESSED
+tracks; a CODED format's decoder arrives as a separate package and registers
+itself. Audio plays through CodeBrix.Audio.
 
 It also carries everything a PRESENTER is made of, short of the drawing itself:
 the render-path enums, the letterbox arithmetic, the composition context handed
@@ -36,12 +37,17 @@ Target framework: .NET 10 or later. License: MIT.
     application ─► VideoPlaybackSession ─► VideoFramePresenter ─► your view
                           │                        (newest frame)
                           ├─ container reader (WebM/Matroska or .cbv)
-                          ├─ IVideoDecoder    (from a decoder package)
+                          ├─ IVideoDecoder    (built in for "raw"; from a
+                          │                    decoder package for a coded one)
                           └─ PacketAudioPlayer (CodeBrix.Audio)
 
 WHAT YOU MUST REGISTER. A file whose codec has no decoder fails with a message
 naming the package to add. Nothing is guessed at and nothing is reflected on.
 
+  video "raw"      works out of the box - the uncompressed decoder ships in this
+                   package and is registered for you, so a V_UNCOMPRESSED track
+                   plays with nothing installed (it stays a test and diagnostics
+                   codec, not a distribution format)
   video "av01"     needs CodeBrix.VideoPlayback.Dav1d.BsdLicenseForever
                    referenced and CodeBrixVideoPlaybackDav1d.Register() called
                    (any other IVideoDecoderFactory serving "av01" works too, via
@@ -49,8 +55,6 @@ naming the package to add. Nothing is guessed at and nothing is reflected on.
   audio "vorbis"   works out of the box - CodeBrix.Audio has it built in
   audio "opus"     needs CodeBrix.Audio.Opus referenced and
                    CodeBrixAudioOpus.Register() called
-  video "raw"      uncompressed video: no decoder ships for it either (it is a
-                   test and diagnostics codec)
 
 ASKING IN ADVANCE, WITHOUT OPENING ANYTHING. Both questions can be asked before
 a file is opened, and neither starts a decoder, a device or a thread:
@@ -122,9 +126,11 @@ KEY NAMESPACES / USINGS
                                                 //   MediaContainers, StreamableProfile
     using CodeBrix.VideoPlayback.Containers.Cbv;       // CbvReader, CbvMuxer, CbvAuthoring
     using CodeBrix.VideoPlayback.Containers.Matroska;  // MatroskaReader
-    using CodeBrix.VideoPlayback.Containers.Ogg;       // OggAudioStream (authoring)
-    using CodeBrix.VideoPlayback.Containers.Ivf;       // IvfReader (authoring)
-    using CodeBrix.VideoPlayback.Codecs;        // Av1Bitstream, RawVideoFormat
+    using CodeBrix.VideoPlayback.Containers.Ogg;       // OggAudioStream / OggAudioWriter,
+                                                       //   OggReader / OggStreamWriter, OggChecksum
+    using CodeBrix.VideoPlayback.Containers.Ivf;       // IvfReader / IvfWriter (authoring)
+    using CodeBrix.VideoPlayback.Codecs;        // Av1Bitstream, RawVideoFormat,
+                                                //   RawVideoDecoder(Factory) - the built-in codec
     using CodeBrix.VideoPlayback.Effects;       // IVideoFrameEffect, LutEffect, EffectComposer
     using CodeBrix.VideoPlayback.Rendering;     // VideoStretch, VideoRenderPath, VideoRectangle,
                                                 //   VideoCompositionContext, VideoStretchMath,
@@ -354,8 +360,24 @@ Decoder registration (…Decoding)
     VideoDecoders.Unregister(factory)                        // returns true if it was there
     VideoDecoders.IsCodecSupported("av01")
     VideoDecoders.RegisteredFactories                        // highest priority first
+    VideoDecoders.BuiltInRawVideoFactory                     // the built-in one, by name
     session.RegisterDecoderFactory(factory)                  // this session only, tried first
     VideoCodecIds.Av1 / Opus / Vorbis / WebVtt / SubRip / Ass / Raw
+
+The registry starts with the built-in uncompressed factory (RawVideoDecoderFactory,
+priority 0, serving "raw" and nothing else) already in it, so
+IsCodecSupported("raw") is true before your first line runs. Register() is for
+CODED formats arriving in their own package. To decorate or replace the built-in
+one, register your own for "raw": on a session, which is always tried first, or
+process-wide at a priority above 0 - at the same priority the built-in one was
+there first and wins the tie. VideoDecoders.Clear(), which only a test has any
+reason to call, leaves the built-in factory in place.
+
+BuiltInRawVideoFactory NAMES that instance, so you need not hunt for it in
+RegisteredFactories and guess which entry it is. It is an ordinary entry: pass it
+to Unregister to take uncompressed video out of a process that must not have it,
+and Clear puts that same object back. It is the same instance every time, so
+ReferenceEquals against it is the reliable way to ask "is that the built-in one?".
 
     AudioDecoders.IsCodecSupported("opus")                   // asks, starts NOTHING
     AudioDecoders.SupportedCodecIds                          // asks, starts NOTHING
@@ -449,6 +471,92 @@ Authoring a .cbv file
     refuses to translate is explained by the file, not by a bug here. The
     hearing-impaired caption flag has the same shape: Matroska carries it, WebM
     has no element for it.
+
+Taking a bespoke file APART - the container writers
+----------------------------------------------------
+The bespoke container is a TWO-WAY STREET. CbvAuthoring.Write muxes an IVF file
+and an Ogg file INTO a ".cbv"; these write the same two shapes back OUT, from the
+packets CbvReader hands you, with nothing re-encoded and no new dependency. That
+is what a consumer needs to convert a ".cbv" to something else, to hand a track
+to ffmpeg, or to take one file apart and build another.
+
+    new IvfWriter(Stream output, string fourCharacterCode, int width, int height,
+                  bool leaveOutputOpen = false)
+    IvfWriter.CreateAv1(string path, int width, int height)
+        void WriteFrame(ReadOnlySpan<byte> data, TimeSpan timestamp)
+        void Complete()          back-patches the frame count; the stream must seek
+        uint FrameCount          string FourCharacterCode   int Width / Height
+        const string Av1FourCharacterCode = "AV01"
+        const uint TickTimeBaseDenominator = 10_000_000
+
+    It states the time base 1/10,000,000 - one unit is one .NET tick - so a
+    frame's timestamp IS its Ticks value and IvfReader gives it back unchanged.
+    Complete() writes the frame count over the header, so an abandoned file
+    declares zero frames rather than looking finished. Dispose does not complete.
+
+    OggAudioWriter.CreateVorbis(path | Stream, ReadOnlySpan<byte> codecPrivate,
+                                int sampleRate, bool leaveOutputOpen = false)
+    OggAudioWriter.CreateOpus(path | Stream, ReadOnlySpan<byte> codecPrivate,
+                              int preSkipSamples = 0, bool leaveOutputOpen = false)
+        void WritePacket(ReadOnlySpan<byte> data, TimeSpan endTimestamp)
+        void Complete()          writes the last page with the end-of-stream flag
+        void Complete(long finalGranulePosition)     ...and states where it ends
+        string CodecId           int GranuleSampleRate      long PacketsWritten
+        const uint DefaultSerialNumber
+
+    Feed it a container's own codecPrivate: the three Xiph headers for Vorbis,
+    the OpusHead for Opus. The OpusTags comment header is SYNTHESISED, because no
+    container stores one and an Ogg Opus file is invalid without it. endTimestamp
+    is where the packet ENDS - for a packet from OggAudioStream, Timestamp +
+    Duration - and the granule positions are computed from it: samples at the
+    track's rate for Vorbis, samples at 48 kHz offset by the pre-skip for Opus.
+    They never move backwards.
+
+    A SOURCE'S TRAILING TRIM IS THE ONE THING TIMESTAMPS CANNOT SAY, so state it:
+    Complete(finalGranulePosition). An encoder's tail padding lives in nothing but
+    the final page's granule, which it makes SMALLER than decoding every packet
+    would produce, and a granule worked out from a packet's end timestamp is by
+    definition the untrimmed number - so plain Complete() declares no end trim.
+    For audio read with OggAudioStream, the value that reproduces the source
+    exactly is the sum of the packets' SampleCount less its TrailingTrimSamples.
+    State that and the round trip loses nothing at all; the priming travels in the
+    OpusHead and never needed help. THE RULE: not negative (-1 is the page
+    header's "no packet ends here", not a position), never greater than the
+    granule the packets' own timestamps reach - that would declare audio the file
+    does not carry - and never below one an already-written page carries, because
+    granule positions do not go backwards. SMALLER is the whole point and is
+    allowed by any amount. A refused value writes nothing, so the file can still
+    be completed with one that passes.
+
+    new OggStreamWriter(Stream output, uint serialNumber, bool leaveOutputOpen = false)
+        void WritePacket(ReadOnlySpan<byte> data, long granulePosition)
+        void FlushPage()   void Complete()   void Complete(long finalGranulePosition)
+        long PagesWritten   uint SerialNumber
+
+    The framing layer under it, and the mirror of OggReader: packets in, pages
+    out, with the segment table, the sequence numbers, the continuation flag and
+    the checksums looked after. Use it directly only to interleave several
+    logical streams into one file.
+
+    OggAudioStream.SplitXiphCodecPrivate(codecPrivate, out identification,
+                                         out comment, out setup)
+
+    The exact inverse of OggAudioStream.BuildXiphCodecPrivate, which a container
+    reader used to pack those three headers into one block. It is published so
+    nobody has to re-derive the 0xFF-run length decoding, which looks simple and
+    goes subtly wrong when a header is an exact multiple of 255 bytes long. A
+    malformed block is refused with a message saying which way it is malformed.
+
+    OggChecksum.Compute(ReadOnlySpan<byte> page)
+
+    THE OGG PAGE CHECKSUM IS NOT THE SAME CRC-32 AS EbmlCrc32, and the two never
+    agree. EBML - and zlib, zip, PNG and Matroska with it - uses the REFLECTED
+    polynomial 0xEDB88320 with 0xFFFFFFFF at both ends. Ogg uses polynomial
+    0x04C11DB7 the other way round, an initial value of ZERO, and no final
+    exclusive-or. Feed a page to the wrong one and you get a plausible number
+    that never matches, on every page, for ever. Both are public so that neither
+    has to be guessed at. Zero the page's own four checksum bytes before
+    computing, then store the answer there little-endian.
 
 
 The effect chain (…Effects) - what a presenter grades with
@@ -697,7 +805,7 @@ COMPLETE EXAMPLES
     {
         OutputPath = "clip.cbv",
         VideoIvfPath = "video.ivf",     // an AV1 elementary stream
-        AudioOggPath = "audio.ogg",     // Ogg Opus or Ogg Vorbis
+        AudioOggPath = "audio.ogg",     // Ogg VORBIS - see the note below
         ChaptersPath = "chapters.ffmeta",
         AudioLanguage = "en",
     };
@@ -706,6 +814,20 @@ COMPLETE EXAMPLES
         "captions.en.vtt", "en", "English", CaptionTrackFlags.Default));
 
     CbvAuthoringResult result = CbvAuthoring.Write(request);
+
+  THE SOUND IN A BESPOKE ".cbv" IS VORBIS. That flavour exists so that the file
+  plays with CodeBrix.VideoPlayback - whose one dependency, CodeBrix.Audio, has
+  Vorbis built in - plus a video decoder package, and NOTHING else. Opus needs the
+  application to reference CodeBrix.Audio.Opus and call CodeBrixAudioOpus.Register(),
+  which is one package more than the flavour promises, so no authoring surface puts
+  it there: the authoring library refuses a bespoke request whose audio would be
+  Opus, and the cbvmux tool refuses an Ogg Opus input. Opus is fully supported, and
+  is the DEFAULT, in the WEBM-PROFILE flavour, which is what a file served over the
+  web should be.
+
+  This low-level muxer is deliberately permissive about it, and that is not an
+  oversight: it is the piece the container's own tests drive to build files no
+  authoring surface would write.
 
 10. Read a file's structure without playing it.
 
@@ -819,8 +941,9 @@ PERFORMANCE TIPS
 
 COMMON PITFALLS TO AVOID
 ========================
-- FORGETTING TO REGISTER A DECODER. This package ships none. An AV1 file opened
-  with nothing registered throws with the exact words "video codec 'av01' has no
+- FORGETTING TO REGISTER A DECODER FOR A CODED FORMAT. Uncompressed video is the
+  only codec this package ships, and it needs nothing. An AV1 file opened with
+  nothing registered throws with the exact words "video codec 'av01' has no
   registered decoder" and the name of the package to add. That is the message,
   not a bug.
 
@@ -873,8 +996,10 @@ COMMON PITFALLS TO AVOID
 
 WHAT THIS PACKAGE DOES NOT DO
 =============================
-- IT DOES NOT DECODE VIDEO. There is no codec here at all: the decoder seam is
-  the product. A decoder package supplies the codec.
+- IT DOES NOT DECODE CODED VIDEO. The decoder seam is the product. The only
+  codec here is the uncompressed one - a diagnostics and test codec, built in so
+  that everything else works with nothing installed. A decoder package supplies
+  AV1 or anything else worth compressing.
 - IT DOES NOT DRAW. There is no drawing surface, no bitmap type, no dependency on
   any drawing library. It hands you planes and, if you want them, BGRA pixels -
   and everything a presenter needs EXCEPT the canvas: the render-path enums, the
@@ -905,8 +1030,11 @@ https://github.com/ellisnet/CodeBrix.VideoPlayback
       hand, authoring a .cbv file, and baking a chain of .cube tables into the
       one file the authoring pipeline hands to FFmpeg.
   tests/CodeBrix.VideoPlayback.Tests/
-      the whole surface exercised against a golden corpus, including an
-      uncompressed decoder that shows what implementing IVideoDecoder takes.
+      the whole surface exercised against a golden corpus, with no codec package
+      installed - the built-in uncompressed decoder carries all of it.
+  src/CodeBrix.VideoPlayback/Codecs/RawVideoDecoder.cs
+      that decoder: the shortest complete example of what implementing
+      IVideoDecoder and IVideoDecoderFactory takes.
   tests/assets/
       the corpus itself, with the script that regenerates it.
   CBV-FORMAT.txt
@@ -932,6 +1060,7 @@ list the tracks                       session.Tracks
 show captions                         session.SelectedCaptionTrack = ...; session.ActiveCues
 list chapters                         session.Chapters; session.TitleFor(chapter, languages)
 jump a chapter                        session.NextChapter() / SeekToChapter(i)
+play uncompressed video               nothing - it is built in
 play AV1                              VideoDecoders.Register(<decoder package factory>)
 play Opus                             CodeBrixAudioOpus.Register()
 ask whether a codec is playable       VideoDecoders.IsCodecSupported("av01")
@@ -942,6 +1071,13 @@ judge a file against the profile      StreamableProfile.EvaluateFile(path)
 mux a .cbv from encoder output        CbvAuthoring.Write(request)
 author a .cbv from a source video     add CodeBrix.VideoPlayback.Authoring
   (developer machine only)            and call CbvAuthor.Write(request)
+take a .cbv APART again               IvfWriter.CreateAv1(...) for the picture,
+  (no re-encoding, no new package)    OggAudioWriter.CreateVorbis(...) for the sound
+carry a source's end trim into        OggAudioWriter.Complete(finalGranulePosition)
+  the Ogg you write
+split a Vorbis codecPrivate           OggAudioStream.SplitXiphCodecPrivate(...)
+checksum an Ogg page                  OggChecksum.Compute(page)  -- NOT EbmlCrc32
+name the built-in raw decoder         VideoDecoders.BuiltInRawVideoFactory
 read a .cube lookup table             CubeLutFile.ReadFile(path)
 fold several .cube tables into one    LutComposer.Compose(layers)
   (each with its own strength)        LutLayer.FromCubeFile(path, percent)
@@ -968,7 +1104,8 @@ Signatures worth memorising:
 
 Nine rules:
 
-  1. Register the decoder packages your files need; failures name what is missing.
+  1. Register the decoder packages your CODED files need - uncompressed video and
+     Vorbis audio are built in; failures name what is missing.
   2. Call SharedAudioOutput.Configure(48000) before the first sound.
   3. Take the frame on the drawing thread; the event only says "repaint".
   4. Dispose every frame exactly once; Retain() to share one.

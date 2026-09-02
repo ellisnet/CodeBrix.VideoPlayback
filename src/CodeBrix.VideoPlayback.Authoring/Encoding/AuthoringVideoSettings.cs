@@ -149,6 +149,46 @@ public sealed class AuthoringVideoSettings
     /// </remarks>
     public IList<AuthoringLutInput> Luts { get; } = new List<AuthoringLutInput>();
 
+    /// <summary>
+    /// Where to KEEP the one effective ".cube" table this video is graded with, or null - the default - to
+    /// keep nothing.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Set it and the run leaves that table behind for you to inspect, to diff against a previous grade, or
+    /// to commit beside the video it produced. <see cref="VideoAuthoringResult.ComposedLutPath" /> records
+    /// where it went. Any missing folder in the path is created.
+    /// </para>
+    /// <para>
+    /// IT IS POPULATED WHENEVER THERE IS A GRADE AT ALL, and it means the same thing both times - "the table
+    /// this file was graded with" - but it gets there by two different routes, and the difference is
+    /// visible:
+    /// </para>
+    /// <list type="bullet">
+    ///   <item><description>
+    ///     WHEN THE CHAIN COMPOSES - two or more tables, or one at any percentage other than 100 - the folded
+    ///     table is written to exactly this path and FFmpeg's lookup reads it FROM there. What is left on the
+    ///     disk is byte for byte the file the encode consumed, not a copy of it, and the rendered command line
+    ///     names this path.
+    ///   </description></item>
+    ///   <item><description>
+    ///     WHEN ONE TABLE IS USED AT FULL STRENGTH there is nothing to fold: FFmpeg reads the caller's own
+    ///     file and the command line goes on naming THAT file. A byte-for-byte COPY of it is placed here, so
+    ///     the property still holds the table the picture was graded with.
+    ///   </description></item>
+    /// </list>
+    /// <para>
+    /// AN EMPTY CHAIN KEEPS NOTHING. With no lookup table in <see cref="Luts" /> there is no grade to record,
+    /// nothing is written here whatever this is set to, and the result's path is null.
+    /// </para>
+    /// <para>
+    /// <see cref="CbvAuthor.RenderCommands" /> honours the path in the command line it renders where the
+    /// command names it at all - the composing case - but writes nothing in either case, because a dry run
+    /// touches no disk. The table appears only when <see cref="CbvAuthor.Write" /> runs.
+    /// </para>
+    /// </remarks>
+    public string ComposedLutPath { get; set; }
+
     /// <summary>A name for the video track, or null. Carried by the bespoke flavour only.</summary>
     public string TrackName { get; set; }
 }

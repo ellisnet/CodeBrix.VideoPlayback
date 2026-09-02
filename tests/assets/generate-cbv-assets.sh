@@ -20,11 +20,14 @@ run_mux() {
 echo "building the tools"
 dotnet build "${tools}" -c Release -v quiet --nologo >/dev/null
 
-echo "av1-opus.cbv        AV1 video + Opus audio + English captions + chapters"
+# The sound in a bespoke .cbv is ALWAYS Vorbis: the file has to play with CodeBrix.VideoPlayback and a video
+# decoder package and nothing else, and Opus would need CodeBrix.Audio.Opus on the playing machine. cbvmux
+# refuses an Opus Ogg outright. Opus lives in the WebM-profile files beside these.
+echo "av1-vorbis-captions-chapters.cbv   AV1 video + Vorbis audio + captions + chapters"
 run_mux \
-    --output "${here}/av1-opus.cbv" \
+    --output "${here}/av1-vorbis-captions-chapters.cbv" \
     --video "${here}/av1-video-only.ivf" \
-    --audio "${here}/opus-audio.ogg" \
+    --audio "${here}/vorbis-audio.ogg" \
     --chapters "${here}/chapters.ffmeta" \
     --audio-language en \
     --video-name "picture" \
@@ -56,10 +59,28 @@ run_mux \
     --video-name "uncompressed test pattern"
 
 echo "verifying with cbvinfo"
-dotnet run --project "${tools}" -c Release --no-launch-profile -- cbvinfo "${here}/av1-opus.cbv" >/dev/null
-dotnet run --project "${tools}" -c Release --no-launch-profile -- cbvinfo "${here}/av1-vorbis.cbv" >/dev/null
-dotnet run --project "${tools}" -c Release --no-launch-profile -- cbvinfo "${here}/raw-synthetic.cbv" >/dev/null
-dotnet run --project "${tools}" -c Release --no-launch-profile -- cbvinfo "${here}/raw-vorbis.cbv" >/dev/null
+
+# cbvinfo exits nonzero when a file does not pass the STREAMABLE PROFILE, and one of these samples
+# deliberately does not: it carries a SubRip caption track, which the profile reserves for WebVTT. Under
+# `set -e` that verdict used to end this script silently, before the listing at the bottom ever ran. What is
+# verified here is what the verification is for - that the file READS BACK and that both of its checksums
+# check out - and the profile verdict is left to cbvinfo's own report.
+verify_info() {
+    local file="$1"
+    local text
+    text="$(dotnet run --project "${tools}" -c Release --no-launch-profile -- cbvinfo "${file}" || true)"
+
+    if ! printf '%s' "${text}" | grep -q "header verified: True, index verified: True"; then
+        echo "cbvinfo could not verify ${file}:" >&2
+        printf '%s\n' "${text}" >&2
+        exit 1
+    fi
+}
+
+verify_info "${here}/av1-vorbis-captions-chapters.cbv"
+verify_info "${here}/av1-vorbis.cbv"
+verify_info "${here}/raw-synthetic.cbv"
+verify_info "${here}/raw-vorbis.cbv"
 
 echo "verifying with cbvdecode (the uncompressed samples only - the others need an AV1 decoder)"
 dotnet run --project "${tools}" -c Release --no-launch-profile -- cbvdecode --headless --quiet "${here}/raw-synthetic.cbv"

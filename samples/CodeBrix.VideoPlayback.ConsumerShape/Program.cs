@@ -4,7 +4,6 @@ using System.IO;
 using System.Threading;
 using CodeBrix.VideoPlayback;
 using CodeBrix.VideoPlayback.Playback;
-using CodeBrix.VideoPlayback.RawCodec;
 using CodeBrix.VideoPlayback.Rendering;
 using CodeBrix.VideoPlayback.Skia;
 using SkiaSharp;
@@ -62,9 +61,9 @@ public static class Program
         // 1. A session. Audio plays through CodeBrix.Audio, which has Vorbis built in - no extra package.
         using VideoPlaybackSession session = new VideoPlaybackSession();
 
-        // 2. A decoder. A real application references a decoder package and calls its Register method; this
-        //    sample links the repository's uncompressed test codec so that it needs nothing installed.
-        session.RegisterDecoderFactory(new RawVideoDecoderFactory());
+        // 2. A decoder - and there is nothing to do. The uncompressed codec this clip uses is built into the
+        //    playback library, so it needs no package and no registration call. A clip in a coded format
+        //    would need its decoder package referenced and its Register method called, here.
 
         // 3. A presenter, on the processor render path because there is no graphics context in a console.
         using SkiaVideoPresenter presenter = new SkiaVideoPresenter { RenderPath = VideoRenderPath.Cpu };

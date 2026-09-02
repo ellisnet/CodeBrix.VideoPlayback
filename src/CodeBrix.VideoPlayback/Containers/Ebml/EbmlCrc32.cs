@@ -17,6 +17,11 @@ namespace CodeBrix.VideoPlayback.Containers.Ebml;
 /// which is big-endian. A reader that treats the four bytes as a normal EBML unsigned integer will compare
 /// the value byte-reversed and reject every valid file.
 /// </para>
+/// <para>
+/// A second one: this is NOT the CRC-32 an Ogg page carries. That one -
+/// <see cref="CodeBrix.VideoPlayback.Containers.Ogg.OggChecksum" /> - uses the same polynomial UNREFLECTED,
+/// starts at zero and inverts nothing, so the two disagree on every input. Use each where it belongs.
+/// </para>
 /// </remarks>
 public static class EbmlCrc32
 {

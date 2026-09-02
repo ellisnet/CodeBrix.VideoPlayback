@@ -2,7 +2,6 @@ using System;
 using System.Diagnostics;
 using System.Threading;
 using CodeBrix.VideoPlayback.Playback;
-using CodeBrix.VideoPlayback.RawCodec;
 using CodeBrix.VideoPlayback.Rendering;
 using SilverAssertions;
 using SkiaSharp;
@@ -32,8 +31,6 @@ public class SkiaVideoPlaybackSessionTests
         {
             PlayAudio = false,
         });
-
-        session.RegisterDecoderFactory(new RawVideoDecoderFactory());
 
         using SkiaVideoPresenter presenter = new SkiaVideoPresenter { RenderPath = VideoRenderPath.Cpu };
         presenter.Attach(session.Presenter);
@@ -93,8 +90,6 @@ public class SkiaVideoPlaybackSessionTests
         {
             PlayAudio = false,
         });
-
-        session.RegisterDecoderFactory(new RawVideoDecoderFactory());
 
         using SkiaVideoPresenter presenter = new SkiaVideoPresenter { RenderPath = VideoRenderPath.Cpu };
         presenter.Attach(session.Presenter);

@@ -226,6 +226,136 @@ public class OggAudioStreamTests
         pair.Should().Be(single * 2);
     }
 
+    [Fact]
+    public void Splitting_a_xiph_block_undoes_building_it_exactly()
+    {
+        //Arrange
+        byte[] identification = Fill(30, 1);
+        byte[] comment = Fill(47, 3);
+        byte[] setup = Fill(900, 5);
+
+        //Act
+        byte[] packed = OggAudioStream.BuildXiphCodecPrivate(identification, comment, setup);
+        OggAudioStream.SplitXiphCodecPrivate(packed, out byte[] a, out byte[] b, out byte[] c);
+
+        //Assert
+        a.Should().Equal(identification);
+        b.Should().Equal(comment);
+        c.Should().Equal(setup);
+    }
+
+    [Theory]
+    [InlineData(255, 1)]
+    [InlineData(1, 255)]
+    [InlineData(510, 765)]
+    [InlineData(256, 254)]
+    public void Splitting_undoes_building_when_a_header_lands_on_a_lacing_boundary(int first, int second)
+    {
+        //Arrange - a length that is an exact multiple of 255 is written as a run of 255s and a final zero,
+        // which is the one place a hand-rolled length decoder normally goes wrong.
+        byte[] identification = Fill(first, 1);
+        byte[] comment = Fill(second, 3);
+        byte[] setup = Fill(64, 5);
+
+        //Act
+        byte[] packed = OggAudioStream.BuildXiphCodecPrivate(identification, comment, setup);
+        OggAudioStream.SplitXiphCodecPrivate(packed, out byte[] a, out byte[] b, out byte[] c);
+
+        //Assert
+        a.Length.Should().Be(first);
+        b.Length.Should().Be(second);
+        a.Should().Equal(identification);
+        b.Should().Equal(comment);
+        c.Should().Equal(setup);
+    }
+
+    [Fact]
+    public void A_real_tracks_codec_private_splits_into_headers_typed_one_three_and_five()
+    {
+        //Arrange
+        using OggAudioStream stream = OggAudioStream.Open(TestAssets.Path("vorbis-audio.ogg"));
+        byte[] codecPrivate = stream.CodecPrivate.ToArray();
+
+        //Act
+        OggAudioStream.SplitXiphCodecPrivate(
+            codecPrivate, out byte[] identification, out byte[] comment, out byte[] setup);
+
+        //Assert
+        identification[0].Should().Be((byte)1);
+        comment[0].Should().Be((byte)3);
+        setup[0].Should().Be((byte)5);
+
+        System.Text.Encoding.ASCII.GetString(identification, 1, 6).Should().Be("vorbis");
+        System.Text.Encoding.ASCII.GetString(comment, 1, 6).Should().Be("vorbis");
+        System.Text.Encoding.ASCII.GetString(setup, 1, 6).Should().Be("vorbis");
+
+        // And packing them again produces the very block the container stored.
+        OggAudioStream.BuildXiphCodecPrivate(identification, comment, setup).Should().Equal(codecPrivate);
+    }
+
+    [Fact]
+    public void A_xiph_block_too_short_to_hold_anything_is_refused_by_name()
+    {
+        //Act
+        Action act = () => OggAudioStream.SplitXiphCodecPrivate(
+            new byte[] { 2, 10 }, out byte[] _, out byte[] _, out byte[] _);
+
+        //Assert
+        act.Should().Throw<VideoPlaybackException>().WithMessage("*too short*");
+    }
+
+    [Fact]
+    public void A_xiph_block_that_does_not_declare_three_packets_is_refused_by_name()
+    {
+        //Act
+        Action act = () => OggAudioStream.SplitXiphCodecPrivate(
+            new byte[] { 0, 1, 1, 9 }, out byte[] _, out byte[] _, out byte[] _);
+
+        //Assert
+        act.Should().Throw<VideoPlaybackException>().WithMessage("*exactly three*");
+    }
+
+    [Fact]
+    public void A_xiph_block_that_ends_inside_a_laced_length_is_refused_by_name()
+    {
+        //Act
+        Action act = () => OggAudioStream.SplitXiphCodecPrivate(
+            new byte[] { 2, 255, 255, 255 }, out byte[] _, out byte[] _, out byte[] _);
+
+        //Assert
+        act.Should().Throw<VideoPlaybackException>().WithMessage("*laced header lengths*");
+    }
+
+    [Fact]
+    public void A_xiph_block_claiming_more_than_it_carries_is_refused_by_name()
+    {
+        //Act
+        Action act = () => OggAudioStream.SplitXiphCodecPrivate(
+            new byte[] { 2, 200, 200, 1, 2, 3 }, out byte[] _, out byte[] _, out byte[] _);
+
+        //Assert
+        act.Should().Throw<VideoPlaybackException>().WithMessage("*carries only*");
+    }
+
+    [Fact]
+    public void A_xiph_block_with_no_setup_header_left_over_is_refused_by_name()
+    {
+        //Act
+        Action act = () => OggAudioStream.SplitXiphCodecPrivate(
+            new byte[] { 2, 1, 1, 0xAA, 0xBB }, out byte[] _, out byte[] _, out byte[] _);
+
+        //Assert
+        act.Should().Throw<VideoPlaybackException>().WithMessage("*no setup header*");
+    }
+
+    private static byte[] Fill(int length, byte first)
+    {
+        byte[] data = new byte[length];
+        data[0] = first;
+        for (int i = 1; i < length; i++) data[i] = (byte)(i * 3);
+        return data;
+    }
+
     private static void RepairPageChecksum(byte[] bytes, int pageOffset)
     {
         int segments = bytes[pageOffset + 26];
