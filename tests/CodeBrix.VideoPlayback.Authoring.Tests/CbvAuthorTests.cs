@@ -56,7 +56,7 @@ public class CbvAuthorTests
 
         //Assert
         line.Should().Be(
-            "-autorotate -i \"/clips/source.mkv\" -map 0:v:0 -map 0:a:0 -map_metadata -1 "
+            "-autorotate -i \"/clips/source.mkv\" -map 0:v:0 -map 0:a:0 -map_chapters -1 -map_metadata -1 "
             + "-c:v libsvtav1 -preset 6 -crf 28 -pix_fmt yuv420p -r 30 -g 60 "
             + "-vf \"scale=w=1920:h=1080:flags=lanczos, format=yuv420p\" "
             + "-c:a libopus -b:a 128k -ar 48000 -ac 2 -f webm -cues_to_front 1 \"/out/clip.cbv\" -y");
@@ -1013,6 +1013,76 @@ public class CbvAuthorTests
         //Act
         //Assert
         Assert.Throws<ArgumentNullException>(() => CbvAuthor.RenderCommands(null));
+    }
+
+    [Fact]
+    public void RenderCommands_names_the_chapter_file_as_the_only_source_of_chapters()
+    {
+        //Arrange
+        VideoAuthoringRequest request = NewRequest(VideoAuthoringFlavour.WebMProfile);
+        request.Captions.Add(new AuthoringCaptionInput("/text/en.vtt", "en"));
+        request.Captions.Add(new AuthoringCaptionInput("/text/fr.vtt", "fr"));
+        request.ChaptersPath = "/text/chapters.ffmeta";
+
+        //Act
+        string line = CbvAuthor.RenderCommands(request)[0].Arguments;
+
+        //Assert
+        // The chapter file is the third extra input, after the two caption files. Without -map_chapters
+        // ffmpeg takes chapters from the first input that has any - the source, when it has its own.
+        line.Should().Contain("-map_chapters 3");
+        line.Should().NotContain("-map_chapters -1");
+    }
+
+    [Fact]
+    public void RenderCommands_switches_subtitle_selection_off_when_the_streams_are_left_to_ffmpeg()
+    {
+        //Arrange
+        VideoAuthoringRequest request = NewRequest(VideoAuthoringFlavour.WebMProfile);
+        request.SelectStreamsExplicitly = false;
+
+        //Act
+        string line = CbvAuthor.RenderCommands(request)[0].Arguments;
+
+        //Assert
+        line.Should().Contain("-sn");
+        line.Should().NotContain("-map 0:v:0");
+        line.Should().Contain("-map_chapters -1");
+    }
+
+    [Fact]
+    public void RenderCommands_maps_the_picture_and_the_sound_beside_a_caption_whatever_the_selection_switch_says()
+    {
+        //Arrange
+        VideoAuthoringRequest request = NewRequest(VideoAuthoringFlavour.WebMProfile);
+        request.SelectStreamsExplicitly = false;
+        request.Captions.Add(new AuthoringCaptionInput("/text/en.vtt", "en"));
+
+        //Act
+        string line = CbvAuthor.RenderCommands(request)[0].Arguments;
+
+        //Assert
+        // Any -map on an output turns ffmpeg's automatic selection off for that output, so a mapped caption
+        // input would otherwise leave the file with the caption track and nothing else.
+        line.Should().Contain("-map 0:v:0");
+        line.Should().Contain("-map 0:a:0");
+        line.Should().Contain("-map 1:s:0");
+        line.Should().NotContain("-sn");
+    }
+
+    [Fact]
+    public void RenderCommands_keeps_a_sources_own_chapters_out_whenever_there_is_no_chapter_file()
+    {
+        //Arrange
+        VideoAuthoringRequest request = NewRequest(VideoAuthoringFlavour.WebMProfile);
+
+        //Act
+        string line = CbvAuthor.RenderCommands(request)[0].Arguments;
+
+        //Assert
+        // Unconditional, so that RenderCommands and Write always render the same line and the two flavours
+        // agree: chapters come from a chapter file or from nowhere. The sample corpus was rebuilt for this.
+        line.Should().Contain("-map 0:v:0 -map 0:a:0 -map_chapters -1 -map_metadata -1");
     }
 
     private static VideoAuthoringRequest NewRequest(VideoAuthoringFlavour flavour) =>

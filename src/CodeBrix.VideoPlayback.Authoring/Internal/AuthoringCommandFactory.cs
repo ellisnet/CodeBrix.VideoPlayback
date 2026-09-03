@@ -47,6 +47,7 @@ internal static class AuthoringCommandFactory
         }
 
         bool hasChapters = !string.IsNullOrWhiteSpace(request.ChaptersPath);
+        int chapterFileIndex = request.Captions.Count + 1;
         if (hasChapters)
         {
             // The chapter file is an ordinary INPUT and -map_metadata names its index. Passing the text to
@@ -54,21 +55,45 @@ internal static class AuthoringCommandFactory
             // into the command line, and a command line that a manifest records has to be the same every
             // run and has to name a file a reader can go and look at.
             arguments = arguments.AddFileInput(request.ChaptersPath, false);
-            arguments = arguments.MapMetaData(request.Captions.Count + 1);
+            arguments = arguments.MapMetaData(chapterFileIndex);
         }
 
         return arguments.OutputToFile(request.OutputPath, true, output =>
         {
-            if (request.SelectStreamsExplicitly)
+            // ffmpeg switches its automatic stream selection OFF for an output the moment that output carries
+            // any -map at all. Caption inputs are always mapped, so beside them the picture and the sound
+            // have to be mapped too, whatever the switch says. Measured 2026-09-02: with the switch off and
+            // one caption input, the finished file held the caption track and nothing else.
+            bool mapPictureAndSound = request.SelectStreamsExplicitly || request.Captions.Count > 0;
+            if (mapPictureAndSound)
             {
                 output.SelectStream(0, 0, Channel.Video);
                 if (request.Audio.Include) output.SelectStream(0, 0, Channel.Audio);
+            }
+            else
+            {
+                // Left to itself, ffmpeg would also pick the source's first subtitle stream and push it
+                // through a subtitle ENCODER nobody asked for (webvtt for WebM, ass for Matroska). Captions
+                // come from the request's Captions inputs and from nowhere else, and there are none on this
+                // path, so subtitle recording is switched off for the output.
+                output.WithCustomArgument("-sn");
             }
 
             for (int i = 0; i < request.Captions.Count; i++)
             {
                 output.SelectStream(0, i + 1, Channel.Subtitle);
             }
+
+            // ffmpeg copies chapters from the FIRST input that has any. When the source carries chapters of
+            // its own, that input is the source and a chapter file given as a later input would lose - so
+            // the chapter file's index is named outright. With no chapter file, a source's own chapters would
+            // arrive with their titles stripped by -map_metadata -1, so they are kept out - which is what the
+            // bespoke flavour does anyway. Chapters come from the chapter file and from nowhere else. (The
+            // corpus under tests/assets/authoring was rebuilt on 2026-09-02 when this line gained the token.)
+            output.WithCustomArgument(
+                hasChapters
+                    ? "-map_chapters " + chapterFileIndex.ToString(CultureInfo.InvariantCulture)
+                    : "-map_chapters -1");
 
             if (!hasChapters && !request.CopySourceMetadata) output.WithoutMetadata();
 

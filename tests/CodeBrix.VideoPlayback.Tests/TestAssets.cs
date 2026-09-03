@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using Xunit;
 
@@ -33,9 +34,18 @@ public static class TestAssets
     /// <returns>True when the file exists.</returns>
     public static bool Exists(string name) => File.Exists(System.IO.Path.Combine(Directory, name));
 
+    private static readonly object TemporaryGate = new object();
+    private static readonly List<string> TemporaryDirectories = new List<string>();
+
     /// <summary>Creates a directory under the system temporary folder for a test to write into.</summary>
     /// <param name="label">A short label that appears in the folder's name.</param>
     /// <returns>The new directory's path.</returns>
+    /// <remarks>
+    /// Every folder made here is remembered and deleted when the test run ends, by
+    /// <see cref="TemporaryDirectoryCleanup" />. A test may still delete its own folder sooner; most of the
+    /// synthetic-media tests do not, and before the sweep existed a single run left about seventy of them
+    /// behind under the system temporary folder (found 2026-09-02).
+    /// </remarks>
     public static string CreateTemporaryDirectory(string label)
     {
         string path = System.IO.Path.Combine(
@@ -43,7 +53,37 @@ public static class TestAssets
             $"codebrix-videoplayback-{label}-{Guid.NewGuid():N}");
 
         System.IO.Directory.CreateDirectory(path);
+        lock (TemporaryGate) TemporaryDirectories.Add(path);
         return path;
+    }
+
+    /// <summary>Deletes every folder <see cref="CreateTemporaryDirectory" /> made, as far as it can.</summary>
+    /// <remarks>
+    /// Best effort: a folder a test already removed is simply not there, and one that cannot be removed - a
+    /// file still open, most likely - is left for the system's own sweep rather than turned into a failure.
+    /// </remarks>
+    public static void DeleteTemporaryDirectories()
+    {
+        string[] paths;
+        lock (TemporaryGate)
+        {
+            paths = TemporaryDirectories.ToArray();
+            TemporaryDirectories.Clear();
+        }
+
+        foreach (string path in paths)
+        {
+            try
+            {
+                if (System.IO.Directory.Exists(path)) System.IO.Directory.Delete(path, true);
+            }
+            catch (IOException)
+            {
+            }
+            catch (UnauthorizedAccessException)
+            {
+            }
+        }
     }
 
     private static string Find()

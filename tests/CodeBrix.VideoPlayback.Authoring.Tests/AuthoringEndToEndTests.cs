@@ -49,7 +49,8 @@ public class AuthoringEndToEndTests
         using WorkFolder work = new WorkFolder("webm-profile");
         string source = SyntheticSource.WriteClip(work.File("source.mkv"));
 
-        VideoAuthoringRequest request = NewRequest(VideoAuthoringFlavour.WebMProfile, source, work.File("clip.cbv"), work);
+        VideoAuthoringRequest request =
+            NewRequest(VideoAuthoringFlavour.WebMProfile, source, work.File("clip.cbv"), work);
 
         //Act
         VideoAuthoringResult result = CbvAuthor.Write(request);
@@ -69,7 +70,8 @@ public class AuthoringEndToEndTests
         using WorkFolder work = new WorkFolder("bespoke-profile");
         string source = SyntheticSource.WriteClip(work.File("source.mkv"));
 
-        VideoAuthoringRequest request = NewRequest(VideoAuthoringFlavour.Bespoke, source, work.File("clip.cbv"), work);
+        VideoAuthoringRequest request =
+            NewRequest(VideoAuthoringFlavour.Bespoke, source, work.File("clip.cbv"), work);
 
         //Act
         VideoAuthoringResult result = CbvAuthor.Write(request);
@@ -295,7 +297,8 @@ public class AuthoringEndToEndTests
         SyntheticSource.SkipWithoutFFmpeg();
         using WorkFolder work = new WorkFolder("webm-layout");
         string source = SyntheticSource.WriteClip(work.File("source.mkv"));
-        VideoAuthoringRequest request = NewRequest(VideoAuthoringFlavour.WebMProfile, source, work.File("clip.cbv"), work);
+        VideoAuthoringRequest request =
+            NewRequest(VideoAuthoringFlavour.WebMProfile, source, work.File("clip.cbv"), work);
 
         //Act
         VideoAuthoringResult result = CbvAuthor.Write(request);
@@ -316,7 +319,8 @@ public class AuthoringEndToEndTests
         SyntheticSource.SkipWithoutFFmpeg();
         using WorkFolder work = new WorkFolder("bespoke-layout");
         string source = SyntheticSource.WriteClip(work.File("source.mkv"));
-        VideoAuthoringRequest request = NewRequest(VideoAuthoringFlavour.Bespoke, source, work.File("clip.cbv"), work);
+        VideoAuthoringRequest request =
+            NewRequest(VideoAuthoringFlavour.Bespoke, source, work.File("clip.cbv"), work);
 
         //Act
         VideoAuthoringResult result = CbvAuthor.Write(request);
@@ -701,7 +705,8 @@ public class AuthoringEndToEndTests
         using WorkFolder work = new WorkFolder("aspect");
         string source = SyntheticSource.WriteClip(work.File("source.mkv"), 256, 144);
 
-        VideoAuthoringRequest request = NewRequest(VideoAuthoringFlavour.Bespoke, source, work.File("clip.cbv"), work);
+        VideoAuthoringRequest request =
+            NewRequest(VideoAuthoringFlavour.Bespoke, source, work.File("clip.cbv"), work);
         request.Video.FrameSize = AuthoringFrameSize.LongSide(128);
 
         //Act
@@ -712,6 +717,171 @@ public class AuthoringEndToEndTests
         //Assert
         video.Width.Should().Be(128);
         video.Height.Should().Be(72);
+    }
+
+    [Fact]
+    public void The_webm_profile_flavour_leaves_the_sources_own_captions_and_chapters_behind_and_says_so()
+    {
+        //Arrange
+        SyntheticSource.SkipWithoutFFmpeg();
+        using WorkFolder work = new WorkFolder("webm-source-text");
+        string source = SyntheticSource.WriteClipWithEmbeddedText(work.File("source.mkv"));
+        VideoAuthoringRequest request =
+            NewRequest(VideoAuthoringFlavour.WebMProfile, source, work.File("clip.cbv"), work);
+
+        //Act
+        VideoAuthoringResult result = CbvAuthor.Write(request);
+        using IMediaContainerReader reader = MediaContainers.Open(result.OutputPath);
+
+        //Assert
+        result.PassesProfile.Should().BeTrue();
+        reader.CaptionTracks.Count.Should().Be(0);
+        reader.Chapters.Count.Should().Be(0);
+
+        // Before -map_chapters was named, this file carried the source's two chapters with their titles
+        // stripped - something the bespoke flavour never did.
+        result.Commands[0].Arguments.Should().Contain("-map_chapters -1");
+
+        string notes = string.Join(" | ", result.Notes);
+        notes.Should().Contain("subtitle stream(s) #2 subrip (eng) were NOT carried");
+        notes.Should().Contain("AuthoringCaptionInput");
+        notes.Should().Contain("2 chapter(s) were NOT carried");
+        notes.Should().Contain("ChaptersPath");
+    }
+
+    [Fact]
+    public void The_bespoke_flavour_leaves_the_sources_own_captions_and_chapters_behind_and_says_so()
+    {
+        //Arrange
+        SyntheticSource.SkipWithoutFFmpeg();
+        using WorkFolder work = new WorkFolder("bespoke-source-text");
+        string source = SyntheticSource.WriteClipWithEmbeddedText(work.File("source.mkv"));
+        VideoAuthoringRequest request =
+            NewRequest(VideoAuthoringFlavour.Bespoke, source, work.File("clip.cbv"), work);
+
+        //Act
+        VideoAuthoringResult result = CbvAuthor.Write(request);
+        using IMediaContainerReader reader = MediaContainers.Open(result.OutputPath);
+
+        //Assert
+        result.PassesProfile.Should().BeTrue();
+        reader.CaptionTracks.Count.Should().Be(0);
+        reader.Chapters.Count.Should().Be(0);
+
+        string notes = string.Join(" | ", result.Notes);
+        notes.Should().Contain("subtitle stream(s) #2 subrip (eng) were NOT carried");
+        notes.Should().Contain("2 chapter(s) were NOT carried");
+    }
+
+    [Fact]
+    public void A_chapter_file_wins_over_the_sources_own_chapters()
+    {
+        //Arrange
+        SyntheticSource.SkipWithoutFFmpeg();
+        using WorkFolder work = new WorkFolder("webm-chapter-file-wins");
+        string source = SyntheticSource.WriteClipWithEmbeddedText(work.File("source.mkv"));
+        VideoAuthoringRequest request =
+            NewRequest(VideoAuthoringFlavour.WebMProfile, source, work.File("clip.cbv"), work);
+        request.ChaptersPath = SyntheticSource.WriteMultilingualChapters(work.File("chapters.ffmeta"));
+
+        //Act
+        VideoAuthoringResult result = CbvAuthor.Write(request);
+        using IMediaContainerReader reader = MediaContainers.Open(result.OutputPath);
+
+        //Assert
+        // ffmpeg takes chapters from the FIRST input that has any. Measured 2026-09-02 before the fix: this
+        // file read "Source One / Source Two" - the source's chapters, not the chapter file's.
+        reader.Chapters.Count.Should().Be(2);
+        reader.Chapters[0].Titles[string.Empty].Should().Be("Opening");
+        reader.Chapters[1].Titles[string.Empty].Should().Be("Closing");
+        result.Commands[0].Arguments.Should().Contain("-map_chapters 1");
+
+        string notes = string.Join(" | ", result.Notes);
+        notes.Should().Contain("2 chapter(s) were REPLACED by the 2 chapter(s)");
+    }
+
+    [Fact]
+    public void Leaving_stream_selection_to_ffmpeg_still_keeps_the_sources_own_subtitle_out()
+    {
+        //Arrange
+        SyntheticSource.SkipWithoutFFmpeg();
+        using WorkFolder work = new WorkFolder("webm-implicit-streams");
+        string source = SyntheticSource.WriteClipWithEmbeddedText(work.File("source.mkv"));
+        VideoAuthoringRequest request =
+            NewRequest(VideoAuthoringFlavour.WebMProfile, source, work.File("clip.cbv"), work);
+        request.SelectStreamsExplicitly = false;
+
+        //Act
+        VideoAuthoringResult result = CbvAuthor.Write(request);
+        using IMediaContainerReader reader = MediaContainers.Open(result.OutputPath);
+
+        //Assert
+        // Measured 2026-09-02 before the fix: ffmpeg's automatic selection took the subrip track as well and
+        // wrote it out as webvtt, with the language tag gone.
+        result.Commands[0].Arguments.Should().Contain("-sn");
+        reader.CaptionTracks.Count.Should().Be(0);
+        reader.Chapters.Count.Should().Be(0);
+        CountOfKind(reader, MediaTrackKind.Video).Should().Be(1);
+        CountOfKind(reader, MediaTrackKind.Audio).Should().Be(1);
+    }
+
+    [Fact]
+    public void A_caption_input_beside_implicit_stream_selection_keeps_the_picture_and_the_sound()
+    {
+        //Arrange
+        SyntheticSource.SkipWithoutFFmpeg();
+        using WorkFolder work = new WorkFolder("webm-implicit-plus-caption");
+        string source = SyntheticSource.WriteClip(work.File("source.mkv"));
+        VideoAuthoringRequest request =
+            NewRequest(VideoAuthoringFlavour.WebMProfile, source, work.File("clip.cbv"), work);
+        request.SelectStreamsExplicitly = false;
+        request.Captions.Add(new AuthoringCaptionInput(
+            SyntheticSource.WriteCaptions(work.File("en.vtt"), "Hello there"), "en", "English"));
+
+        //Act
+        VideoAuthoringResult result = CbvAuthor.Write(request);
+        using IMediaContainerReader reader = MediaContainers.Open(result.OutputPath);
+
+        //Assert
+        // Measured 2026-09-02 before the fix: the -map for the caption input switched ffmpeg's automatic
+        // selection off, and the finished file held the caption track and nothing else.
+        result.Commands[0].Arguments.Should().Contain("-map 0:v:0");
+        result.Commands[0].Arguments.Should().Contain("-map 0:a:0");
+        CountOfKind(reader, MediaTrackKind.Video).Should().Be(1);
+        CountOfKind(reader, MediaTrackKind.Audio).Should().Be(1);
+        reader.CaptionTracks.Count.Should().Be(1);
+    }
+
+    [Fact]
+    public void A_source_with_no_text_of_its_own_earns_no_note_about_it()
+    {
+        //Arrange
+        SyntheticSource.SkipWithoutFFmpeg();
+        using WorkFolder work = new WorkFolder("webm-plain-source");
+        string source = SyntheticSource.WriteClip(work.File("source.mkv"));
+        VideoAuthoringRequest request =
+            NewRequest(VideoAuthoringFlavour.WebMProfile, source, work.File("clip.cbv"), work);
+
+        //Act
+        VideoAuthoringResult result = CbvAuthor.Write(request);
+
+        //Assert
+        string notes = string.Join(" | ", result.Notes);
+        notes.Should().NotContain("source's own");
+
+        // The token is there whatever the source carries; a source with nothing to keep out earns no note.
+        result.Commands[0].Arguments.Should().Contain("-map_chapters -1");
+    }
+
+    private static int CountOfKind(IMediaContainerReader reader, MediaTrackKind kind)
+    {
+        int count = 0;
+        foreach (MediaTrackInfo track in reader.Tracks)
+        {
+            if (track.Kind == kind) count++;
+        }
+
+        return count;
     }
 
     private static VideoAuthoringResult AuthorWithText(VideoAuthoringFlavour flavour, WorkFolder work)

@@ -106,6 +106,65 @@ public static class SyntheticSource
         return output;
     }
 
+    /// <summary>
+    /// Writes a landscape test clip that carries text of its OWN: one subrip subtitle stream tagged "eng" and
+    /// two titled chapters, inside a Matroska file.
+    /// </summary>
+    /// <param name="path">Where to write it.</param>
+    /// <returns>The path it was written to.</returns>
+    /// <remarks>
+    /// This is the source the "what is taken from the source" tests author from. The library must leave both
+    /// kinds of text behind, in either flavour, and say so; and a chapter file handed to it must win over the
+    /// two chapters here. The subtitle and chapter files it is built from are written beside it, in the
+    /// test's own folder.
+    /// </remarks>
+    public static string WriteClipWithEmbeddedText(string path)
+    {
+        string folder = Path.GetDirectoryName(path);
+        Directory.CreateDirectory(folder);
+
+        string subtitles = Path.Combine(folder, "embedded-source.srt");
+        File.WriteAllText(
+            subtitles,
+            "1\n00:00:00,000 --> 00:00:00,900\nHello from the source\n\n"
+            + "2\n00:00:01,000 --> 00:00:01,900\nStill the source\n\n");
+
+        string chapters = Path.Combine(folder, "embedded-source-chapters.txt");
+        File.WriteAllText(
+            chapters,
+            ";FFMETADATA1\n"
+            + "[CHAPTER]\nTIMEBASE=1/1000\nSTART=0\nEND=1000\ntitle=Source One\n"
+            + "[CHAPTER]\nTIMEBASE=1/1000\nSTART=1000\nEND=2000\ntitle=Source Two\n");
+
+        string size = Width.ToString(CultureInfo.InvariantCulture) + "x"
+            + Height.ToString(CultureInfo.InvariantCulture);
+        string video = "testsrc2=size=" + size
+            + ":rate=" + FramesPerSecond.ToString(CultureInfo.InvariantCulture)
+            + ":duration=" + DurationSeconds.ToString("0.###", CultureInfo.InvariantCulture);
+        string audio = "sine=frequency=440:sample_rate=48000:duration="
+            + DurationSeconds.ToString("0.###", CultureInfo.InvariantCulture);
+
+        FFMpegArguments
+            .FromFileInput(video, false, input => input.ForceFormat("lavfi"))
+            .AddFileInput(audio, false, input => input.ForceFormat("lavfi"))
+            .AddFileInput(subtitles, false)
+            .AddFileInput(chapters, false)
+            .OutputToFile(path, true, output => ApplyVideoEncoder(output)
+                .ForcePixelFormat("yuv420p")
+                .WithAudioCodec("libopus")
+                .WithAudioBitrate(32)
+                .WithAudioSamplingRate(48000)
+                .WithCustomArgument("-ac 2")
+                .SelectStream(0, 0, Channel.Video)
+                .SelectStream(0, 1, Channel.Audio)
+                .SelectStream(0, 2, Channel.Subtitle)
+                .WithCustomArgument("-c:s srt -metadata:s:s:0 language=eng -map_chapters 3")
+                .ForceFormat("matroska"))
+            .ProcessSynchronously();
+
+        return path;
+    }
+
     /// <summary>Writes a chapter file naming two chapters with a title in three languages each.</summary>
     /// <param name="path">Where to write it.</param>
     /// <returns>The path it was written to.</returns>

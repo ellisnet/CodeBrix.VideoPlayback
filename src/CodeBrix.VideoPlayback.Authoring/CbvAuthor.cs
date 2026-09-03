@@ -37,6 +37,13 @@ namespace CodeBrix.VideoPlayback.Authoring;
 /// failed.
 /// </para>
 /// <para>
+/// WHAT IS TAKEN FROM THE SOURCE. Its picture and its sound - the first video and the first audio stream, or
+/// FFmpeg's own choice with <c>SelectStreamsExplicitly</c> off. NEVER its own subtitle streams and NEVER its
+/// own chapters, in either flavour: captions come from <c>Captions</c> and chapters from <c>ChaptersPath</c>,
+/// and a source that carries text of its own earns a note in the result naming what was left behind and how
+/// to bring it along. A chapter file always wins over the source's chapters.
+/// </para>
+/// <para>
 /// WHAT HAS TO BE INSTALLED. FFmpeg, and nothing else. That is a rule of this program rather than an
 /// accident: authoring a <c>.cbv</c> file must be possible with CodeBrix software plus the one encoder.
 /// </para>
@@ -136,6 +143,13 @@ public static class CbvAuthor
         List<string> notes = new List<string>();
         List<AuthoringCommand> commands = new List<AuthoringCommand>(2);
         List<string> temporaryFiles = new List<string>(3);
+
+        // One ffprobe of the source, for the text this library does NOT carry: the source's own subtitle
+        // streams and chapters. The run says what it left behind rather than letting the caller find out
+        // from the finished file.
+        cancellationToken.ThrowIfCancellationRequested();
+        SourceTextSurvey survey = SurveySourceText(request, notes);
+        NoteUncarriedSourceText(request, survey, notes);
 
         Directory.CreateDirectory(temporaryFolder);
         string outputFolder = Path.GetDirectoryName(Path.GetFullPath(request.OutputPath));
@@ -376,6 +390,99 @@ public static class CbvAuthor
             "the hearing-impaired flag on caption track(s) " + string.Join(", ", tracks) + " was DROPPED: a WebM "
             + "document has no element for it, so FFmpeg's WebM muxer writes the default and forced flags and "
             + "not that one. Author the bespoke flavour, or set Container to Matroska, to keep it.");
+    }
+
+    // What a probe of the source found of the text this library does NOT carry. Captions come from the
+    // request's Captions inputs and chapters from ChaptersPath, in BOTH flavours; a source's own subtitle
+    // streams and chapters are left behind. Measured 2026-09-02 on a Matroska source with a subrip track and
+    // two chapters: the WebM-profile pass dropped the track and - until -map_chapters was named - carried the
+    // chapters with their titles stripped; the bespoke passes carried neither. Now both flavours agree (the
+    // command factory keeps a source's chapters out unconditionally), and the run says so.
+    private sealed class SourceTextSurvey
+    {
+        public bool Probed;
+        public List<string> SubtitleStreams = new List<string>();
+        public int ChapterCount;
+    }
+
+    private static SourceTextSurvey SurveySourceText(VideoAuthoringRequest request, IList<string> notes)
+    {
+        SourceTextSurvey survey = new SourceTextSurvey();
+
+        IMediaAnalysis analysis;
+        try
+        {
+            analysis = FFProbe.Analyse(request.SourcePath);
+        }
+        catch (Exception exception)
+        {
+            // The encode is the judge of whether the source can be read at all. A probe that fails costs the
+            // caller this one piece of information, and the note says so.
+            notes.Add(
+                "the source could not be probed for subtitle streams and chapters of its own ("
+                + FirstLine(exception.Message) + "); if it carries any, they were not carried.");
+            return survey;
+        }
+
+        survey.Probed = true;
+        survey.ChapterCount = analysis.Chapters != null ? analysis.Chapters.Count : 0;
+
+        if (analysis.SubtitleStreams != null)
+        {
+            foreach (SubtitleStream stream in analysis.SubtitleStreams)
+            {
+                string description = "#" + stream.Index.ToString(CultureInfo.InvariantCulture) + " "
+                    + (string.IsNullOrEmpty(stream.CodecName) ? "unknown" : stream.CodecName);
+                if (!string.IsNullOrEmpty(stream.Language)) description += " (" + stream.Language + ")";
+                survey.SubtitleStreams.Add(description);
+            }
+        }
+
+        return survey;
+    }
+
+    private static void NoteUncarriedSourceText(
+        VideoAuthoringRequest request,
+        SourceTextSurvey survey,
+        IList<string> notes)
+    {
+        if (!survey.Probed) return;
+
+        if (survey.SubtitleStreams.Count > 0)
+        {
+            notes.Add(
+                "the source's own subtitle stream(s) " + string.Join(", ", survey.SubtitleStreams) + " were NOT "
+                + "carried: this library encodes a source's picture and sound and takes captions only from the "
+                + "request's Captions inputs. To keep a text track, extract it to WebVTT (ffmpeg -i <source> "
+                + "-map 0:<index> -c:s webvtt <track>.vtt) and add it as an AuthoringCaptionInput; an "
+                + "image-based track has no text form and cannot be carried at all.");
+        }
+
+        if (survey.ChapterCount == 0) return;
+
+        string count = survey.ChapterCount.ToString(CultureInfo.InvariantCulture) + " chapter(s)";
+        if (string.IsNullOrWhiteSpace(request.ChaptersPath))
+        {
+            notes.Add(
+                "the source's own " + count + " were NOT carried: chapters come only from ChaptersPath. To keep "
+                + "them, export them to a chapter file (ffmpeg -i <source> -f ffmetadata <chapters>.txt) and "
+                + "pass it as ChaptersPath.");
+        }
+        else
+        {
+            int fromFile = FfMetadataChapters.ReadFile(request.ChaptersPath).Count;
+            notes.Add(
+                "the source's own " + count + " were REPLACED by the "
+                + fromFile.ToString(CultureInfo.InvariantCulture) + " chapter(s) in '" + request.ChaptersPath
+                + "': chapters come only from ChaptersPath.");
+        }
+    }
+
+    private static string FirstLine(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return string.Empty;
+        int newline = text.IndexOfAny(new[] { '\r', '\n' });
+        return newline < 0 ? text : text.Substring(0, newline);
     }
 
     private static string BuildProfileFailureMessage(string path, StreamableProfileReport profile)

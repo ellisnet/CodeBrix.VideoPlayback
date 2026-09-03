@@ -1278,4 +1278,24 @@ NOTES
   is running. The supply half: the reader now says which track has ended and the
   demultiplexer can no longer be stopped by one track's full queue. Both are
   described under PER-TRACK EXHAUSTION above and both are fenced by tests.
+- THE AUTHORING LIBRARY AND A SOURCE'S OWN TEXT (measured 2026-09-02, ffmpeg
+  7.1.5). Three ffmpeg facts shape AuthoringCommandFactory.BuildWebMProfile and
+  are asserted by CbvAuthorTests + AuthoringEndToEndTests: (1) ffmpeg copies
+  chapters from the FIRST input that has any, so a chapter file given as a later
+  input LOST to a source's own chapters until `-map_chapters <index>` named it;
+  (2) `-map_metadata -1` strips chapter TITLES but not the chapters, so a
+  source's chapters used to arrive untitled in the WebM-profile output while
+  the bespoke output had none - the line now carries `-map_chapters -1`
+  whenever there is no chapter file, and Write probes the source once (ffprobe)
+  so the result's Notes say what was left behind (the W5 report's finding F5);
+  (3) any -map on an output turns automatic stream selection OFF for that
+  output, so SelectStreamsExplicitly=false beside a caption input produced a
+  file holding the caption track and nothing else - the picture and sound are
+  now mapped explicitly whenever captions are present, and `-sn` keeps a
+  source's subtitle stream out when they are not. Because the `-map_chapters`
+  token is unconditional, every WebM-profile command line changed, and the 18
+  ffmpeg-muxed corpus files under tests/assets/authoring (MKV, WebM,
+  CodeBrix-Mode1) were REBUILT on 2026-09-02 with the AssetAuthoring tool so
+  that MANIFEST.txt records the lines that really ran; CodeBrix-Mode2 was not
+  re-encoded (its two passes did not change).
 ================================================================================

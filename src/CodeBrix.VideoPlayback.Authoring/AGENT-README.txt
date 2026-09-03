@@ -201,11 +201,20 @@ VideoAuthoringRequest - one file's worth of decisions
 
   SelectStreamsExplicitly renders `-map 0:v:0 -map 0:a:0` instead of leaving the
   choice to ffmpeg. Leave it on: a phone recording carries a third, timed-metadata
-  stream that nothing downstream wants.
+  stream that nothing downstream wants. With it OFF the line carries `-sn`
+  instead, because ffmpeg's automatic selection would otherwise also take the
+  source's first subtitle stream and push it through a subtitle encoder nobody
+  asked for. And the moment the request has Captions, the picture and the sound
+  are mapped explicitly whatever the switch says: any -map on an output turns
+  ffmpeg's automatic selection off for that output, and without this a request
+  with the switch off and one caption produced a file holding the caption track
+  and nothing else (measured 2026-09-02).
 
   CopySourceMetadata off renders `-map_metadata -1` and drops the recording's
-  creation time and device strings. A chapter file overrides it, because that is
-  where the chapters have to come from.
+  creation time and device strings. A chapter file is an extra input named by
+  BOTH `-map_metadata` and `-map_chapters`, so the file's chapters are the ones
+  written even when the source carries chapters of its own. See WHAT IS TAKEN
+  FROM THE SOURCE.
 
   RequireNoExtraPlaybackPackages refuses a WEBM-PROFILE request whose audio would
   be Opus. Opus needs the PLAYING application to reference CodeBrix.Audio.Opus and
@@ -447,7 +456,8 @@ VideoAuthoringResult - what came out
     StreamableProfileReport Profile          null when validation was switched off
     bool PassesProfile
     CbvAuthoringResult Mux                   bespoke only; frame and packet counts
-    IReadOnlyList<string> Notes              what could not be kept
+    IReadOnlyList<string> Notes              what could not be kept, and what
+                                             the source had that was left behind
     string ComposedLutTitle                  int ComposedLutSize
     string ComposedLutPath                   where the effective table was kept
 
@@ -467,6 +477,39 @@ DeviceClassPresets - starting numbers, not limits
   number looks better the more pixels are hiding the error.
 
   They are a starting point. Apply one and then override anything.
+
+
+WHAT IS TAKEN FROM THE SOURCE, AND WHAT IS LEFT BEHIND
+======================================================
+The source contributes its PICTURE and its SOUND - the first video stream and
+the first audio stream, or ffmpeg's own choice with SelectStreamsExplicitly off.
+It never contributes its own SUBTITLE STREAMS and never its own CHAPTERS, in
+EITHER flavour: captions come from the request's Captions inputs and chapters
+from ChaptersPath, and from nowhere else. Both flavours agree on this (measured
+2026-09-02; until then the WebM-profile pass carried a source's chapters with
+their titles stripped, while the bespoke pass carried none).
+
+The run says so rather than letting you find out from the finished file. Write
+probes the source once with ffprobe, and when it finds text of the source's own
+the result's Notes carry one line per kind:
+
+    the source's own subtitle stream(s) #2 subrip (eng) were NOT carried: ...
+    the source's own 2 chapter(s) were NOT carried: ...
+    the source's own 2 chapter(s) were REPLACED by the 3 chapter(s) in '...'
+
+TO BRING THEM ALONG, extract them first and hand them in as inputs:
+
+    ffmpeg -i source.mkv -map 0:2 -c:s webvtt en.vtt          (one text track)
+    ffmpeg -i source.mkv -f ffmetadata chapters.txt           (the chapters)
+
+    request.Captions.Add(new AuthoringCaptionInput("en.vtt", "en"));
+    request.ChaptersPath = "chapters.txt";
+
+An image-based subtitle track (PGS, DVB, VobSub) has no text form and cannot be
+carried at all. A chapter file ALWAYS wins over the source's chapters: the
+WebM-profile line carries `-map_chapters <chapter file>` when there is one and
+`-map_chapters -1` when there is not, so RenderCommands and Write always render
+the same line.
 
 
 THE TWO ASYMMETRIES
@@ -689,6 +732,11 @@ COMMON PITFALLS TO AVOID
     machine, and ffmpeg's binaries carry the licences this family exists to keep
     out of a shipped app. Playing needs CodeBrix.VideoPlayback and a decoder.
 
+  * DO NOT EXPECT A SOURCE'S OWN SUBTITLES OR CHAPTERS TO COME THROUGH. They
+    never do, in either flavour; captions come from Captions and chapters from
+    ChaptersPath. The result's Notes name what the source had and say how to
+    carry it - see WHAT IS TAKEN FROM THE SOURCE.
+
   * DO NOT ASSUME A REQUEST OBJECT IS REUSABLE ACROSS THREADS. It is a plain
     settings object with no locking. Build one per file.
 
@@ -787,6 +835,9 @@ QUICK REFERENCE CARD
 TASK                                  DO THIS
 ------------------------------------  ------------------------------------------
 Author a WebM-profile .cbv            CbvAuthor.Write(request)
+Keep a source's OWN captions/chapters extract them first, then hand them in as
+                                      Captions / ChaptersPath (see WHAT IS TAKEN
+                                      FROM THE SOURCE)
 Author a bespoke .cbv                 request.Flavour = VideoAuthoringFlavour.Bespoke
 See the command without running it    CbvAuthor.RenderCommands(request)
 Check ffmpeg is installed             CbvAuthor.TryVerifyTools(out string problem)
