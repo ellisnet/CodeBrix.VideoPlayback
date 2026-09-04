@@ -4,13 +4,16 @@ CodeBrix.VideoPlayback is a video playback library for .NET: it reads WebM,
 Matroska and .cbv containers carrying AV1 video with Opus or Vorbis audio,
 exposes a codec-neutral decoder seam, pools decoded frames, presents them to
 whatever draws, and converts them to BGRA on the CPU when no graphics device is
-doing it. This repository also produces CodeBrix.VideoPlayback.Skia, which draws
-those frames through SkiaSharp.
+doing it. This repository produces TWO MORE ASSEMBLIES beside it:
+CodeBrix.VideoPlayback.Skia, which draws those frames through SkiaSharp, and
+CodeBrix.VideoPlayback.Authoring, a developer-machine library that WRITES the
+files the first one reads. This file ships inside all three packages.
 
-NEITHER ASSEMBLY THIS REPOSITORY PRODUCES INCORPORATES ANY THIRD-PARTY SOURCE
-CODE. Nothing is vendored, ported or adapted. Every line of both was written for
-this repository from the published specifications listed below, and no other
-implementation of any of these formats was read while writing them.
+NONE OF THE THREE ASSEMBLIES THIS REPOSITORY PRODUCES INCORPORATES ANY
+THIRD-PARTY SOURCE CODE. Nothing is vendored, ported or adapted. Every line of
+all three was written for this repository from the published specifications
+listed below, and no other implementation of any of these formats was read while
+writing them.
 
 The specifications used, all of them public documents:
 
@@ -58,13 +61,30 @@ ships its own licence and notices. CodeBrix.VideoPlayback.Skia deliberately does
 NOT depend on any SkiaSharp.NativeAssets package; an application chooses the
 native binary that suits the platforms it ships on.
 
-The test projects additionally reference CodeBrix.Audio.Opus.BsdLicenseForever
-(BSD-3-Clause) and SilverAssertions.ApacheLicenseForever (Apache-2.0) so that the
-Opus playback path can be proved to work once an application registers it, and
-SkiaSharp.NativeAssets.Linux (MIT) so that Skia actually runs on the machine the
-tests run on. The consumer-shape sample under samples/ references the same native
-asset package, because it is an application. None of the three is a dependency of
-either shipped package.
+CodeBrix.VideoPlayback.Authoring, the authoring package this repository also
+produces, depends on CodeBrix.VideoPlayback and on
+CodeBrix.VideoProcessing.MitLicenseForever, which is MIT-licensed and carries its
+own third-party notices. BOTH ARE PACKAGE DEPENDENCIES AND NEITHER IS
+INCORPORATED: no source of either is vendored, ported or adapted into this
+repository. That second package is how the authoring library reaches FFmpeg - it
+launches the ffmpeg and ffprobe INSTALLED ON THE AUTHORING WORKSTATION as child
+processes. See the note on FFmpeg below.
+
+The test projects additionally reference:
+
+  CodeBrix.Audio.Opus.BsdLicenseForever (BSD-3-Clause) - so that the Opus
+      playback path can be proved to work once an application registers it.
+  CodeBrix.VideoPlayback.Dav1d.BsdLicenseForever (BSD-3-Clause) - so that the
+      authoring tests can decode the AV1 files they have just written.
+  SkiaSharp.NativeAssets.Linux (MIT) - so that Skia actually runs on the machine
+      the tests run on.
+  SilverAssertions.ApacheLicenseForever (Apache-2.0) - the assertion library the
+      suites are written against.
+
+They also reference the xUnit test framework and Microsoft's test SDK, as every
+test project in this family does. The consumer-shape sample under samples/
+references the same Skia native-asset package, because it is an application. NONE
+OF THEM IS A DEPENDENCY OF ANY OF THE THREE SHIPPED PACKAGES.
 
 CodeBrix.VideoPlayback.Skia contains no ported or adapted shader, atlas layout or
 colour-conversion code either: its SkSL shader, its lookup-table atlas and its
@@ -72,13 +92,33 @@ render paths were written for this repository from ITU-T H.273 and ISO/IEC
 23091-2, from SkiaSharp's public API documentation, and from the same
 specifications the core converter was written from.
 
-The media files committed under tests/assets were generated on the development
-machine from FFmpeg's own synthetic sources (testsrc2, sine, anoisesrc) and
-remuxed with mkvtoolnix. They contain no third-party recorded material of any
-kind. tests/assets/ASSETS.txt records exactly how each one was made. Neither
-FFmpeg nor mkvtoolnix is a dependency of this library, of its tests, or of any
-application using it: the files they produced are committed, and the scripts that
-regenerate them are a maintainer's convenience.
+The media files committed directly under tests/assets - the golden corpus - were
+generated on the development machine from FFmpeg's own synthetic sources
+(testsrc2, sine, anoisesrc) and remuxed with mkvtoolnix. They contain no
+third-party recorded material of any kind, and tests/assets/ASSETS.txt records
+exactly how each one was made.
+
+tests/assets/authoring is the other corpus, and the one place in this repository
+that holds REAL recordings: two 4K clips filmed by Jeremy Ellis on his own phone
+and placed by him in the PUBLIC DOMAIN on 2026-08-29, together with the
+twenty-four files derived from them, which are Public Domain on the same footing.
+Nothing there came from a third party either.
+tests/assets/authoring/README.txt carries that declaration and
+tests/assets/authoring/MANIFEST.txt the per-file record.
+
+FFMPEG. No FFmpeg binary and no FFmpeg source is shipped by, bundled with or
+vendored into any of the three packages this repository produces, and FFmpeg is
+not a dependency of the playback library, of the presenter, or of any application
+that plays a file. What FFmpeg is, is the tool the AUTHORING package DRIVES: that
+library builds command lines and CodeBrix.VideoProcessing launches the ffmpeg and
+ffprobe installed on the authoring workstation as child processes. Its own tests
+drive that same workstation ffmpeg and skip themselves when it is not installed,
+and the sample-video corpus above was produced that way. FFmpeg's licences are
+therefore a matter between FFmpeg and whoever installed it on that machine -
+which is exactly why the authoring package belongs in a build tool or an asset
+pipeline and never in a shipped application. mkvtoolnix is a maintainer's
+convenience only: the files it remuxed are committed, and so are the scripts that
+regenerate them.
 
 --------------------------------------------------------------------------------
 TEST AND SAMPLE ASSETS ONLY: the .cube colour lookup tables in tests/assets/LUTs
@@ -87,9 +127,9 @@ TEST AND SAMPLE ASSETS ONLY: the .cube colour lookup tables in tests/assets/LUTs
 THIS SECTION COVERS DATA FILES, NOT CODE, AND NOT ANY SHIPPED PACKAGE. The files
 described here are ".cube" colour lookup tables used by this repository's tests
 and samples. They are read at run time as text. NONE OF THEM IS COMPILED INTO ANY
-ASSEMBLY, none is embedded as a resource, and NEITHER CodeBrix.VideoPlayback NOR
-CodeBrix.VideoPlayback.Skia CONTAINS ANY OF THEM: the packages this repository
-produces ship no lookup table of any kind. They are committed so that the .cube
+ASSEMBLY, none is embedded as a resource, and NONE OF THE THREE PACKAGES THIS
+REPOSITORY PRODUCES CONTAINS ANY OF THEM: they ship no lookup table of any
+kind. They are committed so that the .cube
 reader has real files to be measured against and the samples have real looks to
 draw.
 

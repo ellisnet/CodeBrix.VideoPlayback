@@ -61,7 +61,7 @@
     <RepositoryType>git</RepositoryType>
     <PackageIcon>icon-codebrix-128.png</PackageIcon>
     <PackageReadmeFile>README.md</PackageReadmeFile>
-    <Copyright>Copyright (c) 2026 Jeremy Ellis and contributors.</Copyright>
+    <Copyright>Copyright (c) 2026 Jeremy Ellis and contributors</Copyright>
     <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
     <PackageRequireLicenseAcceptance>true</PackageRequireLicenseAcceptance>
     <IsPackable>true</IsPackable>

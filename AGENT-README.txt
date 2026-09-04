@@ -83,12 +83,12 @@ you. Add, as your application needs them:
   * CodeBrix.Audio.Opus.BsdLicenseForever, to play Opus audio;
   * CodeBrix.VideoPlayback.Skia.MitLicenseForever, if you would rather have
     frames drawn for you than draw them yourself. It is built around one class,
-    SkiaVideoPresenter (with IVideoLayer for overlays), which composes the newest frame on an off-screen surface
-    - on the graphics device through a single shader, or on the processor
-    through the converter above - lets you draw over it, and blits it into
-    whatever canvas your application owns. Its own consumer guide is
-    src/CodeBrix.VideoPlayback.Skia/AGENT-README.txt in the repository, and
-    AGENT-README.txt at the root of its package.
+    SkiaVideoPresenter (with IVideoLayer for overlays), which composes the
+    newest frame on an off-screen surface - on the graphics device through a
+    single shader, or on the processor through the converter above - lets you
+    draw over it, and blits it into whatever canvas your application owns. Its
+    own consumer guide is src/CodeBrix.VideoPlayback.Skia/AGENT-README.txt in
+    the repository, and AGENT-README.txt at the root of its package.
 
 Nothing else. There is no native binary in this package and no platform-specific
 build.
@@ -123,9 +123,10 @@ KEY NAMESPACES / USINGS
     using CodeBrix.VideoPlayback.Chapters;      // Chapter, FfMetadataChapters
     using CodeBrix.VideoPlayback.Sources;       // IMediaSource and the five ways to open one
     using CodeBrix.VideoPlayback.Containers;    // MediaTrackInfo, MediaPacket, IMediaContainerReader,
-                                                //   MediaContainers, StreamableProfile
+                                                //   MediaContainers, StreamableProfile, LanguageTags
     using CodeBrix.VideoPlayback.Containers.Cbv;       // CbvReader, CbvMuxer, CbvAuthoring
     using CodeBrix.VideoPlayback.Containers.Matroska;  // MatroskaReader
+    using CodeBrix.VideoPlayback.Containers.Ebml;      // EbmlReader, EbmlCrc32
     using CodeBrix.VideoPlayback.Containers.Ogg;       // OggAudioStream / OggAudioWriter,
                                                        //   OggReader / OggStreamWriter, OggChecksum
     using CodeBrix.VideoPlayback.Containers.Ivf;       // IvfReader / IvfWriter (authoring)

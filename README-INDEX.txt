@@ -21,7 +21,8 @@ AGENT-README FILES (consumer documentation, one per NuGet package)
       CodeBrix.VideoPlayback.Skia.MitLicenseForever - Draws the frames the
       playback library decodes, through SkiaSharp - the presenter for hosts that
       are NOT CodeBrix.Platform applications (WPF, WinUI, MAUI, Avalonia). Built
-      around one class, SkiaVideoPresenter, plus IVideoLayer for overlays: it composes the newest frame on an off-screen surface - on the graphics
+      around one class, SkiaVideoPresenter, plus IVideoLayer for overlays: it
+      composes the newest frame on an off-screen surface - on the graphics
       device through one shader that does colour conversion and a resultant
       colour lookup table in a single pass, or on the processor through the
       core's vector converter - lets the application draw over it, and blits the
@@ -68,6 +69,27 @@ GENERAL
   README-INDEX.txt
       This file.
   THIRD-PARTY-NOTICES.txt
-      What came from where. Nothing is vendored; the containers are written from
-      published specifications.
+      What came from where, and under which licences. Nothing is vendored; the
+      containers are written from published specifications.
+
+ALSO WORTH READING, IN PLACE
+----------------------------
+  tests/assets/ASSETS.txt
+      The golden corpus: for every fixture, the exact command that made it, and
+      the caveats recorded against it.
+  tests/assets/authoring/README.txt
+      The sample-video corpus: the Public-Domain declaration covering the two
+      phone recordings and everything derived from them, folder by folder.
+  tests/assets/authoring/MANIFEST.txt
+      That corpus file by file - what each one is, how it was verified, and the
+      command line that produced it. Rewritten on every generator run.
+  tests/assets/LUTs/README.txt
+      Read this first before adding a .cube file: what is accepted here, what
+      was rejected, and why.
+  tests/assets/LUTs/MANIFEST.txt
+      Per-file source URL, author, licence, retrieval date, SHA-256 and
+      validation result for the lookup-table corpus.
+  samples/SimpleCbxVideoPlayer/README.md
+      The eight-head application sample: the two solutions, running each head,
+      the render-path drop-down, the LUT panel and the smoke verification.
 ================================================================================

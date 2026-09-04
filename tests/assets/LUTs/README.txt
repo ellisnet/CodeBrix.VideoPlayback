@@ -3,11 +3,13 @@ README: tests/assets/LUTs
 Colour lookup tables - the sample corpus, and where every byte of it came from
 ================================================================================
 
-This folder holds .cube colour lookup tables for CodeBrix.VideoPlayback.Skia's
-LUT effect (see src/CodeBrix.VideoPlayback.Skia/Effects/CubeLutFile.cs). They are
-DATA. Nothing here is compiled into any assembly, nothing here is a dependency of
-anything, and neither shipped package contains a single one of these files. They
-exist so that tests have real files to parse and samples have real looks to draw.
+This folder holds .cube colour lookup tables for the LUT effect (the reader is
+src/CodeBrix.VideoPlayback/Color/Luts/CubeLutFile.cs and the effect is
+src/CodeBrix.VideoPlayback/Effects/LutEffect.cs, both in the core library). They
+are DATA. Nothing here is compiled into any assembly, nothing here is a
+dependency of anything, and none of the three shipped packages contains a single
+one of these files. They exist so that tests have real files to parse and samples
+have real looks to draw.
 
 There are three kinds of file, in three folders:
 

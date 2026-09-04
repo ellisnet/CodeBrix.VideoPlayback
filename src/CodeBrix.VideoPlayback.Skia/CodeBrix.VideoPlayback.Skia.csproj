@@ -37,9 +37,9 @@
       * This is date-stamp versioning, not SemVer: minor encodes the year and
         major is pinned to 1, so major/minor do not signal API compatibility.
       * To re-baseline the minor number, change _VersionBaseYear below.
-      * This project and CodeBrix.VideoPlayback carry the SAME block, so a pack
-        of both in one run stamps both with one version - and the dependency
-        this package declares on the core is that same number.
+      * All three projects in this repository carry the SAME block, so one pack
+        run stamps them all with one version - and the dependency this package
+        declares on the core is that same number.
   -->
   <PropertyGroup>
     <_VersionBaseYear>2026</_VersionBaseYear>
@@ -64,7 +64,7 @@
     <RepositoryType>git</RepositoryType>
     <PackageIcon>icon-codebrix-128.png</PackageIcon>
     <PackageReadmeFile>README.md</PackageReadmeFile>
-    <Copyright>Copyright (c) 2026 Jeremy Ellis and contributors.</Copyright>
+    <Copyright>Copyright (c) 2026 Jeremy Ellis and contributors</Copyright>
     <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
     <PackageRequireLicenseAcceptance>true</PackageRequireLicenseAcceptance>
     <IsPackable>true</IsPackable>

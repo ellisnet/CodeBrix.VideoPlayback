@@ -14,11 +14,13 @@ namespace CodeBrix.VideoPlayback.Authoring.Tests;
 /// </summary>
 /// <remarks>
 /// <para>
-/// This is the test that lets the corpus stand. The eighteen MKV, WebM and CodeBrix-Mode1 files under
-/// tests/assets/authoring were encoded by a tool that built its own FFmpeg arguments; that tool now asks this
-/// library instead. If the library renders the same text, those files are still exactly what the manifest
-/// beside them says they are and nothing has to be re-encoded. If it ever stops rendering the same text, this
-/// test says so and the corpus has to be rebuilt - which is a decision, not an accident.
+/// This is the test that keeps the corpus honest. The eighteen MKV, WebM and CodeBrix-Mode1 files under
+/// tests/assets/authoring were encoded by this library: the generator tool builds no FFmpeg arguments of its
+/// own, it asks CodeBrix.VideoPlayback.Authoring for them and hands them to CodeBrix.VideoProcessing to run.
+/// MANIFEST.txt records the exact command line each file came from; this test re-derives those commands and
+/// asserts the library still renders them character for character, so the manifest beside the corpus stays
+/// true. If it ever stops rendering the same text, this test says so and the corpus has to be re-encoded -
+/// which is a decision, not an accident.
 /// </para>
 /// <para>
 /// It compares only the three FFmpeg-muxed folders. CodeBrix-Mode2 is a two-pass file whose second half is

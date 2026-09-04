@@ -292,7 +292,7 @@ AuthoringAudioSettings - the sound
     double? VorbisQuality                    null means rate-control by bit rate
     int SampleRateHz                         48000 by default
     int Channels                             2 by default
-    string Language                          a BCP 47 tag, or null
+    string Language                          a well-formed BCP 47 tag, or null
     string Name                              a menu name, or null
 
   DEFAULT RESOLVES PER FLAVOUR: Opus for a WebM-profile file, which is what the
@@ -311,6 +311,14 @@ AuthoringAudioSettings - the sound
   one to author for the web. The headless cbvmux tool holds the same line and
   refuses an Ogg Opus input.
 
+  A LANGUAGE TAG MUST BE WELL FORMED. Audio.Language, when it is set, and every
+  AuthoringCaptionInput.Language, which is never optional, are checked for BCP 47
+  SHAPE before anything runs: hyphen-separated subtags of letters and digits, the
+  first of them two to eight letters. The registry itself is not consulted, so an
+  unusual but well-formed tag is accepted - what is caught is the common mistake.
+  "en", "en-GB" and "zh-Hant-TW" pass; "en_GB", "english" and "e" are REFUSED
+  with VideoAuthoringException before any process starts. Never an underscore.
+
   FFMPEG'S BUILT-IN vorbis ENCODER IS NEVER NAMED. It is experimental and poor.
   This library asks for libvorbis, always.
 
@@ -319,8 +327,8 @@ AuthoringAudioSettings - the sound
   AND the channel count, and it refuses at SETUP - the run would die part-way
   through with ffmpeg's own message. A request that names a bit rate outside the
   band for its rate and channel count is refused HERE instead, before any process
-  starts, and the message names the band. The bands, measured against ffmpeg
-  7.1.5's libvorbis on 2026-09-01 rather than assumed (kbit/s, by channel count;
+  starts, and the message names the band. The bands, MEASURED against a current
+  ffmpeg's libvorbis rather than assumed (kbit/s, by channel count;
   "none" means no bit rate in this library's whole 6..512 range was accepted):
 
                    1        2        3        4        5        6        7        8
@@ -342,7 +350,7 @@ AuthoringAudioSettings - the sound
   Every band came out CONTIGUOUS: every value between the floor and the ceiling
   opened and every value outside it failed. Three of the numbers surprise people,
   so they are stated rather than smoothed. 48 kHz STEREO opens from 45 kbit/s,
-  not from the 64 or 96 that older notes in this repository claimed. SIX channels
+  and not from a higher floor such as 64 or 96. SIX channels
   at 44.1 or 48 kHz open LOWER than five do, because libvorbis has a coupled 5.1
   setup that the odd channel counts do not get. And below 16 kHz the CEILING is
   low enough to matter: 8 kHz stereo tops out at 84 kbit/s, so this library's own
@@ -379,6 +387,10 @@ AuthoringCaptionInput - one text track
                               flags = CaptionTrackFlags.None)
         string Path         string Language      string Name
         CaptionTrackFlags Flags     bool IsWebVtt
+
+  EVERY CAPTION TRACK NEEDS A LANGUAGE, and it must be a WELL-FORMED BCP 47 tag.
+  A blank or malformed one is refused up front, with the offending track's path
+  named, because that tag is how a player's subtitle menu names the track.
 
   The flags are the playback library's own: Default, Forced, HearingImpaired.
   The bespoke flavour reads WebVTT (.vtt) and SubRip (.srt); the WebM-profile
@@ -772,6 +784,12 @@ COMMON PITFALLS TO AVOID
 
   * DO NOT PASS AN ODD FRAME DIMENSION. It is refused at the point of
     construction, because 4:2:0 chroma has no home for the last sample.
+
+  * DO NOT WRITE A LANGUAGE TAG WITH AN UNDERSCORE, AND DO NOT LEAVE A CAPTION
+    TRACK WITHOUT ONE. "en_GB" is not BCP 47; "en-GB" is. Audio.Language when it
+    is set, and every caption track's Language always, are checked for shape
+    before anything runs, and a bad one is refused with VideoAuthoringException
+    rather than reaching ffmpeg or the muxer.
 
   * DO NOT CALL Write TWICE WITH THE SAME OutputPath CONCURRENTLY. The temporary
     file names are derived from the output's name, so two runs writing the same
