@@ -53,7 +53,7 @@
     <Product>CodeBrix.VideoPlayback.Authoring</Product>
     <Title>CodeBrix.VideoPlayback.Authoring</Title>
     <Authors>Jeremy Ellis</Authors>
-    <Description>Authors ".cbv" video files in both of their flavours - the WebM-profile one that FFmpeg writes in a single pass, and the bespoke one that FFmpeg's IVF and Ogg output is muxed into by CodeBrix.VideoPlayback's own muxer - from one request object: AV1 video, Opus or Vorbis audio, WebVTT or SubRip caption tracks with their language, name and flags, chapters from an FFmpeg metadata file, an optional colour-grade chain baked to one lookup table, device-class presets, a dry run that renders every command line without starting anything, and a streamable-profile report over the finished file. This is a DEVELOPER-MACHINE tool: it drives the FFmpeg on the authoring workstation through CodeBrix.VideoProcessing and never belongs in a shipped application.</Description>
+    <Description>A developer tool for preparing video files for playback in your app - not something you ship inside it. Converts a source video into a compact, efficient format, with options for captions, chapters, and color adjustments. Includes a dry-run mode that shows exactly what it would do before it does anything.</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageProjectUrl>https://github.com/ellisnet/CodeBrix.VideoPlayback</PackageProjectUrl>
     <RepositoryUrl>https://github.com/ellisnet/CodeBrix.VideoPlayback</RepositoryUrl>
