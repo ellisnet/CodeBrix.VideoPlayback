@@ -698,7 +698,7 @@ P2. THE PROCESSOR PATH HAS NO COPY IN IT. The composition surface is created
     from the core's pool, and the converter writes STRAIGHT INTO those pixels.
     Layers then draw onto the same memory through the surface's canvas, and Draw
     blits with SKSurface.Draw - no snapshot, no image object, nothing allocated.
-    Verified on 4.151.2: a raster-direct surface's Snapshot() COPIES rather than
+    Verified on 4.152.0: a raster-direct surface's Snapshot() COPIES rather than
     sharing, so a snapshot taken while the buffer is later overwritten does not
     change under the caller and no copy-on-write ever moves the surface off our
     memory. Both facts are load-bearing; re-check them if the Skia pin moves.

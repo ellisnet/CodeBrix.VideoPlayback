@@ -74,7 +74,7 @@
     .Skia presenter: authoring writes files, it does not play them or draw them.
   -->
   <ItemGroup>
-    <PackageReference Include="CodeBrix.VideoProcessing.MitLicenseForever" Version="1.0.241.68" />
+    <PackageReference Include="CodeBrix.VideoProcessing.MitLicenseForever" Version="1.0.252.318" />
   </ItemGroup>
 
   <!--

@@ -31,7 +31,7 @@
     APPLICATION's job, and this is an application, so it chooses the Linux build it runs on.
   -->
   <ItemGroup>
-    <PackageReference Include="SkiaSharp.NativeAssets.Linux" Version="4.151.2" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux" Version="4.152.0" />
   </ItemGroup>
 
   <!--

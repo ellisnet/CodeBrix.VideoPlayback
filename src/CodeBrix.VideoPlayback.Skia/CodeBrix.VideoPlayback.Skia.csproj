@@ -77,7 +77,7 @@
     every other platform. See MAINTAINER-README.txt.
   -->
   <ItemGroup>
-    <PackageReference Include="SkiaSharp" Version="4.151.2" />
+    <PackageReference Include="SkiaSharp" Version="4.152.0" />
   </ItemGroup>
 
   <!--
