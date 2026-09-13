@@ -110,6 +110,34 @@ public sealed class VideoAuthoringRequest
     public bool RequireNoExtraPlaybackPackages { get; set; }
 
     /// <summary>
+    /// True to let this request's AV1 encode fall back from SVT-AV1 (<c>libsvtav1</c>) to libaom
+    /// (<c>libaom-av1</c>) when the installed FFmpeg has no SVT-AV1 encoder. False by default.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// WITHOUT IT, a request for the default encoder on a build that lacks SVT-AV1 - the Windows "essentials"
+    /// builds are the usual case - fails with a <see cref="VideoAuthoringException" /> whose message explains
+    /// that the library is missing and names this setting. WITH IT, the pass that asked for <c>libsvtav1</c> is
+    /// rewritten for <c>libaom-av1</c> just before FFmpeg starts: the speed preset becomes libaom's
+    /// <c>-cpu-used</c>, capped at 8, and <c>-b:v 0</c> follows the rate factor. A build that HAS SVT-AV1 is left
+    /// completely alone, so this is safe to set everywhere.
+    /// </para>
+    /// <para>
+    /// WHAT THE RESULT SAYS. <see cref="VideoAuthoringResult.Commands" /> holds the line that really ran, naming
+    /// <c>libaom-av1</c>, and <see cref="VideoAuthoringResult.Notes" /> says what was changed.
+    /// <see cref="CbvAuthor.RenderCommands" /> is a dry run and cannot know what the build has, so it goes on
+    /// rendering the line the request asked for.
+    /// </para>
+    /// <para>
+    /// This only turns the fallback ON for this request. The process-wide switch,
+    /// <c>GlobalFFOptions.Configure(o =&gt; o.AllowAv1EncoderFallback = true)</c> in CodeBrix.VideoProcessing,
+    /// works too, and a request leaving this false does not turn it off. libaom is far slower than SVT-AV1 and
+    /// the same rate factor does not give identical quality, which is why neither is on by default.
+    /// </para>
+    /// </remarks>
+    public bool AllowAv1EncoderFallback { get; set; }
+
+    /// <summary>
     /// True to read the finished file back and check it against the streamable profile. True by default.
     /// </summary>
     public bool ValidateProfile { get; set; } = true;

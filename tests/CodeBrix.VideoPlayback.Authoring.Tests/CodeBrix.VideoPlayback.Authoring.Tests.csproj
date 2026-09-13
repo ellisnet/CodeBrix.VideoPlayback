@@ -11,7 +11,7 @@
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
-    <PackageReference Include="xunit.v3" Version="4.0.0" />
+    <PackageReference Include="xunit.v3" Version="4.0.1" />
     <PackageReference Include="SilverAssertions.ApacheLicenseForever" Version="1.0.248.1071" />
     <!--
       THE TEST PROJECT may reference the decoder and the Opus package, because it PLAYS what the authoring

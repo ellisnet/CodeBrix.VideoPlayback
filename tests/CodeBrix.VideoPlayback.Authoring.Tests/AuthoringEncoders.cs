@@ -40,6 +40,12 @@ internal static class AuthoringEncoders
     /// <summary>True when this machine's FFmpeg can encode AV1 at all.</summary>
     internal static bool IsAvailable => HasSvtAv1 || HasAomAv1;
 
+    /// <summary>True when this machine's FFmpeg has SVT-AV1, the library's default encoder.</summary>
+    internal static bool HasSvtAv1Encoder => HasSvtAv1;
+
+    /// <summary>True when this machine's FFmpeg has libaom, the encoder the AV1 fallback uses.</summary>
+    internal static bool HasAomAv1Encoder => HasAomAv1;
+
     /// <summary>The encoder to author with here.</summary>
     internal static AuthoringVideoEncoder Encoder =>
         HasSvtAv1 ? AuthoringVideoEncoder.LibSvtAv1 : AuthoringVideoEncoder.LibAomAv1;

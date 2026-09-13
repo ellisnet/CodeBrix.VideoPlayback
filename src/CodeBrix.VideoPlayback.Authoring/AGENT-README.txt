@@ -97,6 +97,12 @@ CbvAuthor.TryVerifyTools(out string problem) answers "is it there?" without
 throwing, and the message it hands back names both binaries and every place they
 were looked for.
 
+CbvAuthor.TryVerifyTools(out string problem, out IReadOnlyList<string> warnings)
+also lists the encoders this library can ask for that the build LACKS - above all
+a missing SVT-AV1 (libsvtav1), the default AV1 encoder, which the Windows
+"essentials" builds do not carry. A missing encoder is a warning, never a failed
+check: see AV1 WITHOUT SVT-AV1 under VideoAuthoringRequest.
+
 WHAT NOT TO INSTALL. Nothing else. In particular this package must not appear in
 an application that plays video: ffmpeg's own binaries carry licences that the
 whole point of this family is to keep out of a shipped app, and they stay on the
@@ -146,9 +152,24 @@ CbvAuthor (static) - the whole front door
         Is ffmpeg installed? The message names ffmpeg AND ffprobe and says where
         they were looked for - the PATH, or the configured binary folder.
 
+    bool TryVerifyTools(out string problem, out IReadOnlyList<string> warnings)
+    void VerifyTools(out IReadOnlyList<string> warnings)
+        The same check, plus one warning per encoder this library can ask for
+        that the build does not have - libsvtav1, libaom-av1, libopus,
+        libvorbis - each saying what will fail and what to do about it. A
+        missing encoder never makes the check fail or throw.
+
   Everything throws VideoAuthoringException, which derives from the playback
   library's VideoPlaybackException, so one catch covers the family. Every message
   names the piece involved.
+
+  A FAILED FFMPEG PASS reads "The video pass failed. The command was: ffmpeg ...",
+  with the pass's own FFmpeg failure as the InnerException. When FFmpeg did not
+  have an encoder the pass asked for - the inner exception is then
+  CodeBrix.VideoProcessing's FFMpegEncoderNotFoundException - an explanation sits
+  between those two sentences. For libsvtav1 it says the SVT-AV1 library is not
+  present or could not be found, and names AllowAv1EncoderFallback, so a caller
+  that logs only Message still sees the cause and the cure.
 
 
 VideoAuthoringRequest - one file's worth of decisions
@@ -166,6 +187,7 @@ VideoAuthoringRequest - one file's worth of decisions
     bool SelectStreamsExplicitly             true by default
     bool CopySourceMetadata                  false by default
     bool RequireNoExtraPlaybackPackages      false by default
+    bool AllowAv1EncoderFallback             false by default
     bool ValidateProfile                     true by default
     bool FailWhenProfileFails                true by default
     string TemporaryFolder                   null means the system's own
@@ -223,6 +245,38 @@ VideoAuthoringRequest - one file's worth of decisions
   refusal happens at authoring time rather than on a customer's machine. It is not
   needed for a BESPOKE request, and setting it there changes nothing: a bespoke
   file never carries Opus in the first place - see THE ONE RULE ABOUT SOUND below.
+
+  AV1 WITHOUT SVT-AV1 - AllowAv1EncoderFallback. The default video encoder is
+  SVT-AV1 (libsvtav1), and not every ffmpeg build has it: the Windows "essentials"
+  builds carry libaom (libaom-av1) and NOT libsvtav1. On such a build a request
+  for the default encoder FAILS, with a message like:
+
+      The video pass failed. The SVT-AV1 encoder library (libsvtav1) is not
+      present on this machine, or the ffmpeg being used could not find it. To
+      author AV1 without installing anything, opt in to the libaom-av1
+      fallback: set AllowAv1EncoderFallback = true on the
+      VideoAuthoringRequest, or for every run with GlobalFFOptions.Configure(o
+      => o.AllowAv1EncoderFallback = true). Or ask for libaom-av1 outright with
+      Video.Encoder = AuthoringVideoEncoder.LibAomAv1, or install an ffmpeg
+      build that includes libsvtav1. The command was: ffmpeg ...
+
+  Setting AllowAv1EncoderFallback = true lets the pass that asked for libsvtav1
+  be rewritten for libaom-av1 just before ffmpeg starts - but only when the build
+  has no libsvtav1 and does have libaom-av1. The speed preset becomes libaom's
+  -cpu-used, capped at 8, and -b:v 0 follows the rate factor. A build that HAS
+  SVT-AV1 is left completely alone, so the switch is safe to set everywhere.
+  Afterwards:
+      result.Commands   holds the line that REALLY ran, naming libaom-av1
+      result.Notes      carries "video pass: ..." / "one pass: ..." lines
+                        saying what was changed
+      RenderCommands    is a dry run, cannot know what the build has, and goes
+                        on rendering the line the request asked for
+  The process-wide switch in CodeBrix.VideoProcessing,
+  GlobalFFOptions.Configure(o => o.AllowAv1EncoderFallback = true), works too; a
+  request leaving its own switch false does not turn that off. If the fallback
+  is on and still cannot help - the build has no libaom-av1 either - the failure
+  message says so instead. libaom is far slower than SVT-AV1 and the same rate
+  factor does not give identical quality, so neither switch is on by default.
 
 
 AuthoringVideoSettings - the picture
@@ -464,7 +518,8 @@ VideoAuthoringResult - what came out
 -------------------------------------
     string OutputPath                        long SizeInBytes
     VideoAuthoringFlavour Flavour            TimeSpan Elapsed
-    IReadOnlyList<AuthoringCommand> Commands the lines that actually ran
+    IReadOnlyList<AuthoringCommand> Commands the lines that actually ran -
+                                             after any AV1 fallback rewrite
     StreamableProfileReport Profile          null when validation was switched off
     bool PassesProfile
     CbvAuthoringResult Mux                   bespoke only; frame and packet counts
@@ -799,6 +854,16 @@ COMMON PITFALLS TO AVOID
     are named deterministically so that a dry run and a real run agree, but they
     are deleted when the run ends, successfully or not.
 
+  * DO NOT ASSUME THE FFMPEG ON A DEVELOPER'S MACHINE HAS SVT-AV1. The Windows
+    "essentials" builds do not, and a request for the default encoder then fails.
+    Check with CbvAuthor.TryVerifyTools(out problem, out warnings), set
+    AllowAv1EncoderFallback = true to author with libaom-av1 instead (much
+    slower), or install a build with libsvtav1. See AV1 WITHOUT SVT-AV1.
+
+  * DO NOT COMPARE A REAL RUN'S Commands WITH A DRY RUN'S AND EXPECT THEM EQUAL
+    WHEN THE AV1 FALLBACK IS ON. Where it rewrote a pass, result.Commands names
+    libaom-av1 and RenderCommands still names libsvtav1.
+
   * REMEMBER THAT AN OFF-THE-SHELF FILE WILL NOT PASS THE PROFILE. A plain
     Matroska with its cues at the end fails one rule on purpose. Pair
     Container = Matroska with FailWhenProfileFails = false.
@@ -859,6 +924,8 @@ Keep a source's OWN captions/chapters extract them first, then hand them in as
 Author a bespoke .cbv                 request.Flavour = VideoAuthoringFlavour.Bespoke
 See the command without running it    CbvAuthor.RenderCommands(request)
 Check ffmpeg is installed             CbvAuthor.TryVerifyTools(out string problem)
+Check its encoders as well            CbvAuthor.TryVerifyTools(out problem, out warnings)
+Author AV1 on a build without SVT-AV1 request.AllowAv1EncoderFallback = true
 Start from a device class             DeviceClassPresets.Pi1080p.ApplyTo(request)
 Resize keeping the aspect ratio       Video.FrameSize = AuthoringFrameSize.LongSide(1920)
 Resize to an exact frame              Video.FrameSize = AuthoringFrameSize.Exact(1920, 1080)

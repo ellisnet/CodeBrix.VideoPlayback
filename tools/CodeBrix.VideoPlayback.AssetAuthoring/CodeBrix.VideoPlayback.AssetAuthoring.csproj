@@ -22,7 +22,7 @@
     corpus judged by an implementation other than the one that wrote it.
   -->
   <ItemGroup>
-    <PackageReference Include="CodeBrix.VideoProcessing.MitLicenseForever" Version="1.0.252.318" />
+    <PackageReference Include="CodeBrix.VideoProcessing.MitLicenseForever" Version="1.0.256.1018" />
   </ItemGroup>
 
   <ItemGroup>

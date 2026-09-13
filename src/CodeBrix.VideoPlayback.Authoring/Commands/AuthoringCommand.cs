@@ -9,6 +9,12 @@ namespace CodeBrix.VideoPlayback.Authoring.Commands;
 /// A WebM-profile request produces one of these; a bespoke request produces two, because the picture and the
 /// sound are encoded separately and muxed afterwards by managed code. Both a dry run and a real run expose
 /// the same objects, so what a pipeline records in a manifest is what was actually executed.
+/// <para>
+/// A real run records each command AFTER its pass has run, from the line FFmpeg was actually given. The two
+/// agree except in one case: when <see cref="VideoAuthoringRequest.AllowAv1EncoderFallback" /> (or the
+/// process-wide switch) rewrote a pass for <c>libaom-av1</c> on a build without SVT-AV1, the real run's
+/// command names <c>libaom-av1</c> while the dry run's still names <c>libsvtav1</c>.
+/// </para>
 /// </remarks>
 public sealed class AuthoringCommand
 {

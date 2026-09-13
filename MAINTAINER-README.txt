@@ -226,6 +226,18 @@ committed sample-video manifest records. That test is what lets the eighteen
 FFmpeg-muxed corpus files stand unregenerated - see THE SAMPLE-VIDEO CORPUS
 below.
 
+AV1EncoderFallbackTests SKIPS ON PURPOSE ON MOST MACHINES. Its end-to-end tests
+reproduce an FFmpeg build with NO libsvtav1 - the missing-encoder message, the
+up-front tool-check warning, and AllowAv1EncoderFallback authoring with
+libaom-av1 - so each one calls Assert.SkipWhen(AuthoringEncoders.HasSvtAv1Encoder)
+and skips wherever SVT-AV1 is present, which is the usual Linux distribution
+and Homebrew build. They RUN on a Windows "essentials" build. The fallback ones
+also skip without libaom-av1. The wording tests in the same class run no FFmpeg
+and run everywhere. One of its tests (ZZZ_...) flips the process-wide
+GlobalFFOptions.AllowAv1EncoderFallback and restores it in a finally block; that
+is safe only because every test that depends on the switch is in that ONE class,
+whose tests never run concurrently. Keep it that way.
+
 
 PACKAGING / PUBLISHING
 ======================
@@ -1316,4 +1328,32 @@ NOTES
   CodeBrix-Mode1) were REBUILT on 2026-09-02 with the AssetAuthoring tool so
   that MANIFEST.txt records the lines that really ran; CodeBrix-Mode2 was not
   re-encoded (its two passes did not change).
+- THE AUTHORING LIBRARY ON A BUILD WITHOUT SVT-AV1 (2026-09-13). It needs
+  CodeBrix.VideoProcessing 1.0.256.1018 or later, which added
+  FFMpegEncoderNotFoundException and FFOptions.AllowAv1EncoderFallback; the
+  AssetAuthoring tool's direct reference moved with it, because a lower direct
+  pin than the library's own is a package downgrade (NU1605). Four things in
+  CbvAuthor and AuthoringTools follow from it:
+  (1) CbvAuthor.Run builds its failure message through DescribePassFailure,
+      which puts an explanation BETWEEN "The <pass> failed." and "The command
+      was: ffmpeg ..." when the inner chain holds an
+      FFMpegEncoderNotFoundException - Authoring's own wording, naming
+      request.AllowAv1EncoderFallback, when the fallback was off; the wrapper's
+      own explanation (everything before "ffmpeg exited with non-zero
+      exit-code") when it was on and still could not help. Any other failure
+      keeps the message it always had, word for word.
+  (2) request.AllowAv1EncoderFallback is applied with processor.Configure, so it
+      only ever turns the switch ON for that pass; the global switch still works.
+  (3) Each AuthoringCommand is now added AFTER its pass runs, from
+      processor.Arguments, so result.Commands is the line that really ran -
+      which differs from RenderCommands exactly when the fallback rewrote it -
+      and processor.Av1EncoderFallbackNotes are copied into the Notes, prefixed
+      with the pass label. A pass that fails or is cancelled throws, so nothing
+      that was recorded before could have been returned anyway.
+  (4) TryVerifyTools / VerifyTools gained overloads that return encoder
+      WARNINGS. The original overloads are unchanged and still check only the
+      binaries, because Write calls that check and a missing SVT-AV1 must not
+      stop a request that uses libaom or the fallback.
+  None of it changes a rendered command line, so the corpus manifest and
+  CorpusCommandEquivalenceTests are untouched.
 ================================================================================

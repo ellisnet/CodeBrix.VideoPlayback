@@ -13,6 +13,7 @@ using CodeBrix.VideoPlayback.Chapters;
 using CodeBrix.VideoPlayback.Containers;
 using CodeBrix.VideoPlayback.Containers.Cbv;
 using CodeBrix.VideoProcessing;
+using CodeBrix.VideoProcessing.Exceptions;
 
 // Both libraries have a Chapter type; the one this program means is the container's.
 using Chapter = CodeBrix.VideoPlayback.Chapters.Chapter;
@@ -178,8 +179,7 @@ public static class CbvAuthor
                 NoteDroppedCaptionFlags(request, notes);
 
                 FFMpegArgumentProcessor pass = AuthoringCommandFactory.BuildWebMProfile(request, lut);
-                commands.Add(new AuthoringCommand("one pass", pass.Arguments));
-                Run(pass, request, "one pass", 1, 1);
+                Run(pass, request, "one pass", 1, 1, commands, notes);
             }
             else
             {
@@ -189,15 +189,13 @@ public static class CbvAuthor
                 int passCount = request.Audio.Include ? 2 : 1;
 
                 FFMpegArgumentProcessor videoPass = AuthoringCommandFactory.BuildBespokeVideo(request, lut, ivf);
-                commands.Add(new AuthoringCommand("video pass", videoPass.Arguments));
-                Run(videoPass, request, "video pass", 1, passCount);
+                Run(videoPass, request, "video pass", 1, passCount, commands, notes);
 
                 if (request.Audio.Include)
                 {
                     temporaryFiles.Add(ogg);
                     FFMpegArgumentProcessor audioPass = AuthoringCommandFactory.BuildBespokeAudio(request, ogg);
-                    commands.Add(new AuthoringCommand("audio pass", audioPass.Arguments));
-                    Run(audioPass, request, "audio pass", 2, passCount);
+                    Run(audioPass, request, "audio pass", 2, passCount, commands, notes);
                 }
 
                 // The mux is managed code over two finished files and takes a fraction of a second, so it is
@@ -253,21 +251,87 @@ public static class CbvAuthor
     /// What is missing and where it was looked for, or an empty string when nothing is missing.
     /// </param>
     /// <returns>True when <c>ffmpeg</c> and <c>ffprobe</c> can both be run.</returns>
+    /// <remarks>
+    /// This checks the binaries only. The overload that also hands back <c>warnings</c> checks the encoders
+    /// in the build as well.
+    /// </remarks>
     public static bool TryVerifyTools(out string problem) => AuthoringTools.TryVerify(out problem);
+
+    /// <summary>
+    /// Reports whether the one tool authoring needs is installed, and warns about any encoder this library can
+    /// ask for that the installed build does not have.
+    /// </summary>
+    /// <param name="problem">
+    /// What is missing and where it was looked for, or an empty string when nothing is missing.
+    /// </param>
+    /// <param name="warnings">
+    /// One sentence per missing encoder, saying what will fail and what to do about it - most importantly
+    /// when the default AV1 encoder, SVT-AV1 (<c>libsvtav1</c>), is absent, which is when
+    /// <see cref="VideoAuthoringRequest.AllowAv1EncoderFallback" /> matters. Empty when every encoder is
+    /// there, and empty when <paramref name="problem" /> is set, because nothing was asked then.
+    /// </param>
+    /// <returns>
+    /// True when <c>ffmpeg</c> and <c>ffprobe</c> can both be run. A missing encoder is a WARNING and never
+    /// makes this false: a machine without SVT-AV1 can still author with libaom.
+    /// </returns>
+    public static bool TryVerifyTools(out string problem, out IReadOnlyList<string> warnings) =>
+        AuthoringTools.TryVerify(out problem, out warnings);
 
     /// <summary>Throws unless the one tool authoring needs is installed.</summary>
     /// <exception cref="VideoAuthoringException">
     /// <c>ffmpeg</c> or <c>ffprobe</c> could not be run; the message names both and says where they were
     /// looked for.
     /// </exception>
+    /// <remarks>
+    /// This checks the binaries only. The overload that also hands back <c>warnings</c> checks the encoders
+    /// in the build as well.
+    /// </remarks>
     public static void VerifyTools() => AuthoringTools.Verify();
+
+    /// <summary>
+    /// Throws unless the one tool authoring needs is installed, and warns about any encoder this library can
+    /// ask for that the installed build does not have.
+    /// </summary>
+    /// <param name="warnings">
+    /// One sentence per missing encoder, saying what will fail and what to do about it - most importantly
+    /// when the default AV1 encoder, SVT-AV1 (<c>libsvtav1</c>), is absent. Empty when every encoder is there.
+    /// </param>
+    /// <exception cref="VideoAuthoringException">
+    /// <c>ffmpeg</c> or <c>ffprobe</c> could not be run; the message names both and says where they were
+    /// looked for. A missing ENCODER never throws: it is a warning.
+    /// </exception>
+    public static void VerifyTools(out IReadOnlyList<string> warnings) => AuthoringTools.Verify(out warnings);
+
+    /// <summary>
+    /// The message a failed FFmpeg pass is reported with: which pass failed, an explanation when FFmpeg did
+    /// not have an encoder the pass asked for, and the command line.
+    /// </summary>
+    /// <param name="label">The pass - "one pass", "video pass" or "audio pass".</param>
+    /// <param name="arguments">The arguments the pass ran with.</param>
+    /// <param name="fallbackOn">Whether the AV1 encoder fallback was on for the pass, by request or globally.</param>
+    /// <param name="failure">What the pass threw.</param>
+    /// <returns>
+    /// "The video pass failed. The command was: ffmpeg ..." - with, between the two sentences, the explanation
+    /// of a missing encoder when <paramref name="failure" /> or anything inside it is an
+    /// <see cref="FFMpegEncoderNotFoundException" />.
+    /// </returns>
+    internal static string DescribePassFailure(string label, string arguments, bool fallbackOn, Exception failure)
+    {
+        string explanation = ExplainMissingEncoder(FindMissingEncoder(failure), fallbackOn);
+
+        return "The " + label + " failed. "
+            + (explanation.Length == 0 ? string.Empty : explanation + " ")
+            + "The command was: ffmpeg " + arguments;
+    }
 
     private static void Run(
         FFMpegArgumentProcessor processor,
         VideoAuthoringRequest request,
         string label,
         int passNumber,
-        int passCount)
+        int passCount,
+        List<AuthoringCommand> commands,
+        List<string> notes)
     {
         if (request.ProgressCallback != null && request.SourceDuration > TimeSpan.Zero)
         {
@@ -289,6 +353,13 @@ public static class CbvAuthor
         // and the half-written file is being thrown away anyway, so there is nothing a tidy finish protects.
         processor.CancellableThrough(request.CancellationToken);
 
+        // The request can turn the AV1 encoder fallback ON for its own passes. It never turns it OFF: a process
+        // that switched it on through GlobalFFOptions keeps it, because this only adds to the run's options.
+        if (request.AllowAv1EncoderFallback)
+        {
+            processor.Configure(options => options.AllowAv1EncoderFallback = true);
+        }
+
         try
         {
             processor.ProcessSynchronously();
@@ -300,11 +371,60 @@ public static class CbvAuthor
             request.CancellationToken.ThrowIfCancellationRequested();
 
             throw new VideoAuthoringException(
-                "The " + label + " failed. The command was: ffmpeg " + processor.Arguments, ex);
+                DescribePassFailure(label, processor.Arguments, IsAv1EncoderFallbackOn(request), ex), ex);
         }
 
         // And a pass that was killed cleanly enough to report success is still a cancelled pass.
         request.CancellationToken.ThrowIfCancellationRequested();
+
+        // Recorded AFTER the pass, from the processor itself. When the AV1 encoder fallback rewrote the line
+        // before FFmpeg started, this is the line that really ran - not the one the request rendered.
+        commands.Add(new AuthoringCommand(label, processor.Arguments));
+
+        foreach (string note in processor.Av1EncoderFallbackNotes)
+        {
+            notes.Add(label + ": " + note);
+        }
+    }
+
+    private static bool IsAv1EncoderFallbackOn(VideoAuthoringRequest request) =>
+        request.AllowAv1EncoderFallback || GlobalFFOptions.Current.AllowAv1EncoderFallback;
+
+    private static FFMpegEncoderNotFoundException FindMissingEncoder(Exception failure)
+    {
+        for (Exception current = failure; current != null; current = current.InnerException)
+        {
+            if (current is FFMpegEncoderNotFoundException missing) return missing;
+        }
+
+        return null;
+    }
+
+    // What the video-processing wrapper's own failure message has always begun with. Anything IN FRONT of it
+    // in an FFMpegEncoderNotFoundException is the wrapper's explanation of the missing encoder.
+    private const string HistoricalFFMpegFailureText = "ffmpeg exited with non-zero exit-code";
+
+    private static string ExplainMissingEncoder(FFMpegEncoderNotFoundException missing, bool fallbackOn)
+    {
+        if (missing == null) return string.Empty;
+
+        if (!string.Equals(missing.EncoderName, AuthoringEncoderNames.LibSvtAv1, StringComparison.Ordinal))
+        {
+            return "The ffmpeg being used has no '" + missing.EncoderName + "' encoder. Install an ffmpeg build "
+                + "that includes it, or ask the request for an encoder this build has.";
+        }
+
+        if (!fallbackOn) return AuthoringTools.MissingSvtAv1 + " " + AuthoringTools.SvtAv1Remedies;
+
+        // The fallback was on and still could not help - in practice because this build has no libaom-av1
+        // either. The wrapper's own explanation names the reason, and it is everything before the text its
+        // failure message has always carried.
+        int historical = missing.Message.IndexOf(HistoricalFFMpegFailureText, StringComparison.Ordinal);
+        string wrapperExplanation = historical > 0 ? missing.Message.Substring(0, historical).Trim() : string.Empty;
+
+        return wrapperExplanation.Length > 0
+            ? wrapperExplanation
+            : AuthoringTools.MissingSvtAv1 + " " + AuthoringTools.FallbackCouldNotHelp;
     }
 
     private static CbvAuthoringResult Mux(VideoAuthoringRequest request, string ivfPath, string oggPath)
