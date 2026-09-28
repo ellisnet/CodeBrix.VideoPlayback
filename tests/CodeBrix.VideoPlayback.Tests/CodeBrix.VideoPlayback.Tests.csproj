@@ -6,7 +6,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.10.0" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.10.1" />
     <PackageReference Include="xunit.runner.visualstudio" Version="4.0.0">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
@@ -17,7 +17,7 @@
       The TEST project may reference the Opus package - it proves the Opus path works once an
       application registers it. The LIBRARY never does; see MAINTAINER-README.txt.
     -->
-    <PackageReference Include="CodeBrix.Audio.Opus.BsdLicenseForever" Version="1.0.250.73" />
+    <PackageReference Include="CodeBrix.Audio.Opus.BsdLicenseForever" Version="1.0.269.1352" />
   </ItemGroup>
 
   <ItemGroup>
