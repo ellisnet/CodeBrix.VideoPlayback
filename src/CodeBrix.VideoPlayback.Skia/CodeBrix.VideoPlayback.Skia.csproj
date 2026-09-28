@@ -82,7 +82,7 @@
     This library requires CodeBrix.Audio (vs. CodeBrix.Audio.Core) because it actually plays videos with
     audio; which requires an audio player, like the ones that CodeBrix.Audio ships for Linux/Windows/MacOS
     -->
-    <PackageReference Include="CodeBrix.Audio.MitLicenseForever" Version="1.0.269.1270" />
+    <PackageReference Include="CodeBrix.Audio.MitLicenseForever" Version="1.0.271.1165" />
   </ItemGroup>
 
   <!--
