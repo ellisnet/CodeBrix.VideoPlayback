@@ -29,7 +29,7 @@
       presenter. The libraries never choose a native asset package; an application does, and each head of
       this sample gets one from its CodeBrix.Platform runtime package.
     -->
-    <PackageReference Include="SkiaSharp.NativeAssets.Linux" Version="4.151.0" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux" Version="4.153.1" />
   </ItemGroup>
 
 </Project>

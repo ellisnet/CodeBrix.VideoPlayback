@@ -35,7 +35,7 @@
       heads, native WPF needs no extra package to get a graphics context: SkiaSharp's own WPF views
       supply one.
     -->
-    <PackageReference Include="SkiaSharp.Views.WPF" Version="4.151.0" />
+    <PackageReference Include="SkiaSharp.Views.WPF" Version="4.153.1" />
   </ItemGroup>
 
 </Project>

@@ -12,7 +12,7 @@
     <PackageReference Include="CodeBrix.Platform.ApacheLicenseForever" Version="1.0.243.226" />
     <PackageReference Include="CodeBrix.Platform.Fonts.Roboto.OflLicenseForever" Version="1.0.240.51" />
     <!-- SKXamlCanvas - the CPU Skia drawing surface hosted in CodeBrix.Platform XAML -->
-    <PackageReference Include="CodeBrix.Platform.SkiaSharp.Views.MitLicenseForever" Version="4.151.0" />
+    <PackageReference Include="CodeBrix.Platform.SkiaSharp.Views.MitLicenseForever" Version="4.153.1" />
     <!--
       SkiaGLCanvasElement - a GPU-backed Skia surface with the GRContext the video presenter needs for its
       graphics path. SKXamlCanvas cannot supply one (SKSwapChainPanel is a non-functional placeholder on

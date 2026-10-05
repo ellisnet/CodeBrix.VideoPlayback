@@ -62,7 +62,7 @@
       heads, native WinUI needs no extra package to get a graphics context: SkiaSharp's own WinUI views
       supply one, and this SKSwapChainPanel is the real thing rather than a placeholder.
     -->
-    <PackageReference Include="SkiaSharp.Views.WinUI" Version="4.151.0" />
+    <PackageReference Include="SkiaSharp.Views.WinUI" Version="4.153.1" />
   </ItemGroup>
 
   <ItemGroup>

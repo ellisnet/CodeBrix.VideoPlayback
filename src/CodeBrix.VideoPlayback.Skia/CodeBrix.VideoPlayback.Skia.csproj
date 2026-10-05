@@ -77,7 +77,7 @@
     every other platform. See MAINTAINER-README.txt.
   -->
   <ItemGroup>
-    <PackageReference Include="SkiaSharp" Version="4.152.0" />
+    <PackageReference Include="SkiaSharp" Version="4.153.1" />
     <!--
     This library requires CodeBrix.Audio (vs. CodeBrix.Audio.Core) because it actually plays videos with
     audio; which requires an audio player, like the ones that CodeBrix.Audio ships for Linux/Windows/MacOS
