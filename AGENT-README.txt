@@ -74,9 +74,14 @@ Or in a project file:
 
     <PackageReference Include="CodeBrix.VideoPlayback.MitLicenseForever" Version="*" />
 
-Its only dependency is CodeBrix.Audio.MitLicenseForever, which is pulled in for
-you. Add, as your application needs them:
+Its only dependency is CodeBrix.Audio.Core.MitLicenseForever - the managed
+audio library, with Vorbis built in - which is pulled in for you. That package
+ships no native audio engine, so by itself nothing is heard. Add, as your
+application needs them:
 
+  * CodeBrix.Audio.MitLicenseForever, to hear the sound on Linux, Windows or
+    macOS - the desktop package that carries the native engine (the Skia
+    presenter package below brings it in already);
   * CodeBrix.VideoPlayback.Dav1d.BsdLicenseForever, to play AV1 video - the
     dav1d binding with its seven self-built native libraries, a separate package
     because it is BSD-2-Clause and carries natives;
@@ -971,6 +976,15 @@ COMMON PITFALLS TO AVOID
 - READING Position FROM SEVERAL PLACES AND EXPECTING THEM TO AGREE EXACTLY. When
   there is an audio track, Position is the audio clock - what a listener is
   actually hearing - and it advances in the mixer's own steps, not smoothly.
+
+- SETTING YOUR OWN CLOCK AFTER A SEEK "BECAUSE Position LAGS". It does not. The
+  moment Seek returns, Position reads exactly the moment asked for (Exact mode)
+  or the key frame landed on (KeyFrameOnly mode), paused or playing, and it
+  never reads lower than that until the next seek: the session holds it while
+  the audio re-positions and hands back to the audio clock only once that clock
+  has caught up. PositionChanged is raised whenever the position changes - while
+  playing, and once after any seek, paused or not - so a scrubber bound to it
+  ends up on the sought position without help.
 
 - ASSUMING THE FIRST FRAME IS AT ZERO AFTER A SEEK IN KeyFrameOnly MODE. It lands
   on the key frame at or before the moment you asked for, which can be a second

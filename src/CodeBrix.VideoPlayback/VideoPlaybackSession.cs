@@ -122,6 +122,9 @@ public sealed class VideoPlaybackSession : IDisposable
     private float volume = 1.0f;
     private bool muted;
     private int seekPendingAudioRebase;
+    private int audioRebasedGeneration = -1;
+    private long seekHoldTicks = -1;
+    private int seekHoldGeneration;
     private long lastFrameEndTicks;
 
     /// <summary>Creates a session with the default settings.</summary>
@@ -142,7 +145,16 @@ public sealed class VideoPlaybackSession : IDisposable
     /// <summary>Raised once the container has been read and the tracks and decoders are ready.</summary>
     public event EventHandler MediaOpened;
 
-    /// <summary>Raised while playing, at <see cref="VideoPlaybackOptions.PositionUpdateInterval" />.</summary>
+    /// <summary>
+    /// Raised when <see cref="Position" /> has changed, checked every
+    /// <see cref="VideoPlaybackOptions.PositionUpdateInterval" /> - so continually while playing, and once
+    /// after every <see cref="Seek" />, paused or not, carrying the sought position.
+    /// </summary>
+    /// <remarks>
+    /// A value read before a seek is never reported once the clock thread has seen the seek, so a consumer that
+    /// mirrors this event ends up holding the sought position rather than the one before it. Raised on the
+    /// session's clock thread; a handler that touches a user interface must marshal.
+    /// </remarks>
     public event EventHandler<VideoPositionChangedEventArgs> PositionChanged;
 
     /// <summary>Raised when playback reaches the end of the media and is not looping.</summary>
@@ -253,6 +265,14 @@ public sealed class VideoPlaybackSession : IDisposable
     /// When there is an audio track this is the AUDIO clock - the position of the audio actually handed to
     /// the device - because that is the one a viewer hears and everything else is synchronised to it. With no
     /// audio it is a monotonic clock that runs while playing and stops while paused.
+    /// <para>
+    /// After <see cref="Seek" /> it reads exactly the sought position as soon as Seek returns - the requested
+    /// moment in <see cref="VideoSeekMode.Exact" /> mode, the key frame landed on in
+    /// <see cref="VideoSeekMode.KeyFrameOnly" /> mode - whether paused or playing, and it never reads lower
+    /// than that until the next seek. The session holds that position while the audio re-positions itself,
+    /// and hands back to the audio clock once it has caught up, so the position never steps backwards when
+    /// playback resumes. <see cref="Stop" /> reads zero.
+    /// </para>
     /// </remarks>
     public TimeSpan Position => GetClock();
 
@@ -423,6 +443,7 @@ public sealed class VideoPlaybackSession : IDisposable
             }
 
             clockBase = TimeSpan.Zero;
+            seekHoldTicks = -1;
             fallbackClock.Reset();
             pendingImmediatePresent = true;
             Volatile.Write(ref seekTargetTicks, -1);
@@ -490,6 +511,10 @@ public sealed class VideoPlaybackSession : IDisposable
 
         audioPlayer?.Pause();
 
+        // Stopped FIRST, so the seek below does not see a playing session and start the fallback clock
+        // running again - which left the position creeping forward while stopped.
+        Volatile.Write(ref stateValue, (int)VideoPlaybackState.Stopped);
+
         if (reader.CanSeek)
         {
             Seek(TimeSpan.Zero);
@@ -502,8 +527,6 @@ public sealed class VideoPlaybackSession : IDisposable
                 fallbackClock.Reset();
             }
         }
-
-        Volatile.Write(ref stateValue, (int)VideoPlaybackState.Stopped);
     }
 
     /// <summary>Moves playback to a different moment.</summary>
@@ -515,6 +538,11 @@ public sealed class VideoPlaybackSession : IDisposable
     /// before the requested moment and the decoder works forward to it, so the frame that appears is the right
     /// one. With <see cref="VideoSeekMode.KeyFrameOnly" /> it lands on the key frame itself, which costs
     /// nothing but is only as precise as the key frames are spaced.
+    /// <para>
+    /// <see cref="Position" /> reads the sought position (the clamped requested moment, or the key frame
+    /// landed on) by the time this returns, and the next <see cref="PositionChanged" /> carries it. While
+    /// paused, the picture at that position is presented as soon as it has been decoded.
+    /// </para>
     /// </remarks>
     public void Seek(TimeSpan position)
     {
@@ -535,11 +563,29 @@ public sealed class VideoPlaybackSession : IDisposable
             if (reader == null) return;
 
             TimeSpan landed = reader.Seek(position, videoTrack == null ? -1 : videoTrack.Id);
+            TimeSpan reported = options.SeekMode == VideoSeekMode.Exact ? position : landed;
 
             videoQueue?.Clear();
             audioQueue?.Clear();
 
-            Volatile.Write(ref seekTargetTicks, options.SeekMode == VideoSeekMode.Exact ? position.Ticks : landed.Ticks);
+            // The clock moves BEFORE the generation does, so anything that notices the new generation - the
+            // clock thread deciding whether what it read is stale, above all - already reads the new position.
+            // The audio player cannot be re-based here: that needs the first audio packet from the new
+            // position, which the demultiplexing thread has not read yet. Until it has, and until the audio
+            // clock has caught up with the sought position, the session HOLDS the position it was asked for -
+            // see GetClock.
+            lock (clockGate)
+            {
+                clockBase = reported;
+                audioClockCorrection = TimeSpan.Zero;
+                seekHoldTicks = reported.Ticks;
+                seekHoldGeneration = Volatile.Read(ref seekGeneration) + 1;
+                audioEnded = false;
+                fallbackClock.Reset();
+                if (State == VideoPlaybackState.Playing && IsUsingFallbackClock) fallbackClock.Start();
+            }
+
+            Volatile.Write(ref seekTargetTicks, reported.Ticks);
             Interlocked.Exchange(ref seekPendingAudioRebase, audioPlayer == null ? 0 : 1);
             Interlocked.Increment(ref seekGeneration);
 
@@ -548,18 +594,9 @@ public sealed class VideoPlaybackSession : IDisposable
             audioTrackExhausted = false;
             videoSupplyFinished = false;
             videoDrained = false;
-            audioEnded = false;
             skipToKeyFrame = false;
             pendingImmediatePresent = true;
             Volatile.Write(ref lastFrameEndTicks, 0);
-
-            lock (clockGate)
-            {
-                clockBase = options.SeekMode == VideoSeekMode.Exact ? position : landed;
-                audioClockCorrection = TimeSpan.Zero;
-                fallbackClock.Reset();
-                if (State == VideoPlaybackState.Playing && IsUsingFallbackClock) fallbackClock.Start();
-            }
 
             if (State == VideoPlaybackState.Ended) Volatile.Write(ref stateValue, (int)VideoPlaybackState.Paused);
         }
@@ -963,7 +1000,7 @@ public sealed class VideoPlaybackSession : IDisposable
                 bool videoParkingEmpty = videoParking == null || videoParking.TryDrainInto(videoQueue);
                 bool audioParkingEmpty = audioParking == null || audioParking.TryDrainInto(audioQueue);
 
-                PublishTrackExhaustion(videoParkingEmpty, audioParkingEmpty);
+                PublishTrackExhaustion(videoParkingEmpty, audioParkingEmpty, generation);
 
                 if (demuxFinished)
                 {
@@ -1009,6 +1046,19 @@ public sealed class VideoPlaybackSession : IDisposable
                     // read, which is why reaching the end of the file above must always be possible.
                     if (videoTrack != null) videoTrackExhausted = reader.IsTrackExhausted(videoTrack.Id);
                     if (audioTrack != null) audioTrackExhausted = reader.IsTrackExhausted(audioTrack.Id);
+
+                    // An audio packet is handed over HERE, still under the lock a seek takes, so a seek can
+                    // never fall between reading it and acting on it. Outside the lock, a packet read just
+                    // before a seek could take the re-base the seek asked for - dating the audio clock to the
+                    // OLD position, which is what left Position reading the old value after a seek - and could
+                    // land in the queue after the seek had cleared it, to be played against the new clock. The
+                    // audio thread has no generation to check, so the order is what keeps it right. Delivering
+                    // never blocks, so the lock is held no longer than one packet copy.
+                    if (more && audioTrack != null && packet.TrackId == audioTrack.Id && audioQueue != null)
+                    {
+                        DeliverAudio(packet, generation);
+                        continue;
+                    }
                 }
 
                 if (!more) continue;
@@ -1016,24 +1066,6 @@ public sealed class VideoPlaybackSession : IDisposable
                 if (videoTrack != null && packet.TrackId == videoTrack.Id)
                 {
                     Deliver(videoQueue, videoParking, packet, TimeSpan.Zero, generation);
-                    continue;
-                }
-
-                if (audioTrack != null && packet.TrackId == audioTrack.Id && audioQueue != null)
-                {
-                    if (Interlocked.Exchange(ref seekPendingAudioRebase, 0) == 1 && audioPlayer != null)
-                    {
-                        TimeSpan target = TimeSpan.FromTicks(Math.Max(0, Volatile.Read(ref seekTargetTicks)));
-                        TimeSpan preRoll = target > packet.Timestamp ? target - packet.Timestamp : TimeSpan.Zero;
-                        audioSource.SetEndOfStream(false);
-                        audioPlayer.Seek(packet.Timestamp, preRoll);
-                    }
-
-                    // Remember what THIS packet said, padding or none, so that the value in hand when the
-                    // track is declared finished is the one on its last block and not on some earlier one.
-                    lastAudioDiscardPadding = packet.DiscardPadding;
-
-                    Deliver(audioQueue, audioParking, packet, packet.DiscardPadding, generation);
                 }
             }
             catch (Exception ex)
@@ -1044,6 +1076,42 @@ public sealed class VideoPlaybackSession : IDisposable
                 return;
             }
         }
+    }
+
+    /// <summary>
+    /// Hands an audio packet to the audio queue, re-basing the audio player first when it is the first one
+    /// read since a seek. Called with the reader's lock held - see the demultiplexing loop.
+    /// </summary>
+    private void DeliverAudio(in MediaPacket packet, int generation)
+    {
+        if (Interlocked.Exchange(ref seekPendingAudioRebase, 0) == 1 && audioPlayer != null)
+        {
+            TimeSpan target = TimeSpan.FromTicks(Math.Max(0, Volatile.Read(ref seekTargetTicks)));
+            TimeSpan preRoll = target > packet.Timestamp ? target - packet.Timestamp : TimeSpan.Zero;
+            audioSource.SetEndOfStream(false);
+            audioPlayer.Seek(packet.Timestamp, preRoll);
+
+            // A player whose sound had run out STOPPED its voice when it said so, and a stopped player takes
+            // no packets until it is told to play - so a seek back into the sound, or a loop back to the
+            // start, while the session is playing has to start it again. Otherwise the clock never moves.
+            if (State == VideoPlaybackState.Playing && audioPlayer.PlaybackState != PlaybackState.Playing)
+            {
+                audioPlayer.Play();
+
+                // A pause that landed in between wins.
+                if (State != VideoPlaybackState.Playing) audioPlayer.Pause();
+            }
+
+            // Only now may the audio clock take the position back from the one the seek is holding: it was
+            // reading the old position until the line above.
+            Volatile.Write(ref audioRebasedGeneration, generation);
+        }
+
+        // Remember what THIS packet said, padding or none, so that the value in hand when the track is
+        // declared finished is the one on its last block and not on some earlier one.
+        lastAudioDiscardPadding = packet.DiscardPadding;
+
+        Deliver(audioQueue, audioParking, packet, packet.DiscardPadding, generation);
     }
 
     /// <summary>
@@ -1103,7 +1171,7 @@ public sealed class VideoPlaybackSession : IDisposable
     /// the parking to empty, which is also why it is re-evaluated on every pass of the demultiplexing loop
     /// rather than once at the end of the file.
     /// </remarks>
-    private void PublishTrackExhaustion(bool videoParkingEmpty, bool audioParkingEmpty)
+    private void PublishTrackExhaustion(bool videoParkingEmpty, bool audioParkingEmpty, int generation)
     {
         if (audioTrack != null && audioParkingEmpty && (audioTrackExhausted || demuxFinished))
         {
@@ -1113,6 +1181,24 @@ public sealed class VideoPlaybackSession : IDisposable
             // ended.
             ArmTrailingTrimFromLastAudioPacket();
             audioSource?.SetEndOfStream(true);
+
+            // The sound ended before the place a seek moved to: not one audio packet was read from there, so
+            // the audio player was never re-based and its clock still describes the old position - and if it
+            // had already finished before the seek, it will not say so a second time. The stopwatch takes
+            // over from the sought position, exactly as it does when the sound runs out during playback.
+            // Checked under the reader's lock, against the generation, because a seek arriving between the
+            // test above and this line would otherwise have its own re-base taken away.
+            if (Volatile.Read(ref seekPendingAudioRebase) == 1)
+            {
+                lock (readerGate)
+                {
+                    if (Volatile.Read(ref seekGeneration) == generation
+                        && Interlocked.Exchange(ref seekPendingAudioRebase, 0) == 1)
+                    {
+                        HandClockToStopwatchAtSeekPosition();
+                    }
+                }
+            }
         }
 
         if (videoTrack != null && videoParkingEmpty && (videoTrackExhausted || demuxFinished))
@@ -1310,6 +1396,7 @@ public sealed class VideoPlaybackSession : IDisposable
     {
         TimeSpan interval = options.PositionUpdateInterval;
         TimeSpan lastReported = TimeSpan.MinValue;
+        int reportedGeneration = Volatile.Read(ref seekGeneration);
 
         while (!stopping)
         {
@@ -1318,11 +1405,20 @@ public sealed class VideoPlaybackSession : IDisposable
                 Thread.Sleep(interval);
                 if (stopping || reader == null) continue;
 
+                int generation = Volatile.Read(ref seekGeneration);
                 TimeSpan now = GetClock();
 
-                if (now != lastReported)
+                // A seek that arrived while the clock was being read makes what was read stale: it is not
+                // reported, and nothing is decided on it. The next pass reads the new position.
+                if (Volatile.Read(ref seekGeneration) != generation) continue;
+
+                // After a seek the position is reported even when it happens to equal the last value
+                // reported, so a consumer always ends up holding the position the seek moved to - paused
+                // or playing.
+                if (now != lastReported || generation != reportedGeneration)
                 {
                     lastReported = now;
+                    reportedGeneration = generation;
                     PositionChanged?.Invoke(this, new VideoPositionChangedEventArgs(now, duration));
                 }
 
@@ -1406,18 +1502,77 @@ public sealed class VideoPlaybackSession : IDisposable
     /// </summary>
     private bool IsUsingFallbackClock => audioPlayer == null || audioEnded;
 
+    /// <summary>
+    /// The session's clock: the audio player's position when there is sound still to be heard, the stopwatch
+    /// otherwise - and, after a seek, the position the seek was asked for until the audio clock has caught up
+    /// with it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// THE SEEK HOLD. The audio player is re-based on the demultiplexing thread, when the first audio packet
+    /// from the new position is read, so for a while after Seek returns its clock still describes the OLD
+    /// position. And once it is re-based it reads the timestamp of that first packet - usually a little
+    /// before the sought position, sometimes a little after - and only reaches the sought position when the
+    /// pre-roll has been decoded and thrown away, which happens on the audio thread and so never happens
+    /// while paused. That is the audio player's documented behaviour, not a fault in it; bridging it is the
+    /// session's job.
+    /// </para>
+    /// <para>
+    /// So the session holds the sought position (the requested moment in Exact mode, the key frame in
+    /// KeyFrameOnly mode) and hands the clock back to the audio only once all three are true: the audio
+    /// player has been re-based for THIS seek, the session is playing, and the audio clock has reached the
+    /// held position. The audio clock is never lower than the held position when it takes over, so the
+    /// position never steps backwards. The fallback clock needs no hold: Seek sets its base exactly.
+    /// </para>
+    /// </remarks>
     private TimeSpan GetClock()
     {
         PacketAudioPlayer player = audioPlayer;
-        if (player != null && !audioEnded)
-        {
-            TimeSpan corrected = player.Position - audioClockCorrection;
-            return corrected < TimeSpan.Zero ? TimeSpan.Zero : corrected;
-        }
 
         lock (clockGate)
         {
+            if (player != null && !audioEnded)
+            {
+                // The re-base is checked BEFORE the audio position is read: the demultiplexing thread
+                // publishes the generation only after the player has been re-based, so a position read
+                // after a matching generation is the new one.
+                bool rebased = Volatile.Read(ref audioRebasedGeneration) == seekHoldGeneration;
+                TimeSpan corrected = player.Position - audioClockCorrection;
+                if (corrected < TimeSpan.Zero) corrected = TimeSpan.Zero;
+
+                if (seekHoldTicks < 0) return corrected;
+
+                if (rebased && State == VideoPlaybackState.Playing && corrected.Ticks >= seekHoldTicks)
+                {
+                    seekHoldTicks = -1;
+                    return corrected;
+                }
+
+                return new TimeSpan(seekHoldTicks);
+            }
+
             return clockBase + fallbackClock.Elapsed;
+        }
+    }
+
+    /// <summary>
+    /// Moves the clock onto the stopwatch at the position the last seek holds, because the sound has
+    /// already ended there - see PublishTrackExhaustion.
+    /// </summary>
+    private void HandClockToStopwatchAtSeekPosition()
+    {
+        lock (clockGate)
+        {
+            if (!audioEnded)
+            {
+                // Seek set clockBase to the held position already; the stopwatch just starts from there.
+                if (seekHoldTicks >= 0) clockBase = new TimeSpan(seekHoldTicks);
+                seekHoldTicks = -1;
+                fallbackClock.Reset();
+                if (State == VideoPlaybackState.Playing) fallbackClock.Start();
+            }
+
+            audioEnded = true;
         }
     }
 
@@ -1445,7 +1600,13 @@ public sealed class VideoPlaybackSession : IDisposable
         {
             if (!audioEnded)
             {
-                TimeSpan resume = player != null ? player.Position - audioClockCorrection : clockBase;
+                // While a seek's position is still held, the audio player's clock has not caught up with it
+                // (it may not even have been re-based yet), so the stopwatch carries on from the held position
+                // rather than stepping back to whatever the audio player last said.
+                TimeSpan resume = seekHoldTicks >= 0
+                    ? new TimeSpan(seekHoldTicks)
+                    : player != null ? player.Position - audioClockCorrection : clockBase;
+                seekHoldTicks = -1;
                 clockBase = resume < TimeSpan.Zero ? TimeSpan.Zero : resume;
                 fallbackClock.Reset();
                 if (State == VideoPlaybackState.Playing) fallbackClock.Start();
@@ -1594,6 +1755,8 @@ public sealed class VideoPlaybackSession : IDisposable
         duration = TimeSpan.Zero;
         clockBase = TimeSpan.Zero;
         audioClockCorrection = TimeSpan.Zero;
+        seekHoldTicks = -1;
+        Volatile.Write(ref audioRebasedGeneration, -1);
         audioTrailingTrimFrames = 0;
         lastAudioDiscardPadding = TimeSpan.Zero;
         audioTrailingTrimArmed = false;

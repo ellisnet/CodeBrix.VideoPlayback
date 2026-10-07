@@ -76,6 +76,11 @@ public static class SyntheticMedia
     /// whatever the Ogg source itself reports. Ogg Vorbis reports none, so a test that wants a non-zero trim
     /// states one here.
     /// </param>
+    /// <param name="audioRepeat">
+    /// How many times the Ogg file's packets are laid end to end to make the audio track. The corpus's sound
+    /// files last about a second, and a test that seeks to two seconds needs sound there; the joins are not
+    /// seamless, which no clock test minds.
+    /// </param>
     /// <returns>The path that was written.</returns>
     public static string WriteRawCbv(
         string path,
@@ -85,7 +90,8 @@ public static class SyntheticMedia
         string audioOggPath = null,
         IReadOnlyList<CaptionTrack> captions = null,
         IReadOnlyList<Chapter> chapters = null,
-        int? audioTrailingTrimSamples = null)
+        int? audioTrailingTrimSamples = null,
+        int audioRepeat = 1)
     {
         TimeSpan frameDuration = TimeSpan.FromSeconds(1.0 / frameRate);
 
@@ -115,13 +121,29 @@ public static class SyntheticMedia
             if (audioOggPath != null)
             {
                 audio = OggAudioStream.Open(audioOggPath);
+                List<OggAudioPacket> once = new List<OggAudioPacket>();
                 foreach (OggAudioPacket packet in audio.ReadAllPackets())
                 {
-                    audioPackets.Add(new OggAudioPacket(
+                    once.Add(new OggAudioPacket(
                         packet.Data.ToArray(),
                         packet.Timestamp,
                         packet.Duration,
                         packet.SampleCount));
+                }
+
+                TimeSpan span = once.Count == 0
+                    ? TimeSpan.Zero
+                    : once[once.Count - 1].Timestamp + once[once.Count - 1].Duration - once[0].Timestamp;
+
+                for (int pass = 0; pass < Math.Max(1, audioRepeat); pass++)
+                {
+                    TimeSpan shift = TimeSpan.FromTicks(span.Ticks * pass);
+                    foreach (OggAudioPacket packet in once)
+                    {
+                        audioPackets.Add(pass == 0
+                            ? packet
+                            : new OggAudioPacket(packet.Data, packet.Timestamp + shift, packet.Duration, packet.SampleCount));
+                    }
                 }
 
                 audioTrack = muxer.AddAudioTrack(

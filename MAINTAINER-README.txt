@@ -15,7 +15,7 @@ This repository produces THREE NuGet packages:
   CodeBrix.VideoPlayback.MitLicenseForever
       License:       MIT
       Consumer doc:  AGENT-README.txt (repo root)
-      Dependency:    CodeBrix.Audio.MitLicenseForever, and nothing else
+      Dependency:    CodeBrix.Audio.Core.MitLicenseForever, and nothing else
 
   CodeBrix.VideoPlayback.Skia.MitLicenseForever
       License:       MIT
@@ -65,8 +65,11 @@ Planned siblings, elsewhere:
 
 HARD RULES FOR THIS REPOSITORY
 ==============================
-1. THE CORE REFERENCES CodeBrix.Audio.MitLicenseForever AND NOTHING ELSE. Not
-   the Opus package, not a codec package, not SkiaSharp, not any drawing library.
+1. THE CORE REFERENCES CodeBrix.Audio.Core.MitLicenseForever AND NOTHING ELSE.
+   Not the desktop CodeBrix.Audio.MitLicenseForever package - that one carries
+   the native audio engine, and the presenter and the application take it, not
+   the core - not the Opus package, not a codec package, not SkiaSharp, not any
+   drawing library.
    The test project may reference the Opus package - and does, to prove the Opus
    path works once an application registers it - but the library must not.
 1a. THE PRESENTER REFERENCES THE CORE AND PLAIN SkiaSharp, AND NOTHING ELSE.
@@ -174,6 +177,14 @@ the case in point - the Opus package says whether it can conceal a loss, and
 nothing in THIS library ever reports one (see REPORTED PACKET LOSS above), so
 that path becomes observable only the day a streaming source lands.
 
+THE TEST PROJECT'S FULL AUDIO REFERENCE. tests/CodeBrix.VideoPlayback.Tests also
+references CodeBrix.Audio.MitLicenseForever, at the version the core pins for
+CodeBrix.Audio.Core. The core references only the Core package, which ships no
+native engine; the opt-in tests that open the audio device need the package that
+does, and without it every one of them fails to load the native library. The
+LIBRARY never takes that reference. The authoring test project does not need it:
+its sessions are built with PlayAudio false and open no device.
+
 The suite depends on the golden corpus under tests/assets. When it is missing,
 the tests that need it SKIP rather than fail - see EXTRAS-README.txt for how to
 regenerate it.
@@ -251,7 +262,7 @@ Verify a pack with:
     dotnet pack src/CodeBrix.VideoPlayback/CodeBrix.VideoPlayback.csproj -c Release -o <folder>
     unzip -l <folder>/CodeBrix.VideoPlayback.MitLicenseForever.<version>.nupkg
 
-The package must carry exactly one dependency, CodeBrix.Audio.MitLicenseForever.
+The package must carry exactly one dependency, CodeBrix.Audio.Core.MitLicenseForever.
 A second dependency appearing is a defect, not a decision.
 
 The presenter packs the same way, with its own AGENT-README from
@@ -427,6 +438,42 @@ immediately so a scrubber does not lag. In Exact mode the decode thread then
 throws frames away until it reaches the target and presents that one at once,
 even while paused - which is what makes scrubbing show the right picture. In
 KeyFrameOnly mode the landing point is the target.
+
+THE SEEK HOLD - WHY Position IS EXACT AFTER A SEEK. The audio player can only be
+re-based when the first audio packet from the new position has been read, on the
+demultiplexing thread, after Seek has returned; until then its clock still reads
+the OLD position. Once re-based it reads that packet's timestamp - a little
+before the target, or a little after when the first audio packet after the
+landing point is later than the target - and reaches the target only when the
+pre-roll has been decoded and discarded, which happens on the audio thread and
+therefore never while paused. That is PacketAudioPlayer's documented behaviour,
+not a defect in it. Before this was bridged, a paused seek reported the old
+position on return, then the re-base timestamp, and PositionChanged could echo a
+pre-seek value into a scrubber.
+
+So Seek sets a HOLD (the target, or the key frame landed on) before it bumps the
+generation, and GetClock returns the hold until the audio player has been
+re-based for THAT seek (audioRebasedGeneration), the session is playing, and the
+audio clock has reached the hold - so it never steps backwards when the audio
+takes over. The fallback clock needs no hold: Seek sets its base exactly. Three
+supporting rules:
+  * the first audio packet after a seek is re-based AND enqueued under
+    readerGate, the lock Seek takes. Outside it, a packet read just before a seek
+    could consume the seek's re-base and date the audio clock to the old position,
+    and could land in the queue after the seek cleared it - the audio packet
+    source has no generation check.
+  * a seek to where the sound has already ended reads no audio packet at all, so
+    the audio player is never re-based (and, if it had ended before, will not say
+    so again). PublishTrackExhaustion hands the clock to the stopwatch at the
+    held position when the audio track is exhausted with the re-base still
+    pending for the current generation.
+  * a player whose sound ended has stopped its voice; when the session is
+    playing, the re-base also plays it again. Without that, a seek back into the
+    sound - and every loop of a clip with sound - left the clock frozen.
+The clock thread reads the generation either side of GetClock and drops a value
+read across a seek, and reports once after every seek even if the value matches
+the last one reported. TESTS: VideoPlaybackSessionTests (device-free, the
+fallback clock) and VideoPlaybackSessionAudioTests (opt-in, the audio clock).
 
 Audio trimming and pre-roll
 ---------------------------

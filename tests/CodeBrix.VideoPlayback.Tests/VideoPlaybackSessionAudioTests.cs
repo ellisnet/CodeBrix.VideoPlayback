@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading;
 using CodeBrix.Audio.Opus;
@@ -421,6 +422,406 @@ public class VideoPlaybackSessionAudioTests
         finished.Should().BeTrue();
         ended.Should().Be(1);
     }
+
+    [Theory]
+    [InlineData("opus-audio.ogg")]
+    [InlineData("vorbis-audio.ogg")]
+    public void A_paused_exact_seek_reports_exactly_the_sought_position_every_time(string audioFile)
+    {
+        //Arrange - four seconds of picture over four seconds of sound, played for a moment and paused, the
+        // way a viewer reaches for the scrub bar. The seeks alternate between one and two seconds, enough of
+        // them that a race between the seek and the demultiplexing thread shows.
+        SkipUnlessAudioIsEnabled();
+        CodeBrixAudioOpus.Register();
+        string path = WriteFourSecondClip("audio-paused-seek-" + audioFile, audioFile);
+
+        using VideoPlaybackSession session = NewSession();
+        long shownTicks = -1;
+        session.FrameReady += (s, e) => Interlocked.Exchange(ref shownTicks, e.Timestamp.Ticks);
+        session.Open(path);
+        session.Play();
+        WaitFor(() => session.Position > TimeSpan.FromMilliseconds(300));
+        session.Pause();
+        Thread.Sleep(100);
+
+        List<string> wrong = new List<string>();
+
+        //Act
+        for (int i = 0; i < 16; i++)
+        {
+            TimeSpan target = TimeSpan.FromSeconds(i % 2 == 0 ? 1 : 2);
+            Interlocked.Exchange(ref shownTicks, -1);
+
+            session.Seek(target);
+            TimeSpan atReturn = session.Position;
+            bool shown = WaitFor(() => Interlocked.Read(ref shownTicks) == target.Ticks, TimeSpan.FromSeconds(5));
+            Thread.Sleep(50);
+            TimeSpan afterFrame = session.Position;
+
+            if (!shown || atReturn != target || afterFrame != target)
+            {
+                wrong.Add($"seek {i} to {target}: shown={shown}, at return {atReturn}, after the frame {afterFrame}");
+            }
+        }
+
+        //Assert
+        string.Join(Environment.NewLine, wrong).Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Resuming_after_a_paused_seek_never_steps_the_position_backwards()
+    {
+        //Arrange - the audio player re-bases to the first packet it is given, which is a little BEFORE the
+        // sought position; the position must not dip to it when the audio clock takes over.
+        SkipUnlessAudioIsEnabled();
+        CodeBrixAudioOpus.Register();
+        string path = WriteFourSecondClip("audio-seek-resume", "opus-audio.ogg");
+        using VideoPlaybackSession session = NewSession();
+        session.Open(path);
+        session.Play();
+        WaitFor(() => session.Position > TimeSpan.FromMilliseconds(200));
+        session.Pause();
+        session.Seek(TimeSpan.FromSeconds(1));
+        Thread.Sleep(100);
+
+        //Act
+        session.Play();
+        List<TimeSpan> seen = Watch(session, TimeSpan.FromMilliseconds(600));
+
+        //Assert
+        FirstStepBackwards(seen, TimeSpan.FromSeconds(1)).Should().BeEmpty();
+        seen[seen.Count - 1].Should().BeGreaterThan(TimeSpan.FromSeconds(1.3));
+    }
+
+    [Fact]
+    public void A_seek_while_playing_reports_the_sought_position_at_once_and_never_less()
+    {
+        //Arrange
+        SkipUnlessAudioIsEnabled();
+        CodeBrixAudioOpus.Register();
+        string path = WriteFourSecondClip("audio-seek-playing", "opus-audio.ogg");
+        using VideoPlaybackSession session = NewSession();
+        session.Open(path);
+        session.Play();
+        WaitFor(() => session.Position > TimeSpan.FromMilliseconds(200));
+        List<string> wrong = new List<string>();
+
+        //Act
+        foreach (double seconds in new[] { 2.0, 1.0, 2.5, 0.6 })
+        {
+            TimeSpan target = TimeSpan.FromSeconds(seconds);
+            session.Seek(target);
+            TimeSpan atReturn = session.Position;
+            List<TimeSpan> seen = Watch(session, TimeSpan.FromMilliseconds(400));
+
+            if (atReturn != target) wrong.Add($"seek to {target}: at return {atReturn}");
+            string backwards = FirstStepBackwards(seen, target);
+            if (backwards.Length > 0) wrong.Add($"seek to {target}: {backwards}");
+            if (seen[seen.Count - 1] < target + TimeSpan.FromMilliseconds(150))
+            {
+                wrong.Add($"seek to {target}: the clock did not run on, it reads {seen[seen.Count - 1]}");
+            }
+        }
+
+        //Assert
+        string.Join(Environment.NewLine, wrong).Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Back_to_back_paused_seeks_report_the_last_one()
+    {
+        //Arrange
+        SkipUnlessAudioIsEnabled();
+        CodeBrixAudioOpus.Register();
+        string path = WriteFourSecondClip("audio-seek-back-to-back", "vorbis-audio.ogg");
+        using VideoPlaybackSession session = NewSession();
+        long shownTicks = -1;
+        session.FrameReady += (s, e) => Interlocked.Exchange(ref shownTicks, e.Timestamp.Ticks);
+        session.Open(path);
+        session.Play();
+        WaitFor(() => session.Position > TimeSpan.FromMilliseconds(200));
+        session.Pause();
+        List<string> wrong = new List<string>();
+
+        //Act
+        for (int round = 0; round < 6; round++)
+        {
+            Interlocked.Exchange(ref shownTicks, -1);
+            session.Seek(TimeSpan.FromSeconds(3));
+            session.Seek(TimeSpan.FromSeconds(0.5));
+            session.Seek(TimeSpan.FromSeconds(2));
+            TimeSpan atReturn = session.Position;
+            bool shown = WaitFor(() => Interlocked.Read(ref shownTicks) == TimeSpan.FromSeconds(2).Ticks);
+            Thread.Sleep(50);
+            TimeSpan afterFrame = session.Position;
+
+            if (!shown || atReturn != TimeSpan.FromSeconds(2) || afterFrame != TimeSpan.FromSeconds(2))
+            {
+                wrong.Add($"round {round}: shown={shown}, at return {atReturn}, after the frame {afterFrame}");
+            }
+        }
+
+        //Assert
+        string.Join(Environment.NewLine, wrong).Should().BeEmpty();
+    }
+
+    [Fact]
+    public void A_paused_key_frame_seek_reports_the_key_frame_it_landed_on()
+    {
+        //Arrange - a key frame every ten frames at 25 a second is one every 0.4 s, so 1.1 s lands on 0.8 s.
+        SkipUnlessAudioIsEnabled();
+        CodeBrixAudioOpus.Register();
+        string path = WriteFourSecondClip("audio-seek-key-frame", "opus-audio.ogg");
+        using VideoPlaybackSession session = new VideoPlaybackSession(
+            new VideoPlaybackOptions { SeekMode = VideoSeekMode.KeyFrameOnly });
+        session.Open(path);
+        session.Play();
+        WaitFor(() => session.Position > TimeSpan.FromMilliseconds(200));
+        session.Pause();
+
+        //Act
+        session.Seek(TimeSpan.FromSeconds(1.1));
+        TimeSpan atReturn = session.Position;
+        Thread.Sleep(200);
+        TimeSpan settled = session.Position;
+        session.Play();
+        List<TimeSpan> seen = Watch(session, TimeSpan.FromMilliseconds(400));
+
+        //Assert
+        atReturn.Should().Be(TimeSpan.FromSeconds(0.8));
+        settled.Should().Be(TimeSpan.FromSeconds(0.8));
+        FirstStepBackwards(seen, TimeSpan.FromSeconds(0.8)).Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Stop_reads_zero_and_stays_there_until_played_again()
+    {
+        //Arrange
+        SkipUnlessAudioIsEnabled();
+        CodeBrixAudioOpus.Register();
+        string path = WriteFourSecondClip("audio-stop", "opus-audio.ogg");
+        using VideoPlaybackSession session = NewSession();
+        session.Open(path);
+        session.Play();
+        WaitFor(() => session.Position > TimeSpan.FromMilliseconds(500));
+
+        //Act
+        session.Stop();
+        TimeSpan atReturn = session.Position;
+        Thread.Sleep(300);
+        TimeSpan later = session.Position;
+        session.Play();
+        bool runs = WaitFor(() => session.Position > TimeSpan.FromMilliseconds(200));
+
+        //Assert
+        session.State.Should().Be(VideoPlaybackState.Playing);
+        atReturn.Should().Be(TimeSpan.Zero);
+        later.Should().Be(TimeSpan.Zero);
+        runs.Should().BeTrue();
+    }
+
+    [Fact]
+    public void After_a_paused_seek_PositionChanged_never_reports_the_old_position()
+    {
+        //Arrange
+        SkipUnlessAudioIsEnabled();
+        CodeBrixAudioOpus.Register();
+        string path = WriteFourSecondClip("audio-seek-event", "opus-audio.ogg");
+        using VideoPlaybackSession session = new VideoPlaybackSession(
+            new VideoPlaybackOptions { PositionUpdateInterval = TimeSpan.FromMilliseconds(10) });
+        List<TimeSpan> reported = new List<TimeSpan>();
+        session.PositionChanged += (s, e) =>
+        {
+            lock (reported) reported.Add(e.Position);
+        };
+
+        session.Open(path);
+        session.Play();
+        WaitFor(() => session.Position > TimeSpan.FromMilliseconds(200));
+        List<string> wrong = new List<string>();
+
+        //Act
+        for (int i = 0; i < 8; i++)
+        {
+            session.Pause();
+            TimeSpan target = TimeSpan.FromSeconds(i % 2 == 0 ? 1 : 2);
+            session.Seek(target);
+            lock (reported) reported.Clear();
+            Thread.Sleep(150);
+
+            TimeSpan[] after;
+            lock (reported) after = reported.ToArray();
+
+            foreach (TimeSpan value in after)
+            {
+                if (value != target) wrong.Add($"seek {i} to {target}: PositionChanged reported {value}");
+            }
+
+            if (after.Length == 0) wrong.Add($"seek {i} to {target}: PositionChanged reported nothing");
+
+            // Play a moment between seeks, so the position the clock thread last reported is not the target.
+            session.Play();
+            Thread.Sleep(120);
+        }
+
+        //Assert
+        string.Join(Environment.NewLine, wrong).Should().BeEmpty();
+    }
+
+    [Fact]
+    public void A_seek_past_the_end_of_the_sound_holds_the_position_and_plays_the_picture_to_its_end()
+    {
+        //Arrange - four seconds of picture over one second of sound. A seek to three seconds finds no sound
+        // at all, so the audio player is never re-based and the stopwatch must take over from three seconds.
+        SkipUnlessAudioIsEnabled();
+        CodeBrixAudioOpus.Register();
+        string path = SyntheticMedia.WriteRawCbv(
+            SyntheticMedia.ScratchPath("audio-seek-past-sound", "clip.cbv"),
+            frameCount: 100,
+            frameRate: 25,
+            keyFrameInterval: 10,
+            audioOggPath: TestAssets.Path("opus-audio.ogg"));
+
+        using VideoPlaybackSession session = NewSession();
+        session.Open(path);
+        session.Play();
+        WaitFor(() => session.Position > TimeSpan.FromMilliseconds(200));
+        session.Pause();
+
+        //Act
+        session.Seek(TimeSpan.FromSeconds(3));
+        TimeSpan atReturn = session.Position;
+        Thread.Sleep(200);
+        TimeSpan settled = session.Position;
+        session.Play();
+        List<TimeSpan> seen = Watch(session, TimeSpan.FromMilliseconds(400));
+        bool ended = WaitFor(() => session.State == VideoPlaybackState.Ended);
+
+        //Assert
+        atReturn.Should().Be(TimeSpan.FromSeconds(3));
+        settled.Should().Be(TimeSpan.FromSeconds(3));
+        FirstStepBackwards(seen, TimeSpan.FromSeconds(3)).Should().BeEmpty();
+        seen[seen.Count - 1].Should().BeGreaterThan(TimeSpan.FromSeconds(3.2));
+        ended.Should().BeTrue();
+        session.Position.Should().BeGreaterThan(TimeSpan.FromSeconds(3.9));
+    }
+
+    [Fact]
+    public void A_seek_back_into_the_sound_after_it_has_ended_gives_the_clock_back_to_the_audio()
+    {
+        //Arrange - the sound runs out at one second and the stopwatch takes over; a seek back to half a second
+        // has sound again, and then a seek to three seconds has none.
+        SkipUnlessAudioIsEnabled();
+        CodeBrixAudioOpus.Register();
+        string path = SyntheticMedia.WriteRawCbv(
+            SyntheticMedia.ScratchPath("audio-seek-after-sound-ended", "clip.cbv"),
+            frameCount: 100,
+            frameRate: 25,
+            keyFrameInterval: 10,
+            audioOggPath: TestAssets.Path("opus-audio.ogg"));
+
+        using VideoPlaybackSession session = NewSession();
+        session.Open(path);
+        session.Play();
+        WaitFor(() => session.Position > TimeSpan.FromSeconds(1.5));
+
+        //Act
+        session.Seek(TimeSpan.FromSeconds(0.5));
+        TimeSpan backInTheSound = session.Position;
+        List<TimeSpan> soundSeen = Watch(session, TimeSpan.FromMilliseconds(300));
+        session.Pause();
+        session.Seek(TimeSpan.FromSeconds(3));
+        TimeSpan pastTheSound = session.Position;
+        Thread.Sleep(100);
+        TimeSpan pastTheSoundSettled = session.Position;
+        session.Play();
+        bool ended = WaitFor(() => session.State == VideoPlaybackState.Ended);
+
+        //Assert
+        backInTheSound.Should().Be(TimeSpan.FromSeconds(0.5));
+        FirstStepBackwards(soundSeen, TimeSpan.FromSeconds(0.5)).Should().BeEmpty();
+        soundSeen[soundSeen.Count - 1].Should().BeGreaterThan(TimeSpan.FromSeconds(0.65));
+        pastTheSound.Should().Be(TimeSpan.FromSeconds(3));
+        pastTheSoundSettled.Should().Be(TimeSpan.FromSeconds(3));
+        ended.Should().BeTrue();
+    }
+
+    [Fact]
+    public void A_looping_clip_with_sound_starts_again_instead_of_ending()
+    {
+        //Arrange
+        SkipUnlessAudioIsEnabled();
+        CodeBrixAudioOpus.Register();
+        string path = SyntheticMedia.WriteRawCbv(
+            SyntheticMedia.ScratchPath("audio-loop", "clip.cbv"),
+            frameCount: 25,
+            frameRate: 25,
+            keyFrameInterval: 5,
+            audioOggPath: TestAssets.Path("opus-audio.ogg"));
+
+        using VideoPlaybackSession session = NewSession();
+        int ended = 0;
+        session.PlaybackEnded += (s, e) => Interlocked.Increment(ref ended);
+        session.Open(path);
+        session.IsLooping = true;
+
+        //Act
+        session.Play();
+        bool late = WaitFor(() => session.Position > TimeSpan.FromSeconds(0.8));
+        bool wrapped = late && WaitFor(() => session.Position < TimeSpan.FromSeconds(0.5));
+        bool runsAgain = wrapped && WaitFor(() => session.Position > TimeSpan.FromSeconds(0.6));
+
+        //Assert
+        late.Should().BeTrue();
+        wrapped.Should().BeTrue();
+        runsAgain.Should().BeTrue();
+        ended.Should().Be(0);
+        session.State.Should().Be(VideoPlaybackState.Playing);
+    }
+
+    /// <summary>Reads the position every few milliseconds for a while, and returns what it read.</summary>
+    private static List<TimeSpan> Watch(VideoPlaybackSession session, TimeSpan howLong)
+    {
+        List<TimeSpan> seen = new List<TimeSpan>();
+        Stopwatch watch = Stopwatch.StartNew();
+
+        while (watch.Elapsed < howLong)
+        {
+            seen.Add(session.Position);
+            Thread.Sleep(2);
+        }
+
+        seen.Add(session.Position);
+        return seen;
+    }
+
+    /// <summary>
+    /// Describes the first reading that is lower than the one before it or lower than a floor, or returns
+    /// an empty string when the readings never went backwards.
+    /// </summary>
+    private static string FirstStepBackwards(List<TimeSpan> seen, TimeSpan floor)
+    {
+        for (int i = 0; i < seen.Count; i++)
+        {
+            if (seen[i] < floor) return $"reading {i} was {seen[i]}, below {floor}";
+            if (i > 0 && seen[i] < seen[i - 1]) return $"reading {i} was {seen[i]}, after {seen[i - 1]}";
+        }
+
+        return string.Empty;
+    }
+
+    /// <summary>
+    /// Writes four seconds of uncompressed picture at 25 frames a second, a key frame every ten, over the
+    /// named corpus sound file laid end to end until it lasts as long.
+    /// </summary>
+    private static string WriteFourSecondClip(string name, string audioFile) =>
+        SyntheticMedia.WriteRawCbv(
+            SyntheticMedia.ScratchPath(name, "clip.cbv"),
+            frameCount: 100,
+            frameRate: 25,
+            keyFrameInterval: 10,
+            audioOggPath: TestAssets.Path(audioFile),
+            audioRepeat: 4);
 
     /// <summary>
     /// Plays a clip to its end and reports how much audio the packet player actually handed to the device.

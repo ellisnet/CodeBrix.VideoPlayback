@@ -43,8 +43,10 @@ XML documentation (IntelliSense) ships alongside every assembly.
 
 Each package pulls in what it needs automatically; no version pinning is needed in the consuming project:
 
-* `CodeBrix.VideoPlayback.MitLicenseForever` pulls in `CodeBrix.Audio.MitLicenseForever`, which plays the
-  sound and has Vorbis built in. That is the whole list - no native binary, no drawing dependency.
+* `CodeBrix.VideoPlayback.MitLicenseForever` pulls in `CodeBrix.Audio.Core.MitLicenseForever`, the managed
+  audio library with Vorbis built in. That is the whole list - no native binary, no drawing dependency. To hear
+  the sound, an application adds the desktop audio package `CodeBrix.Audio.MitLicenseForever`, which carries
+  the native engine; the Skia package below brings it in already.
 * `CodeBrix.VideoPlayback.Skia.MitLicenseForever` pulls in the playback package and `SkiaSharp`. It
   deliberately does NOT bring a SkiaSharp native-asset package: a consuming application adds the
   `SkiaSharp.NativeAssets` package for each platform it ships on, and so chooses its own native binary.
@@ -227,7 +229,7 @@ written for AI coding agents - point your agent at the file inside the package i
   every encoder setting, the device-class table, the colour-grade hook, and the two things a WebM-profile
   file cannot carry.
 
-Sound is played by the sibling `CodeBrix.Audio.MitLicenseForever` package; read its own `AGENT-README.txt`
+Sound is played by the sibling `CodeBrix.Audio.Core.MitLicenseForever` / `CodeBrix.Audio.MitLicenseForever` packages; read their shared `AGENT-README.txt`
 for the audio side.
 
 In the repository there is also

@@ -241,6 +241,199 @@ public class VideoPlaybackSessionTests
     }
 
     [Fact]
+    public void A_paused_exact_seek_reports_exactly_the_sought_position_every_time()
+    {
+        //Arrange - the same scrub-bar pattern the audible suite runs, on the clock a clip with no sound uses.
+        string path = WriteClip("seek-paused-exact", frameCount: 100, frameRate: 25, keyFrameInterval: 10);
+        using VideoPlaybackSession session = NewSession();
+        long shownTicks = -1;
+        session.FrameReady += (s, e) => Interlocked.Exchange(ref shownTicks, e.Timestamp.Ticks);
+        session.Open(path);
+        session.Play();
+        WaitFor(() => session.Position > TimeSpan.FromMilliseconds(200));
+        session.Pause();
+        List<string> wrong = new List<string>();
+
+        //Act
+        for (int i = 0; i < 16; i++)
+        {
+            TimeSpan target = TimeSpan.FromSeconds(i % 2 == 0 ? 1 : 2);
+            Interlocked.Exchange(ref shownTicks, -1);
+
+            session.Seek(target);
+            TimeSpan atReturn = session.Position;
+            bool shown = WaitFor(() => Interlocked.Read(ref shownTicks) == target.Ticks, TimeSpan.FromSeconds(5));
+            Thread.Sleep(30);
+            TimeSpan afterFrame = session.Position;
+
+            if (!shown || atReturn != target || afterFrame != target)
+            {
+                wrong.Add($"seek {i} to {target}: shown={shown}, at return {atReturn}, after the frame {afterFrame}");
+            }
+        }
+
+        //Assert
+        string.Join(Environment.NewLine, wrong).Should().BeEmpty();
+    }
+
+    [Fact]
+    public void A_paused_key_frame_seek_reports_the_key_frame_it_landed_on()
+    {
+        //Arrange - a key frame every ten frames at 25 a second is one every 0.4 s, so 1.1 s lands on 0.8 s.
+        string path = WriteClip("seek-paused-key", frameCount: 100, frameRate: 25, keyFrameInterval: 10);
+        using VideoPlaybackSession session = NewSession(new VideoPlaybackOptions
+        {
+            SeekMode = VideoSeekMode.KeyFrameOnly,
+        });
+        session.Open(path);
+
+        //Act
+        session.Seek(TimeSpan.FromSeconds(1.1));
+        TimeSpan atReturn = session.Position;
+        Thread.Sleep(100);
+        TimeSpan settled = session.Position;
+
+        //Assert
+        atReturn.Should().Be(TimeSpan.FromSeconds(0.8));
+        settled.Should().Be(TimeSpan.FromSeconds(0.8));
+    }
+
+    [Fact]
+    public void Back_to_back_seeks_report_the_last_one()
+    {
+        //Arrange
+        string path = WriteClip("seek-back-to-back", frameCount: 100, frameRate: 25, keyFrameInterval: 10);
+        using VideoPlaybackSession session = NewSession();
+        long shownTicks = -1;
+        session.FrameReady += (s, e) => Interlocked.Exchange(ref shownTicks, e.Timestamp.Ticks);
+        session.Open(path);
+        WaitFor(() => session.Presenter.HasFrame);
+
+        //Act
+        session.Seek(TimeSpan.FromSeconds(3));
+        session.Seek(TimeSpan.FromSeconds(0.5));
+        session.Seek(TimeSpan.FromSeconds(2));
+        TimeSpan atReturn = session.Position;
+        bool shown = WaitFor(() => Interlocked.Read(ref shownTicks) == TimeSpan.FromSeconds(2).Ticks);
+        TimeSpan afterFrame = session.Position;
+
+        //Assert
+        shown.Should().BeTrue();
+        atReturn.Should().Be(TimeSpan.FromSeconds(2));
+        afterFrame.Should().Be(TimeSpan.FromSeconds(2));
+    }
+
+    [Fact]
+    public void A_seek_while_playing_runs_on_from_the_sought_position()
+    {
+        //Arrange
+        string path = WriteClip("seek-playing", frameCount: 100, frameRate: 25);
+        using VideoPlaybackSession session = NewSession();
+        session.Open(path);
+        session.Play();
+        WaitFor(() => session.Position > TimeSpan.FromMilliseconds(200));
+
+        //Act
+        session.Seek(TimeSpan.FromSeconds(1));
+        TimeSpan atReturn = session.Position;
+        Thread.Sleep(200);
+        TimeSpan later = session.Position;
+
+        //Assert - the clock is running, so "at once" is the sought position plus however long reading it took.
+        atReturn.Should().BeGreaterThanOrEqualTo(TimeSpan.FromSeconds(1));
+        atReturn.Should().BeLessThan(TimeSpan.FromSeconds(1.05));
+        later.Should().BeGreaterThan(TimeSpan.FromSeconds(1.1));
+    }
+
+    [Fact]
+    public void After_a_paused_seek_PositionChanged_delivers_the_sought_position()
+    {
+        //Arrange
+        string path = WriteClip("seek-event", frameCount: 100, frameRate: 25);
+        using VideoPlaybackSession session = NewSession(new VideoPlaybackOptions
+        {
+            PositionUpdateInterval = TimeSpan.FromMilliseconds(10),
+        });
+        List<TimeSpan> reported = new List<TimeSpan>();
+        session.PositionChanged += (s, e) =>
+        {
+            lock (reported) reported.Add(e.Position);
+        };
+
+        session.Open(path);
+        session.Play();
+        WaitFor(() => session.Position > TimeSpan.FromMilliseconds(200));
+        List<string> wrong = new List<string>();
+
+        //Act
+        for (int i = 0; i < 8; i++)
+        {
+            session.Pause();
+            TimeSpan target = TimeSpan.FromSeconds(i % 2 == 0 ? 1 : 2);
+            session.Seek(target);
+            lock (reported) reported.Clear();
+            Thread.Sleep(100);
+
+            TimeSpan[] after;
+            lock (reported) after = reported.ToArray();
+
+            foreach (TimeSpan value in after)
+            {
+                if (value != target) wrong.Add($"seek {i} to {target}: PositionChanged reported {value}");
+            }
+
+            if (after.Length == 0) wrong.Add($"seek {i} to {target}: PositionChanged reported nothing");
+
+            session.Play();
+            Thread.Sleep(60);
+        }
+
+        //Assert
+        string.Join(Environment.NewLine, wrong).Should().BeEmpty();
+    }
+
+    [Fact]
+    public void A_paused_seek_to_the_very_end_reports_the_end()
+    {
+        //Arrange
+        string path = WriteClip("seek-to-end", frameCount: 50, frameRate: 25);
+        using VideoPlaybackSession session = NewSession();
+        session.Open(path);
+
+        //Act
+        session.Seek(session.Duration);
+        TimeSpan atReturn = session.Position;
+        bool ended = WaitFor(() => session.State == VideoPlaybackState.Ended, TimeSpan.FromSeconds(5));
+
+        //Assert
+        atReturn.Should().Be(session.Duration);
+        ended.Should().BeTrue();
+        session.Position.Should().Be(session.Duration);
+    }
+
+    [Fact]
+    public void Stop_reads_zero_and_stays_there_until_played_again()
+    {
+        //Arrange
+        string path = WriteClip("stop-stays", frameCount: 200, frameRate: 25);
+        using VideoPlaybackSession session = NewSession();
+        session.Open(path);
+        session.Play();
+        WaitFor(() => session.Position > TimeSpan.FromMilliseconds(150));
+
+        //Act
+        session.Stop();
+        Thread.Sleep(300);
+        TimeSpan later = session.Position;
+        session.Play();
+        bool runs = WaitFor(() => session.Position > TimeSpan.FromMilliseconds(100));
+
+        //Assert
+        later.Should().Be(TimeSpan.Zero);
+        runs.Should().BeTrue();
+    }
+
+    [Fact]
     public void Stop_puts_the_position_back_to_the_beginning()
     {
         //Arrange
