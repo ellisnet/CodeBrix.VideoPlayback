@@ -52,7 +52,7 @@ naming the package to add. Nothing is guessed at and nothing is reflected on.
                    referenced and CodeBrixVideoPlaybackDav1d.Register() called
                    (any other IVideoDecoderFactory serving "av01" works too, via
                    VideoDecoders.Register(...))
-  audio "vorbis"   works out of the box - CodeBrix.Audio has it built in
+  audio "vorbis"   works out of the box - CodeBrix.Audio.Core has it built in
   audio "opus"     needs CodeBrix.Audio.Opus referenced and
                    CodeBrixAudioOpus.Register() called
 
@@ -83,8 +83,9 @@ application needs them:
     macOS - the desktop package that carries the native engine (the Skia
     presenter package below brings it in already);
   * CodeBrix.VideoPlayback.Dav1d.BsdLicenseForever, to play AV1 video - the
-    dav1d binding with its seven self-built native libraries, a separate package
-    because it is BSD-2-Clause and carries natives;
+    dav1d binding with its self-built native libraries for Windows, macOS, Linux
+    and Android, a separate package because it is BSD-2-Clause and carries
+    natives;
   * CodeBrix.Audio.Opus.BsdLicenseForever, to play Opus audio;
   * CodeBrix.VideoPlayback.Skia.MitLicenseForever, if you would rather have
     frames drawn for you than draw them yourself. It is built around one class,
@@ -142,7 +143,7 @@ KEY NAMESPACES / USINGS
                                                 //   VideoCompositionContext, VideoStretchMath,
                                                 //   GpuUploadFence, the shader source
 
-Playing a file needs the first three. Everything else is there when you want it.
+Playing a file needs the first four. Everything else is there when you want it.
 
 
 CORE API REFERENCE
@@ -822,8 +823,9 @@ COMPLETE EXAMPLES
     CbvAuthoringResult result = CbvAuthoring.Write(request);
 
   THE SOUND IN A BESPOKE ".cbv" IS VORBIS. That flavour exists so that the file
-  plays with CodeBrix.VideoPlayback - whose one dependency, CodeBrix.Audio, has
-  Vorbis built in - plus a video decoder package, and NOTHING else. Opus needs the
+  plays with CodeBrix.VideoPlayback - whose one dependency, CodeBrix.Audio.Core,
+  has Vorbis built in - plus a video decoder package, and NOTHING else (sound
+  output on the desktop still needs CodeBrix.Audio). Opus needs the
   application to reference CodeBrix.Audio.Opus and call CodeBrixAudioOpus.Register(),
   which is one package more than the flavour promises, so no authoring surface puts
   it there: the authoring library refuses a bespoke request whose audio would be
@@ -954,7 +956,7 @@ COMMON PITFALLS TO AVOID
   not a bug.
 
 - FORGETTING CodeBrixAudioOpus.Register() FOR OPUS. Vorbis is built into
-  CodeBrix.Audio and needs nothing; Opus is a separate package because its
+  CodeBrix.Audio.Core and needs nothing; Opus is a separate package because its
   licence is different. Same shape of message.
 
 - USING A FRAME AFTER DISPOSING IT. A frame is reference-counted, and at zero its

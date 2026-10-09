@@ -80,7 +80,7 @@ Or in a project file:
 
     <PackageReference Include="CodeBrix.VideoPlayback.Authoring.MitLicenseForever" Version="*" />
 
-That pulls in CodeBrix.VideoPlayback (and, through it, CodeBrix.Audio) and
+That pulls in CodeBrix.VideoPlayback (and, through it, CodeBrix.Audio.Core) and
 CodeBrix.VideoProcessing. Then install FFMPEG on the machine that will run the
 authoring, built with the encoders you intend to name:
 
@@ -230,7 +230,7 @@ VideoAuthoringRequest - one file's worth of decisions
   are mapped explicitly whatever the switch says: any -map on an output turns
   ffmpeg's automatic selection off for that output, and without this a request
   with the switch off and one caption produced a file holding the caption track
-  and nothing else (measured 2026-09-02).
+  and nothing else (measured).
 
   CopySourceMetadata off renders `-map_metadata -1` and drops the recording's
   creation time and device strings. A chapter file is an extra input named by
@@ -352,12 +352,13 @@ AuthoringAudioSettings - the sound
   DEFAULT RESOLVES PER FLAVOUR: Opus for a WebM-profile file, which is what the
   wider world expects of a WebM, and Vorbis for a bespoke one, which is the
   flavour an application ships inside itself. That is the whole reason for the
-  split - a Vorbis file plays with the core package alone.
+  split - a Vorbis file needs no codec package beyond the core (sound output on
+  the desktop still needs CodeBrix.Audio).
 
   THE ONE RULE ABOUT SOUND: A BESPOKE ".cbv" NEVER CARRIES OPUS. That flavour
   exists so that the file plays with CodeBrix.VideoPlayback - whose one
-  dependency, CodeBrix.Audio, has Vorbis built in - plus a video decoder package,
-  and NOTHING else. Opus would need the playing application to reference
+  dependency, CodeBrix.Audio.Core, has Vorbis built in - plus a video decoder
+  package, and NOTHING else. Opus would need the playing application to reference
   CodeBrix.Audio.Opus and call CodeBrixAudioOpus.Register(), which is one package
   more than the flavour promises, so a bespoke request that asks for Opus is
   REFUSED - always, whatever the switches say, before anything runs. Opus is
@@ -552,9 +553,8 @@ The source contributes its PICTURE and its SOUND - the first video stream and
 the first audio stream, or ffmpeg's own choice with SelectStreamsExplicitly off.
 It never contributes its own SUBTITLE STREAMS and never its own CHAPTERS, in
 EITHER flavour: captions come from the request's Captions inputs and chapters
-from ChaptersPath, and from nowhere else. Both flavours agree on this (measured
-2026-09-02; until then the WebM-profile pass carried a source's chapters with
-their titles stripped, while the bespoke pass carried none).
+from ChaptersPath, and from nowhere else. Both flavours agree on this
+(measured).
 
 The run says so rather than letting you find out from the finished file. Write
 probes the source once with ffprobe, and when it finds text of the source's own

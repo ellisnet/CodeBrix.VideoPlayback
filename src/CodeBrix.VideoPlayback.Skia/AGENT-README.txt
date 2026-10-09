@@ -59,8 +59,10 @@ WHAT IT ACTUALLY DOES, AND WHY THE SHAPE IS WHAT IT IS
     graphics fallback should not become a slideshow; AllowEffectsOnCpu turns
     them on when the effect chain is the point of the picture.
 
-Package reference: plain SkiaSharp, and nothing else. No view package, no
-windowing toolkit, no native binary. Your application chooses the SkiaSharp
+Package references: SkiaSharp, the core playback package, and
+CodeBrix.Audio.MitLicenseForever (the desktop audio output that actually
+plays the sound). No view package, no windowing toolkit, no native binary of
+its own. Your application chooses the SkiaSharp
 native asset package that suits the platforms it ships on - see INSTALLATION.
 
 Target framework: .NET 10 or later. License: MIT.
@@ -74,8 +76,9 @@ Or in a project file:
 
     <PackageReference Include="CodeBrix.VideoPlayback.Skia.MitLicenseForever" Version="*" />
 
-That pulls in CodeBrix.VideoPlayback (and, through it, CodeBrix.Audio) and
-SkiaSharp. Then add, as your application needs them:
+That pulls in CodeBrix.VideoPlayback (and, through it, CodeBrix.Audio.Core),
+CodeBrix.Audio.MitLicenseForever for desktop sound output, and SkiaSharp. Then
+add, as your application needs them:
 
   * a SkiaSharp NATIVE ASSET package for each platform you ship on. This
     library deliberately does not choose one: choosing for you would break
@@ -482,6 +485,7 @@ COMPLETE EXAMPLES
 
 7. Draw on the video.
 
+    using SkiaSharp;
     using CodeBrix.VideoPlayback.Skia.Composition;
     using CodeBrix.VideoPlayback.Rendering;
 
