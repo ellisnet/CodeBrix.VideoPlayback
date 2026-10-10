@@ -1,7 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using CodeBrix.VideoPlayback.Authoring.Encoding;
+using CodeBrix.VideoPlayback.Codecs;
+using CodeBrix.VideoPlayback.Containers.Ivf;
+using CodeBrix.VideoPlayback.Sources;
 using CodeBrix.VideoProcessing;
 using CodeBrix.VideoProcessing.Enums;
 using CodeBrix.VideoProcessing.Helpers;
@@ -91,8 +95,74 @@ internal static class AuthoringTools
             return true;
         }
 
-        warnings = DescribeEncoderWarnings(encoders.Contains);
+        List<string> found = new List<string>(DescribeEncoderWarnings(encoders.Contains));
+        found.AddRange(DescribeMasterEncoderWarnings(encoders.Contains));
+
+        if (encoders.Contains(AuthoringEncoderNames.LibAomAv1) && !CanEncodeMonochromeAv1(out string reason))
+        {
+            found.Add(
+                "The libaom AV1 encoder (libaom-av1) in this ffmpeg build did not write a MONOCHROME stream from "
+                + "gray input, so a master ('.cbvmaster') request that carries alpha will fail: the alpha plane is a "
+                + "monochrome AV1 stream and libaom is the encoder that writes it. Set Video.Alpha to Exclude, or "
+                + "install an ffmpeg build whose libaom-av1 accepts the 'gray' pixel format. " + reason);
+        }
+
+        warnings = found;
         return true;
+    }
+
+    /// <summary>
+    /// Encodes one tiny gray frame with libaom-av1 and checks that the sequence header it wrote says
+    /// monochrome - the one capability the master flavour's alpha pass depends on that a codec listing cannot
+    /// show.
+    /// </summary>
+    /// <param name="reason">Why not, or an empty string.</param>
+    /// <returns>True when the build writes monochrome AV1.</returns>
+    internal static bool CanEncodeMonochromeAv1(out string reason)
+    {
+        string path = Path.Combine(Path.GetTempPath(), "codebrix-monochrome-probe-" + Guid.NewGuid().ToString("N") + ".ivf");
+
+        try
+        {
+            FFMpegArguments
+                .FromFileInput("color=c=gray:s=64x64:d=0.1", false, input => input.ForceFormat("lavfi"))
+                .OutputToFile(path, true, output => output
+                    .WithVideoCodec(AuthoringEncoderNames.LibAomAv1)
+                    .WithCustomArgument("-usage realtime -cpu-used 8 -frames:v 1")
+                    .ForcePixelFormat("gray")
+                    .ForceFormat("ivf"))
+                .ProcessSynchronously();
+
+            using IvfReader reader = new IvfReader(new FileMediaSource(path));
+            if (reader.TryReadFrame(out ReadOnlyMemory<byte> data, out _, out _)
+                && Av1Bitstream.TryReadSequenceHeader(data.Span, out Av1SequenceHeader header, out _, out _)
+                && header.Monochrome)
+            {
+                reason = string.Empty;
+                return true;
+            }
+
+            reason = "The probe encode's sequence header was not monochrome.";
+            return false;
+        }
+        catch (Exception ex)
+        {
+            reason = "The probe encode reported: " + FirstLine(ex.Message);
+            return false;
+        }
+        finally
+        {
+            try
+            {
+                if (File.Exists(path)) File.Delete(path);
+            }
+            catch (IOException)
+            {
+            }
+            catch (UnauthorizedAccessException)
+            {
+            }
+        }
     }
 
     /// <summary>Throws unless ffmpeg and ffprobe can be run.</summary>
@@ -158,6 +228,40 @@ internal static class AuthoringTools
                 "The Vorbis encoder (libvorbis) is not in this ffmpeg build, so a bespoke request that includes "
                 + "sound - Vorbis is the only codec that flavour takes - will fail, as will any request that sets "
                 + "Audio.Codec = AuthoringAudioCodec.LibVorbis. Install an ffmpeg build that includes libvorbis.");
+        }
+
+        return warnings;
+    }
+
+    /// <summary>
+    /// The warnings that matter to the master (<c>.cbvmaster</c>) flavour only, given a way to ask whether the
+    /// build has an encoder.
+    /// </summary>
+    /// <param name="hasEncoder">Answers whether the build has the named encoder.</param>
+    /// <returns>One sentence per encoder the master flavour needs that the build does not have.</returns>
+    /// <remarks>
+    /// Kept apart from <see cref="DescribeEncoderWarnings" /> so that what a build is told about the other two
+    /// flavours does not change; <see cref="TryVerify(out string, out IReadOnlyList{string})" /> reports both.
+    /// </remarks>
+    internal static IReadOnlyList<string> DescribeMasterEncoderWarnings(Func<string, bool> hasEncoder)
+    {
+        List<string> warnings = new List<string>();
+
+        if (!hasEncoder(AuthoringEncoderNames.LibAomAv1))
+        {
+            warnings.Add(
+                "The libaom AV1 encoder (libaom-av1) is not in this ffmpeg build, so a master ('.cbvmaster') request "
+                + "that carries alpha will fail: the alpha plane is a monochrome AV1 stream and libaom is the only "
+                + "encoder this library uses that writes one. Set Video.Alpha to Exclude, or install an ffmpeg build "
+                + "that includes libaom-av1.");
+        }
+
+        if (!hasEncoder(AuthoringEncoderNames.Flac))
+        {
+            warnings.Add(
+                "The FLAC encoder (flac) is not in this ffmpeg build, so a master ('.cbvmaster') request that includes "
+                + "sound - FLAC is the only codec that flavour takes - will fail. Leave the sound out, or install an "
+                + "ffmpeg build that includes the native flac encoder.");
         }
 
         return warnings;

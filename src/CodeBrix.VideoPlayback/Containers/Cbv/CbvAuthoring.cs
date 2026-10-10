@@ -26,6 +26,12 @@ namespace CodeBrix.VideoPlayback.Containers.Cbv;
 /// It needs nothing installed. The IVF and Ogg files come from whatever encoder made them; everything after
 /// that is this library.
 /// </para>
+/// <para>
+/// A MASTER (Mode3) file adds a second IVF - the picture's alpha channel as a monochrome AV1 stream, declared
+/// as an alpha-plane track - and may carry its audio as ready-made packets (a FLAC stream split into frames)
+/// instead of an Ogg file. The muxer checks the alpha track against the picture and refuses a pair that is not
+/// in lock step.
+/// </para>
 /// </remarks>
 public static class CbvAuthoring
 {
@@ -43,7 +49,24 @@ public static class CbvAuthoring
             throw new ArgumentException("The request must state where to write the file.", nameof(request));
         }
 
-        if (string.IsNullOrWhiteSpace(request.VideoIvfPath) && string.IsNullOrWhiteSpace(request.AudioOggPath))
+        if (!string.IsNullOrWhiteSpace(request.AudioOggPath) && request.PacketAudio != null)
+        {
+            throw new ArgumentException(
+                "The request supplies audio both as an Ogg file and as packets; a file carries one audio track.",
+                nameof(request));
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.AlphaIvfPath) && string.IsNullOrWhiteSpace(request.VideoIvfPath))
+        {
+            throw new ArgumentException(
+                "The request supplies an alpha plane and no picture; the alpha plane is the alpha channel OF the "
+                + "picture in VideoIvfPath.",
+                nameof(request));
+        }
+
+        if (string.IsNullOrWhiteSpace(request.VideoIvfPath)
+            && string.IsNullOrWhiteSpace(request.AudioOggPath)
+            && request.PacketAudio == null)
         {
             throw new ArgumentException(
                 "The request must supply video, audio, or both; a container with neither is not a media file.",
@@ -53,14 +76,17 @@ public static class CbvAuthoring
         using CbvMuxer muxer = CbvMuxer.Create(request.OutputPath);
 
         int videoTrackId = 0;
+        int alphaTrackId = 0;
         int audioTrackId = 0;
         int videoFrames = 0;
+        int alphaFrames = 0;
         int audioPackets = 0;
         int captionCues = 0;
 
         List<TimedChunk> chunks = new List<TimedChunk>();
 
         IvfReader video = null;
+        IvfReader alpha = null;
         OggAudioStream audio = null;
 
         try
@@ -68,7 +94,20 @@ public static class CbvAuthoring
             if (!string.IsNullOrWhiteSpace(request.VideoIvfPath))
             {
                 video = new IvfReader(new FileMediaSource(request.VideoIvfPath));
-                videoTrackId = AddVideoTrack(muxer, video, request, chunks, out videoFrames);
+                videoTrackId = AddVideoTrack(
+                    muxer, video, request.VideoIvfPath, request.VideoName, CbvTrackFlags.None, chunks, out videoFrames);
+            }
+
+            if (!string.IsNullOrWhiteSpace(request.AlphaIvfPath))
+            {
+                alpha = new IvfReader(new FileMediaSource(request.AlphaIvfPath));
+                alphaTrackId = AddVideoTrack(
+                    muxer, alpha, request.AlphaIvfPath, null, CbvTrackFlags.AlphaPlane, chunks, out alphaFrames);
+            }
+
+            if (request.PacketAudio != null)
+            {
+                audioTrackId = AddPacketAudioTrack(muxer, request.PacketAudio, request, chunks, out audioPackets);
             }
 
             if (!string.IsNullOrWhiteSpace(request.AudioOggPath))
@@ -80,6 +119,7 @@ public static class CbvAuthoring
         finally
         {
             video?.Dispose();
+            alpha?.Dispose();
             audio?.Dispose();
         }
 
@@ -109,30 +149,36 @@ public static class CbvAuthoring
             muxer.WriteChunk(chunk.TrackId, chunk.Data, chunk.Timestamp, chunk.Duration, chunk.IsKeyFrame);
         }
 
+        ushort version = muxer.FormatVersion;
         muxer.Complete();
 
         return new CbvAuthoringResult(
             request.OutputPath,
             new FileInfo(request.OutputPath).Length,
             videoTrackId,
+            alphaTrackId,
             audioTrackId,
             videoFrames,
+            alphaFrames,
             audioPackets,
             request.Captions.Count,
-            captionCues);
+            captionCues,
+            version);
     }
 
     private static int AddVideoTrack(
         CbvMuxer muxer,
         IvfReader video,
-        CbvAuthoringRequest request,
+        string ivfPath,
+        string trackName,
+        CbvTrackFlags flags,
         List<TimedChunk> chunks,
         out int frameCount)
     {
         if (!string.Equals(video.FourCharacterCode, "AV01", StringComparison.OrdinalIgnoreCase))
         {
             throw new VideoPlaybackException(
-                $"'{request.VideoIvfPath}' is an IVF file carrying '{video.FourCharacterCode}'. This muxer writes "
+                $"'{ivfPath}' is an IVF file carrying '{video.FourCharacterCode}'. This muxer writes "
                 + "AV1 video, whose four-character code is 'AV01'.");
         }
 
@@ -159,7 +205,7 @@ public static class CbvAuthoring
         if (codecPrivate == null)
         {
             throw new VideoPlaybackException(
-                $"'{request.VideoIvfPath}' carries no AV1 sequence header, so no codec configuration record can be "
+                $"'{ivfPath}' carries no AV1 sequence header, so no codec configuration record can be "
                 + "built for it. The first frame of an elementary stream must carry one.");
         }
 
@@ -176,7 +222,8 @@ public static class CbvAuthoring
             null,
             video.TimeBase,
             null,
-            request.VideoName);
+            trackName,
+            flags);
 
         foreach (TimedChunk frame in frames) chunks.Add(frame.WithTrack(trackId));
         return trackId;
@@ -218,6 +265,30 @@ public static class CbvAuthoring
             request.AudioName);
 
         foreach (TimedChunk packet in packets) chunks.Add(packet.WithTrack(trackId));
+        return trackId;
+    }
+
+    private static int AddPacketAudioTrack(
+        CbvMuxer muxer,
+        CbvPacketAudioInput audio,
+        CbvAuthoringRequest request,
+        List<TimedChunk> chunks,
+        out int packetCount)
+    {
+        int trackId = muxer.AddAudioTrack(
+            audio.CodecId,
+            audio.CodecPrivate,
+            audio.SampleRate,
+            audio.Channels,
+            language: request.AudioLanguage,
+            name: request.AudioName);
+
+        packetCount = audio.Packets.Count;
+        foreach (CbvAudioPacket packet in audio.Packets)
+        {
+            chunks.Add(new TimedChunk(trackId, packet.Data, packet.Timestamp, packet.Duration, true));
+        }
+
         return trackId;
     }
 

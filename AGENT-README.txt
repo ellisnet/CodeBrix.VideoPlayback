@@ -14,7 +14,10 @@ It reads two container families:
   * WebM and Matroska (.webm, .mkv) carrying AV1 video with Opus or Vorbis
     audio and any number of text caption tracks;
   * ".cbv" - a bespoke container this package writes and reads, laid out so that
-    the whole index and every caption cue sit in front of the media data.
+    the whole index and every caption cue sit in front of the media data;
+  * ".cbvmaster" - the same bespoke container in its MASTER form ("CodeBrix
+    Video Mode3"): an optional ALPHA-PLANE track beside the picture, so the video
+    has real transparency, and lossless FLAC sound. See "Master files" below.
 
 It gives you the machinery around a codec, and no CODED codec: a demultiplexer, a
 playback session with a transport and a clock, a zero-copy frame-buffer pool, a
@@ -55,6 +58,11 @@ naming the package to add. Nothing is guessed at and nothing is reflected on.
   audio "vorbis"   works out of the box - CodeBrix.Audio.Core has it built in
   audio "opus"     needs CodeBrix.Audio.Opus referenced and
                    CodeBrixAudioOpus.Register() called
+  audio "flac"     a master file's lossless sound: needs a CodeBrix.Audio.Core
+                   whose shared output serves FLAC packets (its
+                   FlacPacketCodecFactory). Until the application's Core has it,
+                   AudioDecoders.IsCodecSupported("flac") is false and such a
+                   file opens only with PlayAudio = false
 
 ASKING IN ADVANCE, WITHOUT OPENING ANYTHING. Both questions can be asked before
 a file is opened, and neither starts a decoder, a device or a thread:
@@ -80,8 +88,9 @@ ships no native audio engine, so by itself nothing is heard. Add, as your
 application needs them:
 
   * CodeBrix.Audio.MitLicenseForever, to hear the sound on Linux, Windows or
-    macOS - the desktop package that carries the native engine (the Skia
-    presenter package below brings it in already);
+    macOS - the desktop package that carries the native engine - or
+    CodeBrix.Audio.Android.ApacheLicenseForever on Android (see "THE
+    APPLICATION CHOOSES ITS AUDIO ENGINE" below);
   * CodeBrix.VideoPlayback.Dav1d.BsdLicenseForever, to play AV1 video - the
     dav1d binding with its self-built native libraries for Windows, macOS, Linux
     and Android, a separate package because it is BSD-2-Clause and carries
@@ -98,6 +107,20 @@ application needs them:
 
 Nothing else. There is no native binary in this package and no platform-specific
 build.
+
+THE APPLICATION CHOOSES ITS AUDIO ENGINE. Neither this package nor the Skia
+presenter package references an audio engine; both reference only
+CodeBrix.Audio.Core, which decodes but cannot make a sound. The application adds
+the audio package for the platform it ships on:
+
+    Windows, Linux, macOS   CodeBrix.Audio.MitLicenseForever
+    Android                 CodeBrix.Audio.Android.ApacheLicenseForever
+
+This is the same requirement the platform video-player add-ins already state.
+A desktop application that referenced only the Skia package used to receive the
+desktop audio natives through it; it no longer does, and until it adds
+CodeBrix.Audio.MitLicenseForever itself its sessions are silent or fail when the
+audio device is opened.
 
 AND ONE PACKAGE THAT DOES NOT BELONG IN AN APPLICATION AT ALL.
 CodeBrix.VideoPlayback.Authoring.MitLicenseForever WRITES the files this one
@@ -230,6 +253,10 @@ VideoFrame (…Frames) - one decoded picture, reference-counted
 --------------------------------------------------------------
     VideoFramePlane Y, U, V           // IntPtr Data, int Stride, Width, Height,
                                       //   BytesPerSample; GetRowBytes(row)
+    VideoFramePlane A                 // the alpha plane, or Empty - see below
+    bool HasAlpha, IsAlphaPremultiplied
+    void AttachAlpha(VideoFrame alphaFrame, bool premultiplied = false)
+                                      // takes over the caller's reference
     VideoFrameBuffer Buffer
     int Width, Height, DisplayWidth, DisplayHeight
     VideoPixelLayout Layout           // Gray | I420 | I422 | I444
@@ -369,7 +396,7 @@ Decoder registration (…Decoding)
     VideoDecoders.RegisteredFactories                        // highest priority first
     VideoDecoders.BuiltInRawVideoFactory                     // the built-in one, by name
     session.RegisterDecoderFactory(factory)                  // this session only, tried first
-    VideoCodecIds.Av1 / Opus / Vorbis / WebVtt / SubRip / Ass / Raw
+    VideoCodecIds.Av1 / Opus / Vorbis / Flac / WebVtt / SubRip / Ass / Raw
 
 The registry starts with the built-in uncompressed factory (RawVideoDecoderFactory,
 priority 0, serving "raw" and nothing else) already in it, so
@@ -442,7 +469,8 @@ The streamable profile - what makes a .cbv a .cbv
         string Rule       string Detail      StreamableProfileOutcome Outcome
         bool Passed       string Tag         ToString()   "[pass] rule - detail"
 
-    The rules: AV1 video; Opus or Vorbis audio; WebVTT captions; the seek index
+    The rules: AV1 video; Opus or Vorbis audio (FLAC in a master file, and
+    nowhere else); WebVTT captions; the seek index
     in FRONT of the media data; every element a known size; a stated duration;
     timestamps that ascend within every track; and - as a RECOMMENDATION rather
     than a requirement, so it warns rather than fails - 8-bit 4:2:0 samples.
@@ -478,6 +506,68 @@ Authoring a .cbv file
     refuses to translate is explained by the file, not by a bug here. The
     hearing-impaired caption flag has the same shape: Matroska carries it, WebM
     has no element for it.
+
+Master files (.cbvmaster) - alpha and lossless sound
+----------------------------------------------------
+A master file is the bespoke container at format version 1. It may carry, beside
+the picture, an ALPHA-PLANE track: the picture's alpha channel as a monochrome
+video stream - luma only, FULL range (0 transparent, the largest sample opaque),
+the same size and bit depth as the picture, and in LOCK STEP with it (the same
+frame count, timestamps and key-frame positions). The colours are STRAIGHT unless
+the track says otherwise. Its sound, when it has any, is FLAC. A master file
+without an alpha track plays like a Mode2 file with lossless sound.
+
+    CbvFormat.Version (0) / MasterVersion (1) / HighestReadableVersion
+    CbvFormat.MasterFileExtension ".cbvmaster"   (a hint: readers sniff content)
+    CbvTrackFlags.AlphaPlane, CbvTrackFlags.PremultipliedAlpha
+    MediaTrackInfo.VideoRole        VideoTrackRole.Picture | AlphaPlane
+    MediaTrackInfo.IsAlphaPlane, IsAlphaPremultiplied
+    CbvReader.AlphaPlaneTrack       null when the file has none
+    CbvReader.Version               0, or 1 for a master file
+    CbvMuxer.FormatVersion          what the file being written will be stamped
+
+    VideoPlaybackSession.HasAlpha   true when the open file has an alpha plane
+    VideoPlaybackSession.AlphaTrack the alpha-plane track, or null
+
+    CbvAuthoringRequest.AlphaIvfPath   a second IVF: the alpha plane
+    CbvAuthoringRequest.PacketAudio    new CbvPacketAudioInput(codecId,
+                                       codecPrivate, sampleRate, channels)
+                                       { Packets = CbvAudioPacket(data, time, dur) }
+    CbvAuthoringResult.AlphaTrackId, AlphaFrameCount, FormatVersion
+
+WHAT THE PLAYER DOES WITH IT. The session runs a second decoder over the alpha
+track (the same AV1 decoder package - dav1d decodes monochrome streams), pairs
+each alpha frame with the picture frame of the same timestamp, and attaches it,
+so every frame reaching session.Presenter has HasAlpha true and an A plane.
+A seek lands both tracks on the same key frame. The processor converter then
+writes PREMULTIPLIED BGRA with real opacity - each colour channel becomes
+(c * a + 127) / 255, the opacity goes into the A byte - and a presenter shows it
+over whatever the host drew behind it (CodeBrix.VideoPlayback.Skia does exactly
+that on both of its render paths). A frame without an alpha plane converts
+opaque, exactly as before.
+
+    VideoFrameConverter.ToBgra32(frame, ...)   premultiplies when frame.HasAlpha
+    VideoFrameConverter.PremultiplyByAlpha(alphaPlane, bitDepth, width, height,
+        destination, stride, alreadyPremultiplied = false)
+                                               the alpha step on its own, for a
+                                               presenter that grades in between
+    YuvShaderSource.Build(bool withAlpha) / Build(LutInterpolation, bool withAlpha)
+    YuvShaderSource.AlphaChild "aPlane"; uniforms alphaScale, alphaPremultiplied
+
+WHAT THE MUXER REFUSES, with a message saying exactly what differs: an alpha
+track declared before its picture, a second alpha track, a second picture beside
+one, an alpha track of another size or bit depth, one that is not Gray, one that
+is not full range, PremultipliedAlpha without AlphaPlane - and, when the file is
+completed, any frame-count, timestamp or key-frame mismatch between the two. A
+refused file writes NOTHING to its output. The reader checks lock step again from
+the index and refuses a file that breaks it.
+
+THE FLAC TRACK. Codec id "flac". Its codec-private data is a FLAC stream header
+in Matroska's A_FLAC shape - "fLaC", then the metadata blocks with STREAMINFO
+first - and each chunk is exactly ONE complete FLAC frame, sync code through
+CRC-16. The muxer checks the header and that STREAMINFO agrees with the track's
+sample rate and channel count. Nothing here decodes FLAC; the Matroska reader
+maps A_FLAC tracks to the same codec id.
 
 Taking a bespoke file APART - the container writers
 ----------------------------------------------------
@@ -652,6 +742,9 @@ and any other presenter share one definition rather than copying it.
                            colour shader is handed - a pure function of the frame
 
     YuvShaderSource        Build() / Build(LutInterpolation) / NeedsFilteredAtlas(...)
+                           Build(bool withAlpha) / Build(LutInterpolation, bool withAlpha)
+                           - the alpha variants read AlphaChild and return
+                           premultiplied colour with real opacity
                            LumaChild, ChromaBlueChild, ChromaRedChild, LookupChild
                            The shader's SOURCE TEXT, in SkSL. It is content, not a
                            dependency: this package compiles nothing and references
@@ -955,6 +1048,24 @@ COMMON PITFALLS TO AVOID
   registered decoder" and the name of the package to add. That is the message,
   not a bug.
 
+- FORGETTING THE AUDIO ENGINE PACKAGE. No package in this repository brings one
+  - not this one, not the Skia presenter. Add CodeBrix.Audio.MitLicenseForever
+  on Windows, Linux and macOS, or CodeBrix.Audio.Android.ApacheLicenseForever
+  on Android. Without it the picture plays and the sound does not: the session
+  is silent or throws when it opens the audio device. A desktop application
+  that relied on the Skia package to bring the desktop natives must now add
+  them itself.
+
+- EXPECTING A MASTER FILE'S SOUND TO PLAY ON ANY CodeBrix.Audio.Core. FLAC
+  packets need a Core whose shared output serves "flac". Until then the session
+  refuses the file with a message naming the update - or open it with
+  PlayAudio = false, and the picture and its alpha play silently.
+
+- DRAWING AN ALPHA FRAME AS IF IT WERE OPAQUE. A master file's frames are
+  PREMULTIPLIED BGRA with real opacity. Blend them as premultiplied colour, over
+  whatever is meant to show through; writing them over an uncleared buffer, or
+  treating them as straight colour, darkens every soft edge.
+
 - FORGETTING CodeBrixAudioOpus.Register() FOR OPUS. Vorbis is built into
   CodeBrix.Audio.Core and needs nothing; Opus is a separate package because its
   licence is different. Same shape of message.
@@ -1086,6 +1197,10 @@ avoid rate conversion                 SharedAudioOutput.Configure(48000) at star
 inspect a file without playing        MediaContainers.Open(path)
 judge a file against the profile      StreamableProfile.EvaluateFile(path)
 mux a .cbv from encoder output        CbvAuthoring.Write(request)
+know whether a file has transparency  session.HasAlpha / reader.AlphaPlaneTrack
+read a frame's opacity                frame.A (straight, full range) when frame.HasAlpha
+get premultiplied BGRA with alpha     VideoFrameConverter.ToBgra32(frame, span, stride)
+mux a master file with alpha + FLAC   request.AlphaIvfPath, request.PacketAudio
 author a .cbv from a source video     add CodeBrix.VideoPlayback.Authoring
   (developer machine only)            and call CbvAuthor.Write(request)
 take a .cbv APART again               IvfWriter.CreateAv1(...) for the picture,

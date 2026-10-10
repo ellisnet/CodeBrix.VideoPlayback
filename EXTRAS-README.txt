@@ -176,6 +176,12 @@ survived as a setting.
                            describes a corpus that is half stale.
     --skip-profile-check   do not judge each finished file against the profile
     --authoring-root <p>   use a folder other than the repository's own
+    --master-fixtures      write ONLY the two small synthetic master (Mode3)
+                           fixtures, tests/assets/av1-alpha-flac.cbvmaster and
+                           tests/assets/av1-flac.cbvmaster, through the
+                           authoring library's Master flavour (see
+                           tests/assets/ASSETS.txt). Needs libaom-av1 and the
+                           native flac encoder as well.
 
 Every finished file is read back and checked against the plan - codecs, exact
 dimensions, frame rate, duration, and that no rotation side data survived - and

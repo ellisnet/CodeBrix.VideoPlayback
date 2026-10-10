@@ -39,7 +39,7 @@
     depends on a corpus having been built.
   -->
   <ItemGroup>
-    <Content Include="..\assets\*.vtt;..\assets\*.srt;..\assets\*.ffmeta">
+    <Content Include="..\assets\*.vtt;..\assets\*.srt;..\assets\*.ffmeta;..\assets\*.cbvmaster">
       <Link>assets\%(Filename)%(Extension)</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>

@@ -18,7 +18,8 @@ namespace CodeBrix.VideoPlayback.Containers;
 /// <list type="bullet">
 ///   <item><description>
 ///     AV1 video with Opus or Vorbis audio and WebVTT captions, so a player needs one royalty-free decoder
-///     pair and no others.
+///     pair and no others. A master (<c>.cbvmaster</c>, Mode3) bespoke file may carry FLAC audio instead,
+///     and an alpha-plane track beside its picture; neither is allowed anywhere else.
 ///   </description></item>
 ///   <item><description>
 ///     The seek index in FRONT of the media data, so a reader holding the first few kilobytes already holds
@@ -108,6 +109,7 @@ public static class StreamableProfile
 
         bool videoOk = true;
         bool audioOk = true;
+        bool masterFlac = false;
         bool captionsOk = true;
         string videoDetail = "no video track";
         string audioDetail = "no audio track";
@@ -123,7 +125,10 @@ public static class StreamableProfile
 
                 case MediaTrackKind.Audio:
                     audioDetail = "'" + track.CodecId + "'";
-                    audioOk = string.Equals(track.CodecId, VideoCodecIds.Opus, StringComparison.OrdinalIgnoreCase)
+                    masterFlac = reader is CbvReader
+                        && string.Equals(track.CodecId, VideoCodecIds.Flac, StringComparison.OrdinalIgnoreCase);
+                    audioOk = masterFlac
+                        || string.Equals(track.CodecId, VideoCodecIds.Opus, StringComparison.OrdinalIgnoreCase)
                         || string.Equals(track.CodecId, VideoCodecIds.Vorbis, StringComparison.OrdinalIgnoreCase);
                     break;
 
@@ -138,7 +143,11 @@ public static class StreamableProfile
         }
 
         Require(rules, "video codec is AV1", videoOk, videoDetail);
-        Require(rules, "audio codec is Opus or Vorbis", audioOk, audioDetail);
+        Require(
+            rules,
+            masterFlac ? "audio codec is FLAC (master file)" : "audio codec is Opus or Vorbis",
+            audioOk,
+            audioDetail);
         Require(rules, "caption tracks are WebVTT", captionsOk, reader.CaptionTracks.Count + " caption track(s)");
 
         if (reader is MatroskaReader matroska)
@@ -173,6 +182,9 @@ public static class StreamableProfile
         foreach (MediaTrackInfo track in reader.Tracks)
         {
             if (track.Kind != MediaTrackKind.Video) continue;
+
+            // An alpha plane is monochrome by definition; the recommendation is about the picture.
+            if (track.VideoRole == VideoTrackRole.AlphaPlane) continue;
 
             bool eightBitFourTwoZero = track.BitDepth is 0 or 8
                 && (track.Layout == VideoPixelLayout.I420 || track.Layout == VideoPixelLayout.Unknown);

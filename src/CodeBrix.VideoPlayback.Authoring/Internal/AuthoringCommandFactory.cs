@@ -153,6 +153,116 @@ internal static class AuthoringCommandFactory
             });
     }
 
+    /// <summary>
+    /// The number the alpha pass gives <c>-g</c> and <c>-keyint_min</c>: far beyond any clip, so that libaom
+    /// places NO key frame of its own and every key frame in the alpha plane is one forced onto the picture's.
+    /// </summary>
+    internal const int AlphaPassKeyFrameDistance = 100000;
+
+    /// <summary>
+    /// What a dry run renders in place of the alpha pass's key-frame list, which only exists once the video
+    /// pass has run.
+    /// </summary>
+    internal const string KeyFramesOfVideoPass = "<key-frame-times-of-the-video-pass>";
+
+    /// <summary>
+    /// Builds the alpha pass of a master file: the source's alpha channel as a monochrome, full-range AV1
+    /// stream in an IVF wrapper, in lock step with the video pass.
+    /// </summary>
+    /// <param name="request">The request.</param>
+    /// <param name="ivfPath">Where the intermediate alpha plane goes.</param>
+    /// <param name="keyFrameTimes">
+    /// The key-frame times of the video pass, already formatted for <c>-force_key_frames</c>.
+    /// </param>
+    /// <returns>The processor.</returns>
+    /// <remarks>
+    /// <para>
+    /// The frame-shaping part of the chain is the video pass's own - the same scale, the same frame rate, the
+    /// same rotation - so the two passes produce the same frames at the same times. No colour grade is
+    /// applied: a grade is about colour, and this plane is opacity.
+    /// </para>
+    /// <para>
+    /// The encoder is always <c>libaom-av1</c>: given <c>gray</c> input it writes a MONOCHROME sequence
+    /// header, which SVT-AV1 cannot. It runs with <c>-usage realtime</c> because that mode places exactly the
+    /// key frames it is told to - measured with FFmpeg 7.1: the default "good" mode adds a second key frame
+    /// straight after every forced one, which would break lock step - and with a key-frame distance so large
+    /// that it never chooses one itself.
+    /// </para>
+    /// </remarks>
+    internal static FFMpegArgumentProcessor BuildMasterAlpha(
+        VideoAuthoringRequest request,
+        string ivfPath,
+        string keyFrameTimes)
+    {
+        AuthoringVideoSettings video = request.Video;
+
+        return FFMpegArguments
+            .FromFileInput(request.SourcePath, false, input => input.AutoRotate(video.AutoRotate))
+            .OutputToFile(ivfPath, true, output =>
+            {
+                if (request.SelectStreamsExplicitly) output.SelectStream(0, 0, Channel.Video);
+                if (!request.CopySourceMetadata) output.WithoutMetadata();
+
+                output.WithVideoCodec(AuthoringEncoderNames.LibAomAv1);
+                output.WithCustomArgument("-usage realtime");
+                output.WithCustomArgument(
+                    "-cpu-used " + Math.Min(8, video.SpeedPreset).ToString(CultureInfo.InvariantCulture));
+                output.WithConstantRateFactor(video.ResolvedAlphaConstantRateFactor);
+                output.WithCustomArgument("-b:v 0");
+                output.ForcePixelFormat("gray");
+                output.WithCustomArgument("-color_range pc");
+
+                if (video.FrameRate > 0d && video.FrameRateMode == AuthoringFrameRateMode.Encoder)
+                {
+                    output.WithFramerate(video.FrameRate);
+                }
+
+                string distance = AlphaPassKeyFrameDistance.ToString(CultureInfo.InvariantCulture);
+                output.WithCustomArgument("-g " + distance + " -keyint_min " + distance);
+                output.WithCustomArgument("-force_key_frames " + keyFrameTimes);
+
+                output.WithVideoFilters(filters =>
+                {
+                    if (!video.FrameSize.IsSourceSize) filters.Custom(RenderScaleFilter(video));
+
+                    if (video.FrameRate > 0d && video.FrameRateMode == AuthoringFrameRateMode.Filter)
+                    {
+                        filters.Fps(video.FrameRate);
+                    }
+
+                    // yuva420p first, so a source with NO alpha channel - Alpha set to Include - yields a fully
+                    // opaque plane instead of a filter that refuses its input. Its alpha plane is full
+                    // resolution, so nothing is lost on the way.
+                    filters.Format("yuva420p");
+                    filters.Custom("alphaextract");
+                    filters.Format("gray");
+                });
+
+                output.DisableChannel(Channel.Audio);
+                output.ForceFormat("ivf");
+            });
+    }
+
+    /// <summary>Builds the audio pass of a master file: a lossless FLAC stream the muxer splits into frames.</summary>
+    /// <param name="request">The request.</param>
+    /// <param name="flacPath">Where the intermediate audio goes.</param>
+    /// <returns>The processor.</returns>
+    internal static FFMpegArgumentProcessor BuildMasterAudio(VideoAuthoringRequest request, string flacPath)
+    {
+        return FFMpegArguments
+            .FromFileInput(request.SourcePath, false)
+            .OutputToFile(flacPath, true, output =>
+            {
+                if (request.SelectStreamsExplicitly) output.SelectStream(0, 0, Channel.Audio);
+                if (!request.CopySourceMetadata) output.WithoutMetadata();
+
+                ApplyAudio(output, request);
+
+                output.DisableChannel(Channel.Video);
+                output.ForceFormat("flac");
+            });
+    }
+
     /// <summary>The muxer name a container choice hands to <c>-f</c>.</summary>
     /// <param name="container">The container.</param>
     /// <returns>The muxer name.</returns>
@@ -177,10 +287,14 @@ internal static class AuthoringCommandFactory
         {
             case AuthoringAudioCodec.LibOpus: return AuthoringEncoderNames.LibOpus;
             case AuthoringAudioCodec.LibVorbis: return AuthoringEncoderNames.LibVorbis;
+            case AuthoringAudioCodec.Flac: return AuthoringEncoderNames.Flac;
             default:
-                return flavour == VideoAuthoringFlavour.Bespoke
-                    ? AuthoringEncoderNames.LibVorbis
-                    : AuthoringEncoderNames.LibOpus;
+                return flavour switch
+                {
+                    VideoAuthoringFlavour.Bespoke => AuthoringEncoderNames.LibVorbis,
+                    VideoAuthoringFlavour.Master => AuthoringEncoderNames.Flac,
+                    _ => AuthoringEncoderNames.LibOpus,
+                };
         }
     }
 
@@ -260,7 +374,14 @@ internal static class AuthoringCommandFactory
         string encoder = AudioEncoderNameFor(audio.Codec, request.Flavour);
         output.WithAudioCodec(encoder);
 
-        if (string.Equals(encoder, AuthoringEncoderNames.LibVorbis, StringComparison.Ordinal)
+        if (string.Equals(encoder, AuthoringEncoderNames.Flac, StringComparison.Ordinal))
+        {
+            // Lossless: no bit rate. FFmpeg's FLAC encoder takes s16 or s32 samples, and 24-bit output is s32
+            // with the raw sample size stated.
+            output.WithCustomArgument(
+                audio.FlacBitDepth == 24 ? "-sample_fmt s32 -bits_per_raw_sample 24" : "-sample_fmt s16");
+        }
+        else if (string.Equals(encoder, AuthoringEncoderNames.LibVorbis, StringComparison.Ordinal)
             && audio.VorbisQuality.HasValue)
         {
             output.WithCustomArgument(

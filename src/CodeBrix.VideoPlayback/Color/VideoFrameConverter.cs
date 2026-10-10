@@ -69,6 +69,12 @@ namespace CodeBrix.VideoPlayback.Color;
 /// round-to-nearest.
 /// </para>
 /// <para>
+/// <b>Alpha.</b> A frame with an alpha plane (<see cref="VideoFrame.HasAlpha" /> - a master file's alpha-plane
+/// track) converts to PREMULTIPLIED BGRA with real alpha: each colour channel is multiplied by the opacity,
+/// <c>(c * a + 127) / 255</c>, and the opacity goes into the A byte. A frame without one is opaque, A = 255,
+/// exactly as before; see <see cref="PremultiplyByAlpha" />.
+/// </para>
+/// <para>
 /// <b>Allocation.</b> Nothing is allocated per frame. A small per-thread scratch row is kept between calls
 /// and only grows when a wider frame arrives, so the steady state allocates zero bytes.
 /// </para>
@@ -139,6 +145,11 @@ public static class VideoFrameConverter
     /// <exception cref="ArgumentNullException"><paramref name="frame" /> is null.</exception>
     /// <exception cref="ArgumentException">The destination is too small.</exception>
     /// <exception cref="ArgumentOutOfRangeException">The stride is too small, or the frame's bit depth is not 8, 10 or 12.</exception>
+    /// <remarks>
+    /// A frame that carries an alpha plane comes out PREMULTIPLIED with its real opacity in the A byte (a
+    /// frame whose colours are already premultiplied just has the opacity written); every other frame comes out
+    /// opaque.
+    /// </remarks>
     public static void ToBgra32(VideoFrame frame, Span<byte> destination, int destinationStride)
     {
         if (frame == null) throw new ArgumentNullException(nameof(frame));
@@ -154,6 +165,126 @@ public static class VideoFrameConverter
             frame.Color,
             destination,
             destinationStride);
+
+        if (!frame.HasAlpha) return;
+
+        PremultiplyByAlpha(
+            frame.A,
+            frame.BitDepth,
+            frame.Width,
+            frame.Height,
+            destination,
+            destinationStride,
+            frame.IsAlphaPremultiplied);
+    }
+
+    /// <summary>
+    /// Puts an alpha plane into converted BGRA32 pixels: the opacity goes into each A byte and, unless the
+    /// colours are already premultiplied, each colour channel is multiplied by it - <c>(c * a + 127) / 255</c>.
+    /// </summary>
+    /// <param name="alpha">
+    /// The alpha plane: one sample per pixel, full range, at <paramref name="bitDepth" /> bits.
+    /// </param>
+    /// <param name="bitDepth">Bits per alpha sample: 8, 10 or 12. Deeper samples are rounded to 8 bits.</param>
+    /// <param name="width">The number of pixels in a row.</param>
+    /// <param name="height">The number of rows.</param>
+    /// <param name="destination">The BGRA32 pixels, as <see cref="ToBgra32(VideoFrame, Span{byte}, int)" /> wrote them.</param>
+    /// <param name="destinationStride">The distance in bytes from one row to the next.</param>
+    /// <param name="alreadyPremultiplied">
+    /// True when the colours were premultiplied before they were encoded; only the A byte is written then.
+    /// </param>
+    /// <exception cref="ArgumentException">The plane is empty or too small, or the destination is too small.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">A dimension, the bit depth or the stride is out of range.</exception>
+    /// <remarks>
+    /// Skia, and every compositor this family hands frames to, composites PREMULTIPLIED colour, which is why the
+    /// master flavour's straight alpha is premultiplied here, on the way out. A fully transparent pixel becomes
+    /// all zeros whatever colour the picture carried there.
+    /// </remarks>
+    public static unsafe void PremultiplyByAlpha(
+        in VideoFramePlane alpha,
+        int bitDepth,
+        int width,
+        int height,
+        Span<byte> destination,
+        int destinationStride,
+        bool alreadyPremultiplied = false)
+    {
+        if (width <= 0) throw new ArgumentOutOfRangeException(nameof(width), width, "The width must be greater than zero.");
+        if (height <= 0) throw new ArgumentOutOfRangeException(nameof(height), height, "The height must be greater than zero.");
+        if (bitDepth != 8 && bitDepth != 10 && bitDepth != 12)
+        {
+            throw new ArgumentOutOfRangeException(nameof(bitDepth), bitDepth, "The bit depth must be 8, 10 or 12.");
+        }
+
+        if (alpha.IsEmpty) throw new ArgumentException("The alpha plane carries no samples.", nameof(alpha));
+        if (alpha.Width < width || alpha.Height < height)
+        {
+            throw new ArgumentException(
+                $"The alpha plane is {alpha.Width}x{alpha.Height} and the picture {width}x{height}.", nameof(alpha));
+        }
+
+        int minimumStride = checked(width * 4);
+        if (destinationStride < minimumStride)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(destinationStride),
+                destinationStride,
+                $"A {width}-pixel row of BGRA32 needs {minimumStride} bytes; the stride given is smaller.");
+        }
+
+        long required = (long)(height - 1) * destinationStride + minimumStride;
+        if (destination.Length < required)
+        {
+            throw new ArgumentException(
+                $"A {width}x{height} BGRA32 frame with a stride of {destinationStride} needs {required} bytes; "
+                + $"the destination holds {destination.Length}.",
+                nameof(destination));
+        }
+
+        int maximum = (1 << bitDepth) - 1;
+        int half = maximum / 2;
+
+        fixed (byte* destinationBase = destination)
+        {
+            byte* alphaBase = (byte*)alpha.Data;
+
+            for (int row = 0; row < height; row++)
+            {
+                byte* pixel = destinationBase + ((long)row * destinationStride);
+                byte* alphaRow = alphaBase + ((long)row * alpha.Stride);
+                ushort* deepRow = (ushort*)alphaRow;
+
+                for (int x = 0; x < width; x++, pixel += 4)
+                {
+                    int a;
+                    if (bitDepth == 8)
+                    {
+                        a = alphaRow[x];
+                    }
+                    else
+                    {
+                        int sample = deepRow[x];
+                        if (sample > maximum) sample = maximum;
+                        a = ((sample * 255) + half) / maximum;
+                    }
+
+                    pixel[3] = (byte)a;
+                    if (alreadyPremultiplied || a == 255) continue;
+
+                    if (a == 0)
+                    {
+                        pixel[0] = 0;
+                        pixel[1] = 0;
+                        pixel[2] = 0;
+                        continue;
+                    }
+
+                    pixel[0] = (byte)(((pixel[0] * a) + 127) / 255);
+                    pixel[1] = (byte)(((pixel[1] * a) + 127) / 255);
+                    pixel[2] = (byte)(((pixel[2] * a) + 127) / 255);
+                }
+            }
+        }
     }
 
     /// <summary>Converts three planes to BGRA32.</summary>

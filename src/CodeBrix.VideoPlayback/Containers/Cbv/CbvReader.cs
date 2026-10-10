@@ -38,6 +38,7 @@ public sealed class CbvReader : IMediaContainerReader
     private readonly Dictionary<int, int> lastEntryByTrack = new Dictionary<int, int>();
     private readonly Dictionary<int, long> lastTimestampByTrack = new Dictionary<int, long>();
 
+    private int alphaTrackId = -1;
     private byte[] chunkBuffer = new byte[64 * 1024];
     private int nextEntry;
     private long sequentialPosition;
@@ -62,7 +63,11 @@ public sealed class CbvReader : IMediaContainerReader
         firstBytes.Length >= 4 && firstBytes.Slice(0, 4).SequenceEqual(CbvFormat.Magic);
 
     /// <inheritdoc />
-    public string FormatName => "CodeBrix Video (.cbv)";
+    /// <remarks>
+    /// "CodeBrix Video (.cbv)" for a version-0 file, "CodeBrix Video master (.cbvmaster)" for a version-1 one.
+    /// </remarks>
+    public string FormatName =>
+        Version >= CbvFormat.MasterVersion ? "CodeBrix Video master (.cbvmaster)" : "CodeBrix Video (.cbv)";
 
     /// <inheritdoc />
     public TimeSpan Duration { get; private set; }
@@ -82,7 +87,10 @@ public sealed class CbvReader : IMediaContainerReader
     /// <inheritdoc />
     public IReadOnlyList<string> Notices => notices;
 
-    /// <summary>The format version the file declares. This library writes and reads version 0.</summary>
+    /// <summary>
+    /// The format version the file declares: 0 for everything but a master (Mode3) file, 1 for a file that
+    /// carries an alpha-plane track or FLAC audio. This library reads both.
+    /// </summary>
     public ushort Version { get; private set; }
 
     /// <summary>The file's header flags.</summary>
@@ -99,6 +107,12 @@ public sealed class CbvReader : IMediaContainerReader
 
     /// <summary>True when the file carried an index checksum and it matched.</summary>
     public bool IndexChecksumVerified { get; private set; }
+
+    /// <summary>
+    /// The alpha-plane track - the picture's alpha channel as a monochrome stream - or null when the file has
+    /// none. Only a master (Mode3) file carries one.
+    /// </summary>
+    public MediaTrackInfo AlphaPlaneTrack { get; private set; }
 
     /// <inheritdoc />
     public bool TryReadPacket(out MediaPacket packet)
@@ -221,6 +235,16 @@ public sealed class CbvReader : IMediaContainerReader
 
         if (target < 0) target = 0;
 
+        // An alpha-plane track's key frame carries the SAME timestamp as its picture key frame, and chunks
+        // that share a timestamp are stored in track order - so when the alpha track sorts first, its key
+        // frame sits just BEFORE the entry found above. Backing up over every chunk at that timestamp starts
+        // both decoders on the same frame. Files without an alpha plane are positioned exactly as before.
+        if (alphaTrackId >= 0)
+        {
+            long landedTicks = index[target].TimestampTicks;
+            while (target > 0 && index[target - 1].TimestampTicks == landedTicks) target--;
+        }
+
         nextEntry = target;
         return TicksToTimeSpan(index[target].TimestampTicks);
     }
@@ -246,11 +270,11 @@ public sealed class CbvReader : IMediaContainerReader
         }
 
         Version = BinaryPrimitives.ReadUInt16LittleEndian(fixedHeader.Slice(4, 2));
-        if (Version > CbvFormat.Version)
+        if (Version > CbvFormat.HighestReadableVersion)
         {
             throw new VideoPlaybackException(
-                $"'{source.Name}' is version {Version} of the bespoke container and this library reads version "
-                + $"{CbvFormat.Version}. A newer writer produced it.");
+                $"'{source.Name}' is version {Version} of the bespoke container and this library reads versions "
+                + $"{CbvFormat.Version} to {CbvFormat.HighestReadableVersion}. A newer writer produced it.");
         }
 
         Flags = (CbvHeaderFlags)BinaryPrimitives.ReadUInt16LittleEndian(fixedHeader.Slice(6, 2));
@@ -297,6 +321,58 @@ public sealed class CbvReader : IMediaContainerReader
 
         ParseHeader(header);
         ReadIndex(indexOffset, indexLength, indexCrc);
+        ValidateAlphaPlane();
+    }
+
+    private void ValidateAlphaPlane()
+    {
+        MediaTrackInfo picture = null;
+        MediaTrackInfo alpha = null;
+
+        foreach (MediaTrackInfo track in tracks)
+        {
+            if (track.Kind != MediaTrackKind.Video) continue;
+
+            if (track.VideoRole == VideoTrackRole.AlphaPlane)
+            {
+                if (alpha != null)
+                {
+                    throw new VideoPlaybackException(
+                        $"'{source.Name}' declares two alpha-plane tracks ({alpha.Id} and {track.Id}); a file carries "
+                        + "at most one.");
+                }
+
+                alpha = track;
+            }
+            else if (picture == null)
+            {
+                picture = track;
+            }
+        }
+
+        if (alpha == null) return;
+
+        if (picture == null)
+        {
+            throw new VideoPlaybackException(
+                $"'{source.Name}' declares an alpha-plane track ({alpha.Id}) and no picture track for it to belong to.");
+        }
+
+        if (alpha.Width != picture.Width || alpha.Height != picture.Height)
+        {
+            throw new VideoPlaybackException(
+                $"'{source.Name}' has an alpha-plane track of {alpha.Width}x{alpha.Height} for a picture of "
+                + $"{picture.Width}x{picture.Height}; the two must be the same size.");
+        }
+
+        string problem = CbvAlphaLockStep.Describe(index, picture.Id, alpha.Id, TicksToTimeSpan);
+        if (problem != null)
+        {
+            throw new VideoPlaybackException($"'{source.Name}' cannot be played: {problem}");
+        }
+
+        AlphaPlaneTrack = alpha;
+        alphaTrackId = alpha.Id;
     }
 
     private void ParseHeader(byte[] header)
@@ -362,6 +438,12 @@ public sealed class CbvReader : IMediaContainerReader
             IsHearingImpaired = (flags & CbvTrackFlags.HearingImpaired) != 0,
             IsEnabled = (flags & CbvTrackFlags.Disabled) == 0,
             CodecPrivate = codecPrivate.ToArray(),
+            VideoRole = kind == 1 && (flags & CbvTrackFlags.AlphaPlane) != 0
+                ? VideoTrackRole.AlphaPlane
+                : VideoTrackRole.Picture,
+            IsAlphaPremultiplied = kind == 1
+                && (flags & CbvTrackFlags.AlphaPlane) != 0
+                && (flags & CbvTrackFlags.PremultipliedAlpha) != 0,
         };
 
         switch (kind)

@@ -36,12 +36,16 @@ The specifications used, all of them public documents:
                (the AV1CodecConfigurationRecord, "av1C")
   WebM Container Guidelines, the WebM Project
   AV1 in Matroska / WebM, Opus in Matroska and Vorbis in Matroska - the codec
-               mapping documents for the three codecs this library carries
+               mapping documents for the codecs this library carries
   Vorbis I specification, Xiph.Org Foundation
                (the identification header's fields and the Xiph lacing of the
                three setup headers)
   IVF: the simple frame container written by the libvpx and AV1 encoding tools,
                as documented publicly alongside them
+  FLAC format specification, Xiph.Org Foundation, and FLAC in Matroska
+               (the stream marker, the STREAMINFO block, and the frame
+               header, CRC-8 and CRC-16 that the authoring library's managed
+               frame scanner checks; the A_FLAC codec-private convention)
 
 The uncompressed video format this library defines for its own test and
 diagnostics use is described in CBV-FORMAT.txt and in the XML documentation of
@@ -49,17 +53,18 @@ CodeBrix.VideoPlayback.Codecs.RawVideoFormat. The bespoke ".cbv" container is
 likewise this project's own design, documented in full in CBV-FORMAT.txt.
 
 The one NuGet package CodeBrix.VideoPlayback depends on,
-CodeBrix.Audio.MitLicenseForever, is MIT-licensed and carries its own
+CodeBrix.Audio.Core.MitLicenseForever, is MIT-licensed and carries its own
 third-party notices.
 
 CodeBrix.VideoPlayback.Skia, the presenter package this repository also
-produces, depends on CodeBrix.VideoPlayback and on SkiaSharp (MIT), which is
-Mono's managed binding to Google's Skia graphics library (BSD-3-Clause). BOTH
-ARE PACKAGE DEPENDENCIES AND NEITHER IS INCORPORATED: no Skia or SkiaSharp
+produces, depends on CodeBrix.VideoPlayback, on
+CodeBrix.Audio.Core.MitLicenseForever (MIT) and on SkiaSharp (MIT), which is
+Mono's managed binding to Google's Skia graphics library (BSD-3-Clause). ALL
+ARE PACKAGE DEPENDENCIES AND NONE IS INCORPORATED: no Skia or SkiaSharp
 source is vendored, ported or adapted into this repository, and each package
 ships its own licence and notices. CodeBrix.VideoPlayback.Skia deliberately does
-NOT depend on any SkiaSharp.NativeAssets package; an application chooses the
-native binary that suits the platforms it ships on.
+NOT depend on any SkiaSharp.NativeAssets package or on any audio engine package;
+an application chooses the native binaries that suit the platforms it ships on.
 
 CodeBrix.VideoPlayback.Authoring, the authoring package this repository also
 produces, depends on CodeBrix.VideoPlayback and on

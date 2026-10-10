@@ -22,4 +22,13 @@
     <PackageReference Include="CodeBrix.VideoPlayback.Dav1d.BsdLicenseForever" Version="1.0.242.1054" />
     <PackageReference Include="CodeBrix.Audio.Opus.BsdLicenseForever" Version="1.0.241.1040" />
   </ItemGroup>
+
+  <!--
+    The desktop audio natives (miniaudio). CodeBrix.VideoPlayback.Skia references only CodeBrix.Audio.Core, so
+    the application chooses its audio engine: CodeBrix.Audio on Windows/Linux/macOS (this sample), the Android
+    audio package on Android. Without it the sample plays its picture in silence.
+  -->
+  <ItemGroup>
+    <PackageReference Include="CodeBrix.Audio.MitLicenseForever" Version="1.0.271.1165" />
+  </ItemGroup>
 </Project>

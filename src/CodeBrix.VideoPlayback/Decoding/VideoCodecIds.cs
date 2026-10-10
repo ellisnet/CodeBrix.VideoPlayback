@@ -47,6 +47,14 @@ public static class VideoCodecIds
     /// <summary>Vorbis audio. Codec-private data is the three Xiph-laced setup headers.</summary>
     public const string Vorbis = "vorbis";
 
+    /// <summary>
+    /// FLAC, the lossless audio codec of the master (Mode3) flavour. The codec-private data is a FLAC stream
+    /// header - the <c>fLaC</c> marker and the metadata blocks, STREAMINFO first, exactly Matroska's
+    /// <c>A_FLAC</c> convention - and each packet is exactly one complete FLAC frame. Decoding it needs a
+    /// CodeBrix.Audio.Core whose shared output serves the <c>flac</c> packet codec.
+    /// </summary>
+    public const string Flac = "flac";
+
     /// <summary>WebVTT captions. Cue payloads are UTF-8 text with an optional settings string.</summary>
     public const string WebVtt = "webvtt";
 

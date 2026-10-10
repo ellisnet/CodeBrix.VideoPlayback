@@ -35,6 +35,15 @@
   </ItemGroup>
 
   <!--
+    The audio engine is the APPLICATION's choice too: the playback library and the presenter reference only
+    CodeBrix.Audio.Core, which decodes but cannot make a sound. This is a desktop application, so it chooses
+    the desktop package with the miniaudio natives (an Android application would choose CodeBrix.Audio.Android).
+  -->
+  <ItemGroup>
+    <PackageReference Include="CodeBrix.Audio.MitLicenseForever" Version="1.0.271.1165" />
+  </ItemGroup>
+
+  <!--
     Nothing is linked in for the decoder. The uncompressed-video codec ships in the playback library and
     registers itself, so this sample plays its clip with no codec package installed at all. A real
     application playing a coded clip would reference a real decoder package instead.

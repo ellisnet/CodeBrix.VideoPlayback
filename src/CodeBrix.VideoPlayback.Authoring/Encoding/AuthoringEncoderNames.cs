@@ -25,6 +25,9 @@ public static class AuthoringEncoderNames
     /// </summary>
     public const string LibVorbis = "libvorbis";
 
+    /// <summary>FFmpeg's native, lossless FLAC encoder - the master flavour's audio encoder.</summary>
+    public const string Flac = "flac";
+
     /// <summary>
     /// The subtitle "encoder" caption tracks are given: a straight copy. FFmpeg's <c>webvtt</c> ENCODER
     /// discards cue identifiers and positioning settings, so a caption track is never re-encoded here.

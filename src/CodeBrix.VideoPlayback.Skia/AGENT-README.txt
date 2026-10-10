@@ -52,6 +52,16 @@ WHAT IT ACTUALLY DOES, AND WHY THE SHAPE IS WHAT IT IS
     any of them. CaptureComposedFrame() hands back what was composed, which is
     a screenshot.
 
+  * TRANSPARENT VIDEO. A frame from a master (".cbvmaster") file carries an
+    alpha plane (VideoFrame.HasAlpha). The presenter then composes PREMULTIPLIED
+    BGRA WITH REAL OPACITY on both paths - the processor path converts, grades
+    the still-straight colour, and multiplies by the alpha; the graphics path
+    uploads the alpha plane as one more single-channel texture and the shader
+    applies it - and Draw blends that over whatever your canvas already holds.
+    The composition surface's background is transparent: what shows through is
+    yours to decide. A frame without an alpha plane composes opaque, exactly as
+    always.
+
   * EFFECTS THAT COST ONE TEXTURE SAMPLE. A chain of colour effects is composed
     ONCE, when the chain changes, into a single three-dimensional lookup table.
     Ten effects cost what one costs. On the processor path they are ignored by
@@ -60,10 +70,11 @@ WHAT IT ACTUALLY DOES, AND WHY THE SHAPE IS WHAT IT IS
     them on when the effect chain is the point of the picture.
 
 Package references: SkiaSharp, the core playback package, and
-CodeBrix.Audio.MitLicenseForever (the desktop audio output that actually
-plays the sound). No view package, no windowing toolkit, no native binary of
-its own. Your application chooses the SkiaSharp
-native asset package that suits the platforms it ships on - see INSTALLATION.
+CodeBrix.Audio.Core (the managed audio library, which decodes but carries no
+native audio engine). No view package, no windowing toolkit, no audio engine,
+no native binary of its own. Your application chooses the SkiaSharp native
+asset package AND the audio engine package that suit the platforms it ships on
+- see INSTALLATION.
 
 Target framework: .NET 10 or later. License: MIT.
 
@@ -76,9 +87,20 @@ Or in a project file:
 
     <PackageReference Include="CodeBrix.VideoPlayback.Skia.MitLicenseForever" Version="*" />
 
-That pulls in CodeBrix.VideoPlayback (and, through it, CodeBrix.Audio.Core),
-CodeBrix.Audio.MitLicenseForever for desktop sound output, and SkiaSharp. Then
+That pulls in CodeBrix.VideoPlayback, CodeBrix.Audio.Core and SkiaSharp. Then
 add, as your application needs them:
+
+  * the AUDIO ENGINE package for each platform you ship on. This library
+    deliberately does not choose one, for the same reason it does not choose a
+    SkiaSharp native asset:
+
+        <PackageReference Include="CodeBrix.Audio.MitLicenseForever" />
+                 Windows, Linux and macOS (miniaudio natives)
+        <PackageReference Include="CodeBrix.Audio.Android.ApacheLicenseForever" />
+                 Android
+
+    The platform video-player add-ins already require exactly this. Without it
+    the picture plays and the sound does not;
 
   * a SkiaSharp NATIVE ASSET package for each platform you ship on. This
     library deliberately does not choose one: choosing for you would break
@@ -569,6 +591,7 @@ them.
       <ItemGroup>
         <PackageReference Include="CodeBrix.VideoPlayback.Skia.MitLicenseForever" Version="*" />
         <PackageReference Include="SkiaSharp.NativeAssets.Linux" Version="*" />
+        <PackageReference Include="CodeBrix.Audio.MitLicenseForever" Version="*" />
       </ItemGroup>
     </Project>
 
@@ -670,10 +693,24 @@ COMMON PITFALLS TO AVOID
     plain SkiaSharp and draws into a canvas. If your host framework needs a
     view package, that is between your host framework and you.
 
+  * DO NOT EXPECT A BLACK BACKGROUND BEHIND A TRANSPARENT VIDEO. Draw blends a
+    master file's premultiplied frames over what your canvas already holds;
+    clear it to the colour you want shown through first - and remember that
+    CaptureComposedFrame and CurrentImage hand back premultiplied pixels with
+    real alpha too.
+
   * DO NOT FORGET THE NATIVE ASSET PACKAGE ON LINUX. SkiaSharp attaches one
     automatically on Windows and macOS and cannot on Linux, because there are
     two and only your application knows which. Without it you get a
     DllNotFoundException for libSkiaSharp the first time anything draws.
+
+  * DO NOT FORGET THE AUDIO ENGINE PACKAGE. This package references only
+    CodeBrix.Audio.Core, which has no native audio engine. Add
+    CodeBrix.Audio.MitLicenseForever on Windows, Linux and macOS, or
+    CodeBrix.Audio.Android.ApacheLicenseForever on Android. A desktop
+    application that used to get the desktop natives through this package no
+    longer does: until it adds CodeBrix.Audio.MitLicenseForever itself, its
+    sessions are silent or throw when the audio device is opened.
 
   * DO NOT FORGET CodeBrixAudioOpus.Register() FOR OPUS AUDIO. Referencing the
     package is not enough; nothing is discovered by reflection anywhere in this

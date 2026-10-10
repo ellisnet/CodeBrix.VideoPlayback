@@ -20,8 +20,36 @@ public static class CbvFormat
     /// <summary>The four bytes a Matroska or WebM file starts with, which the same reader also accepts.</summary>
     public static ReadOnlySpan<byte> EbmlMagic => new byte[] { 0x1A, 0x45, 0xDF, 0xA3 };
 
-    /// <summary>The format version this library writes and reads.</summary>
+    /// <summary>
+    /// The format version this library writes for a file that uses no version-1 feature - everything the
+    /// bespoke (Mode2) flavour writes: one picture track, Vorbis, Opus or uncompressed media, captions and
+    /// chapters.
+    /// </summary>
+    /// <remarks>
+    /// The muxer stamps each file with the LOWEST version that describes it: this one for a file that uses
+    /// nothing newer, <see cref="MasterVersion" /> for one that carries an alpha-plane track or FLAC audio. So
+    /// a Mode2 file is byte-for-byte what it always was and still plays on an older player, and a reader
+    /// older than a file's version refuses the file with a message saying a newer writer produced it.
+    /// </remarks>
     public const ushort Version = 0;
+
+    /// <summary>
+    /// Version 1: version 0 plus an optional alpha-plane video track (<see cref="CbvTrackFlags.AlphaPlane" />)
+    /// and FLAC audio - the "master" (<c>.cbvmaster</c>, Mode3) flavour.
+    /// </summary>
+    public const ushort MasterVersion = 1;
+
+    /// <summary>The highest format version this library reads. It reads every version up to this one.</summary>
+    public const ushort HighestReadableVersion = MasterVersion;
+
+    /// <summary>The file extension a master (Mode3) file is written with. It is a hint; readers sniff content.</summary>
+    public const string MasterFileExtension = ".cbvmaster";
+
+    /// <summary>The file extension a bespoke or WebM-profile file is written with. It is a hint; readers sniff content.</summary>
+    public const string FileExtension = ".cbv";
+
+    /// <summary>The four bytes a FLAC stream - and so a FLAC track's codec-private data - begins with: <c>fLaC</c>.</summary>
+    public static ReadOnlySpan<byte> FlacMarker => "fLaC"u8;
 
     /// <summary>The number of bytes in the fixed header that precedes the track table.</summary>
     public const int FixedHeaderLength = 48;

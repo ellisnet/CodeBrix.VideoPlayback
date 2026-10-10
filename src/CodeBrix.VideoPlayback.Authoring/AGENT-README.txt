@@ -11,7 +11,8 @@ It is the other end of the same program. The playback library opens a ".cbv"
 file, demultiplexes it and hands frames to a presenter; this library takes a
 video you already have, encodes it, packages it with its captions and its
 chapters, and produces the ".cbv" the player expects - in either of that
-format's two flavours, from one request object.
+format's two flavours, from one request object - or a ".cbvmaster": the
+master flavour, with the source's ALPHA CHANNEL and LOSSLESS sound.
 
     your source video ─► CbvAuthor.Write(request) ─► clip.cbv
       (anything ffmpeg      (ffmpeg for the pixels    (WebM-profile, or
@@ -34,6 +35,11 @@ WHAT IT ACTUALLY DOES, AND WHY THE SHAPE IS WHAT IT IS
     decision - the encoder, the frame size, the rate, the captions, the
     chapters - means the same thing either way, and the handful that do not are
     named where they differ.
+
+  * AND A THIRD FLAVOUR FOR MASTERS. VideoAuthoringFlavour.Master writes the
+    bespoke container in its version-1 form, ".cbvmaster" ("CodeBrix Video
+    Mode3"): the bespoke flavour's picture, plus an ALPHA-PLANE track when the
+    source has an alpha channel, plus FLAC sound. See THE MASTER FLAVOUR.
 
   * ONE FFMPEG PASS, OR TWO AND A MUX. The WebM-profile flavour is a single
     ffmpeg command: pixels, sound and every caption file go in together and
@@ -292,7 +298,10 @@ AuthoringVideoSettings - the picture
     bool AutoRotate                          true by default
     IList<AuthoringLutInput> Luts            the colour grade, in order
     string ComposedLutPath                   keep the effective table here
-    string TrackName                         bespoke flavour only
+    string TrackName                         bespoke and master flavours only
+    AuthoringAlphaMode Alpha                 Auto (default) | Include | Exclude;
+                                             master flavour only
+    int? AlphaConstantRateFactor             null = six below ConstantRateFactor
 
     const string PixelFormat = "yuv420p"     NOT a setting - see below
 
@@ -340,7 +349,7 @@ AuthoringVideoSettings - the picture
 
 AuthoringAudioSettings - the sound
 -----------------------------------
-    AuthoringAudioCodec Codec                Default | LibOpus | LibVorbis
+    AuthoringAudioCodec Codec                Default | LibOpus | LibVorbis | Flac
     bool Include                             true by default
     int BitrateKilobitsPerSecond             128 by default
     double? VorbisQuality                    null means rate-control by bit rate
@@ -348,10 +357,13 @@ AuthoringAudioSettings - the sound
     int Channels                             2 by default
     string Language                          a well-formed BCP 47 tag, or null
     string Name                              a menu name, or null
+    int FlacBitDepth                         16 (default) or 24; master only
 
   DEFAULT RESOLVES PER FLAVOUR: Opus for a WebM-profile file, which is what the
-  wider world expects of a WebM, and Vorbis for a bespoke one, which is the
-  flavour an application ships inside itself. That is the whole reason for the
+  wider world expects of a WebM, Vorbis for a bespoke one, which is the
+  flavour an application ships inside itself, and FLAC for a master one. FLAC
+  is the ONLY codec a master file takes, and it is refused in the other two
+  flavours. That is the whole reason for the
   split - a Vorbis file needs no codec package beyond the core (sound output on
   the desktop still needs CodeBrix.Audio).
 
@@ -545,6 +557,73 @@ DeviceClassPresets - starting numbers, not limits
   number looks better the more pixels are hiding the error.
 
   They are a starting point. Apply one and then override anything.
+
+
+THE MASTER FLAVOUR (.cbvmaster, "CodeBrix Video Mode3")
+=======================================================
+A master file is the bespoke container at format version 1. Three passes, then
+the same managed muxer:
+
+  1. THE VIDEO PASS - exactly the bespoke flavour's, unchanged: AV1 (libsvtav1,
+     or libaom-av1 by request or through the fallback) into an IVF.
+  2. THE ALPHA PASS - only when the file carries alpha. The source's alpha
+     channel, through the SAME scale, frame rate and rotation as the video pass
+     (no colour grade - it is opacity, not colour), then
+     format=yuva420p,alphaextract,format=gray, encoded by libaom-av1 - which,
+     given gray input, writes a MONOCHROME AV1 sequence header - at FULL range
+     (-color_range pc), with -usage realtime and its key frames FORCED onto the
+     video pass's own (-force_key_frames with each key frame's time less half a
+     frame, -g and -keyint_min far beyond any clip so libaom adds none of its
+     own). Its rate factor is AlphaConstantRateFactor, by default six below the
+     picture's: an error in an edge shows more in the alpha than in the colour.
+     Afterwards both IVFs are read back and compared frame for frame - count,
+     timestamps, key frames - and a mismatch fails the run with the frame that
+     differs; nothing is written.
+  3. THE AUDIO PASS - ffmpeg's native flac encoder into a .flac file (s16, or
+     s32 with -bits_per_raw_sample 24 for FlacBitDepth = 24), which a managed
+     FLAC frame scanner then splits into the stream header and one packet per
+     frame. A boundary is accepted only when the next frame's header CRC-8, its
+     stream parameters and its frame number all agree AND the frame it closes
+     passes its CRC-16, so nothing is ever cut in the middle of compressed
+     audio. The header keeps STREAMINFO and the comment block and drops the
+     padding.
+
+WHETHER IT CARRIES ALPHA - Video.Alpha:
+    Auto      carry alpha when ffprobe reports a pixel format with an alpha
+              channel (yuva*, rgba, bgra, argb, abgr, gbrap*, ya*); otherwise
+              leave it out and say so in the result's notes
+    Include   always; a source with no alpha yields a fully opaque plane
+    Exclude   never; the file plays like a Mode2 file with lossless sound
+  A VP8/VP9 WebM whose alpha rides in BlockAdditions reports a plain pixel
+  format, so Auto leaves it out - set Include for such a source.
+
+WHAT IT NEEDS. ffmpeg with libaom-av1 (whose gray input must produce a
+monochrome stream - TryVerifyTools checks that with a one-frame probe and warns
+when it does not) for the alpha pass, and the native flac encoder for the sound.
+A missing one is a WARNING from TryVerifyTools, never a failure of the check.
+
+WHAT PLAYING IT NEEDS. The AV1 decoder package as usual - the alpha plane is an
+ordinary monochrome AV1 stream - and, for the sound, a CodeBrix.Audio.Core whose
+shared output serves FLAC packets. The player pairs the two video tracks and
+presents premultiplied BGRA with real opacity.
+
+THE EXTENSION is ".cbvmaster" by convention; any other name earns a note, and
+the file plays either way because readers sniff the content.
+
+A KNOWN DIFFERENCE OF THIS FFMPEG BRIDGE. A master file is meant to carry, in
+fully transparent pixels, the colour of the nearest opaque pixel, so that
+scaling and filtering never bleed a meaningless colour (usually black) into a
+soft edge. FFmpeg has no filter for that, so this bridge does NOT do it: the
+colour under fully transparent pixels is whatever the source had there. It will
+be done when authoring moves to managed encoding. Until then, a source whose
+transparent pixels are black can show a faint dark fringe on soft edges when it
+is scaled.
+
+A LIMIT TO KNOW ABOUT. The forced key-frame list is one command-line argument
+with one entry per key frame. On Windows, where a command line is limited to
+32,767 characters, a very long clip with very frequent key frames can exceed it;
+a key-frame interval of a second or more keeps that out of reach for any clip
+under several hours.
 
 
 WHAT IS TAKEN FROM THE SOURCE, AND WHAT IS LEFT BEHIND
@@ -815,6 +894,18 @@ COMMON PITFALLS TO AVOID
     WEBM-PROFILE FLAVOUR. See THE TWO ASYMMETRIES. The result's Notes say so
     every time it happens; read them.
 
+  * DO NOT ASK FOR ANYTHING BUT FLAC IN A MASTER FILE, OR FOR FLAC ANYWHERE
+    ELSE. A master file's sound is lossless by definition; the other two
+    flavours promise Opus or Vorbis to every player. Both are refused before
+    anything runs.
+
+  * DO NOT EXPECT AUTO TO FIND ALPHA IT CANNOT SEE. Video.Alpha = Auto trusts the
+    pixel format ffprobe reports. A VP8/VP9 WebM carries its alpha in
+    BlockAdditions and reports a plain format; set Include for it.
+
+  * DO NOT EXPECT THE BRIDGE TO FILL TRANSPARENT PIXELS. The colour under fully
+    transparent pixels is whatever the source had there - see THE MASTER FLAVOUR.
+
   * DO NOT ASK FOR OPUS IN A BESPOKE FILE. It is refused outright, and not
     because of a switch: a bespoke ".cbv" has to play with the core package and a
     video decoder and nothing else. Use Vorbis, which is that flavour's default
@@ -922,6 +1013,11 @@ Keep a source's OWN captions/chapters extract them first, then hand them in as
                                       Captions / ChaptersPath (see WHAT IS TAKEN
                                       FROM THE SOURCE)
 Author a bespoke .cbv                 request.Flavour = VideoAuthoringFlavour.Bespoke
+Author a master .cbvmaster            request.Flavour = VideoAuthoringFlavour.Master
+  (alpha + lossless FLAC)               OutputPath = "clip.cbvmaster"
+Force alpha in, or leave it out       Video.Alpha = AuthoringAlphaMode.Include / Exclude
+Raise the alpha plane's quality       Video.AlphaConstantRateFactor = 20
+24-bit lossless sound                 Audio.FlacBitDepth = 24
 See the command without running it    CbvAuthor.RenderCommands(request)
 Check ffmpeg is installed             CbvAuthor.TryVerifyTools(out string problem)
 Check its encoders as well            CbvAuthor.TryVerifyTools(out problem, out warnings)

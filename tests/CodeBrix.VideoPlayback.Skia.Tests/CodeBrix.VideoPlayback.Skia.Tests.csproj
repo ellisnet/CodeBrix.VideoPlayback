@@ -36,7 +36,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Content Include="..\assets\*.cbv;..\assets\*.txt">
+    <Content Include="..\assets\*.cbv;..\assets\*.cbvmaster;..\assets\*.txt">
       <Link>assets\%(Filename)%(Extension)</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>

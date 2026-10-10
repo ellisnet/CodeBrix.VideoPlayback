@@ -34,6 +34,7 @@ public sealed class VideoFrame : IDisposable
     private IVideoFrameBufferPool owningPool;
     private VideoFrameBuffer buffer;
     private VideoFrameInfo info;
+    private VideoFrame alpha;
 
     private VideoFrame()
     {
@@ -96,6 +97,72 @@ public sealed class VideoFrame : IDisposable
 
     /// <summary>The second chroma plane (Cr). Empty for monochrome content.</summary>
     public VideoFramePlane V => Buffer.V;
+
+    /// <summary>
+    /// The alpha plane - opacity, one sample per pixel at the frame's own size and bit depth, full range (0 is
+    /// fully transparent, <see cref="MaxSampleValue" /> fully opaque), STRAIGHT unless
+    /// <see cref="IsAlphaPremultiplied" /> says otherwise - or <see cref="VideoFramePlane.Empty" /> when the
+    /// frame has no alpha.
+    /// </summary>
+    /// <remarks>
+    /// It comes from a master (Mode3) file's alpha-plane track, decoded beside the picture and attached by the
+    /// session with <see cref="AttachAlpha" />. It lives exactly as long as this frame does.
+    /// </remarks>
+    public VideoFramePlane A
+    {
+        get
+        {
+            ThrowIfReleased();
+            return alpha == null ? VideoFramePlane.Empty : alpha.Y;
+        }
+    }
+
+    /// <summary>True when the frame carries an alpha plane.</summary>
+    public bool HasAlpha => Volatile.Read(ref references) > 0 && alpha != null;
+
+    /// <summary>
+    /// True when the picture's colours have already been multiplied by the alpha plane. False - straight
+    /// colour - for everything the authoring library writes.
+    /// </summary>
+    public bool IsAlphaPremultiplied { get; private set; }
+
+    /// <summary>
+    /// Gives this frame an alpha plane: the luma plane of a decoded monochrome frame of the same size and bit
+    /// depth.
+    /// </summary>
+    /// <param name="alphaFrame">
+    /// The decoded alpha frame. This frame TAKES OVER the caller's reference to it and releases it when this
+    /// frame is released, so the caller must not dispose it afterwards (retain it first to keep a reference).
+    /// </param>
+    /// <param name="premultiplied">True when the picture's colours are already multiplied by the alpha.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="alphaFrame" /> is null.</exception>
+    /// <exception cref="ArgumentException">
+    /// The alpha frame is a different size or bit depth from this one, or is this frame itself.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">This frame already carries an alpha plane.</exception>
+    public void AttachAlpha(VideoFrame alphaFrame, bool premultiplied = false)
+    {
+        if (alphaFrame == null) throw new ArgumentNullException(nameof(alphaFrame));
+        ThrowIfReleased();
+
+        if (ReferenceEquals(alphaFrame, this))
+        {
+            throw new ArgumentException("A frame cannot be its own alpha plane.", nameof(alphaFrame));
+        }
+
+        if (alphaFrame.Width != Width || alphaFrame.Height != Height || alphaFrame.BitDepth != BitDepth)
+        {
+            throw new ArgumentException(
+                $"The alpha frame is {alphaFrame.Width}x{alphaFrame.Height} at {alphaFrame.BitDepth} bits and this "
+                + $"frame is {Width}x{Height} at {BitDepth} bits; an alpha plane matches its picture exactly.",
+                nameof(alphaFrame));
+        }
+
+        if (alpha != null) throw new InvalidOperationException("This frame already carries an alpha plane.");
+
+        alpha = alphaFrame;
+        IsAlphaPremultiplied = premultiplied;
+    }
 
     /// <summary>The visible width in luma samples.</summary>
     public int Width => info.Width;
@@ -196,9 +263,14 @@ public sealed class VideoFrame : IDisposable
 
             VideoFrameBuffer released = buffer;
             IVideoFrameBufferPool pool = owningPool;
+            VideoFrame releasedAlpha = alpha;
             buffer = null;
             owningPool = null;
             info = default;
+            alpha = null;
+            IsAlphaPremultiplied = false;
+
+            releasedAlpha?.Dispose();
 
             if (pool != null)
             {
@@ -217,7 +289,8 @@ public sealed class VideoFrame : IDisposable
     /// <inheritdoc />
     public override string ToString() =>
         $"frame {info.FrameNumber} at {info.Timestamp}, {info.Width}x{info.Height} {info.Layout} {info.BitDepth}-bit"
-        + (info.IsKeyFrame ? " (key)" : string.Empty);
+        + (info.IsKeyFrame ? " (key)" : string.Empty)
+        + (alpha != null ? " with alpha" : string.Empty);
 
     private void ThrowIfReleased()
     {

@@ -56,6 +56,13 @@ namespace CodeBrix.VideoPlayback;
 /// has no decoder fails with a message that names the package to add.
 /// </para>
 /// <para>
+/// <b>Alpha.</b> A master (Mode3) file may carry an alpha-plane track beside its picture. The session then runs
+/// a second decoder over it, in lock step, pairs its frames with the picture's by timestamp and attaches each
+/// to its picture frame (<see cref="VideoFrame.A" />), so what reaches <see cref="Presenter" /> carries real
+/// opacity; <see cref="HasAlpha" /> says so. A presenter turns that into premultiplied BGRA over a transparent
+/// background. A file without an alpha track plays exactly as it always has.
+/// </para>
+/// <para>
 /// <b>Threads.</b> Two of the session's own: one reading and demultiplexing, one decoding video. Audio is
 /// pulled by the audio engine on its own thread. Events are raised from whichever of those threads noticed
 /// the change, so a handler that touches a user interface must marshal.
@@ -83,7 +90,11 @@ public sealed class VideoPlaybackSession : IDisposable
     private IMediaContainerReader reader;
     private MediaTrackInfo videoTrack;
     private MediaTrackInfo audioTrack;
+    private MediaTrackInfo alphaTrack;
     private IVideoDecoder decoder;
+    private IVideoDecoder alphaDecoder;
+    private PacketRing alphaQueue;
+    private TrackParkingBuffer alphaParking;
     private PacketRing videoQueue;
     private PacketRing audioQueue;
     private SessionAudioPacketSource audioSource;
@@ -110,6 +121,8 @@ public sealed class VideoPlaybackSession : IDisposable
     private volatile bool videoTrackExhausted;
     private volatile bool audioTrackExhausted;
     private volatile bool videoSupplyFinished;
+    private volatile bool alphaTrackExhausted;
+    private volatile bool alphaSupplyFinished;
     private volatile bool parkingBudgetReported;
     private volatile bool videoDrained;
     private volatile bool audioEnded;
@@ -199,6 +212,19 @@ public sealed class VideoPlaybackSession : IDisposable
 
     /// <summary>The audio track being played, or null when the file has none or audio is switched off.</summary>
     public MediaTrackInfo AudioTrack => audioTrack;
+
+    /// <summary>
+    /// The alpha-plane track being decoded beside the picture, or null when the file has none. Only a master
+    /// (Mode3) file carries one.
+    /// </summary>
+    public MediaTrackInfo AlphaTrack => alphaTrack;
+
+    /// <summary>
+    /// True when the open file carries an alpha plane, so the frames this session presents carry real opacity
+    /// (<see cref="VideoFrame.HasAlpha" />) and a presenter composes them as premultiplied BGRA over whatever
+    /// the host draws behind them.
+    /// </summary>
+    public bool HasAlpha => alphaTrack != null;
 
     /// <summary>
     /// How much of the end of the audio track the audio player has been told to discard, for tests and
@@ -434,6 +460,12 @@ public sealed class VideoPlaybackSession : IDisposable
             videoParking = new TrackParkingBuffer(options.MaxTrackParkingBytes);
             audioParking = new TrackParkingBuffer(options.MaxTrackParkingBytes);
 
+            if (alphaTrack != null)
+            {
+                alphaQueue = new PacketRing(options.VideoQueueCapacity);
+                alphaParking = new TrackParkingBuffer(options.MaxTrackParkingBytes);
+            }
+
             if (audioPlayer != null)
             {
                 audioSource = new SessionAudioPacketSource(audioQueue);
@@ -567,6 +599,7 @@ public sealed class VideoPlaybackSession : IDisposable
 
             videoQueue?.Clear();
             audioQueue?.Clear();
+            alphaQueue?.Clear();
 
             // The clock moves BEFORE the generation does, so anything that notices the new generation - the
             // clock thread deciding whether what it read is stale, above all - already reads the new position.
@@ -593,6 +626,8 @@ public sealed class VideoPlaybackSession : IDisposable
             videoTrackExhausted = false;
             audioTrackExhausted = false;
             videoSupplyFinished = false;
+            alphaTrackExhausted = false;
+            alphaSupplyFinished = false;
             videoDrained = false;
             skipToKeyFrame = false;
             pendingImmediatePresent = true;
@@ -708,9 +743,16 @@ public sealed class VideoPlaybackSession : IDisposable
     {
         foreach (MediaTrackInfo track in reader.Tracks)
         {
-            if (track.Kind == MediaTrackKind.Video && videoTrack == null) videoTrack = track;
+            if (track.Kind == MediaTrackKind.Video && track.VideoRole == VideoTrackRole.AlphaPlane)
+            {
+                if (alphaTrack == null) alphaTrack = track;
+            }
+            else if (track.Kind == MediaTrackKind.Video && videoTrack == null) videoTrack = track;
             else if (track.Kind == MediaTrackKind.Audio && audioTrack == null && options.PlayAudio) audioTrack = track;
         }
+
+        // An alpha plane belongs to a picture; with no picture there is nothing to give it to.
+        if (videoTrack == null) alphaTrack = null;
 
         if (videoTrack == null && audioTrack == null)
         {
@@ -731,9 +773,19 @@ public sealed class VideoPlaybackSession : IDisposable
             DescribeCodecPrivate(videoTrack),
             options.DecoderOptions);
 
-        if (decoder != null) return;
+        if (decoder == null) throw new VideoPlaybackException(DescribeMissingVideoDecoder(videoTrack.CodecId));
 
-        throw new VideoPlaybackException(DescribeMissingVideoDecoder(videoTrack.CodecId));
+        if (alphaTrack == null) return;
+
+        // The alpha plane is an ordinary monochrome stream of the same codec, so the same factories serve it,
+        // through a decoder of its own.
+        alphaDecoder = VideoDecoders.TryCreateDecoder(
+            factories,
+            alphaTrack.CodecId,
+            DescribeCodecPrivate(alphaTrack),
+            options.DecoderOptions);
+
+        if (alphaDecoder == null) throw new VideoPlaybackException(DescribeMissingVideoDecoder(alphaTrack.CodecId));
     }
 
     /// <summary>
@@ -793,6 +845,13 @@ public sealed class VideoPlaybackSession : IDisposable
         {
             return "audio codec 'opus' has no registered decoder — reference CodeBrix.Audio.Opus and call "
                 + "CodeBrixAudioOpus.Register()";
+        }
+
+        if (string.Equals(codecId, VideoCodecIds.Flac, StringComparison.OrdinalIgnoreCase))
+        {
+            return "audio codec 'flac' has no registered decoder — a master (Mode3) file's lossless sound needs a "
+                + "CodeBrix.Audio.Core whose shared output serves FLAC packets (FlacPacketCodecFactory); update "
+                + "CodeBrix.Audio.Core, or open the file with VideoPlaybackOptions.PlayAudio set to false";
         }
 
         return $"audio codec '{codecId}' has no registered decoder — register an IPacketCodecFactory that serves "
@@ -984,8 +1043,11 @@ public sealed class VideoPlaybackSession : IDisposable
                     videoTrackExhausted = false;
                     audioTrackExhausted = false;
                     videoSupplyFinished = false;
+                    alphaTrackExhausted = false;
+                    alphaSupplyFinished = false;
                     videoParking?.Clear();
                     audioParking?.Clear();
+                    alphaParking?.Clear();
 
                     // The end of the track moved, so a padding read off the block that used to be the last
                     // one no longer says anything. The container's own trim - which belongs to the track
@@ -999,8 +1061,14 @@ public sealed class VideoPlaybackSession : IDisposable
                 // the file stored them.
                 bool videoParkingEmpty = videoParking == null || videoParking.TryDrainInto(videoQueue);
                 bool audioParkingEmpty = audioParking == null || audioParking.TryDrainInto(audioQueue);
+                bool alphaParkingEmpty = alphaParking == null || alphaParking.TryDrainInto(alphaQueue);
 
                 PublishTrackExhaustion(videoParkingEmpty, audioParkingEmpty, generation);
+
+                if (alphaTrack != null && alphaParkingEmpty && (alphaTrackExhausted || demuxFinished))
+                {
+                    alphaSupplyFinished = true;
+                }
 
                 if (demuxFinished)
                 {
@@ -1012,7 +1080,9 @@ public sealed class VideoPlaybackSession : IDisposable
                 // its parking budget. A full queue on its own no longer stops it, and one track's full queue
                 // never stops another track from being fed, which is what used to let a clip whose sound ends
                 // before its picture stop the whole session.
-                if (IsTrackBlocked(videoQueue, videoParking) || IsTrackBlocked(audioQueue, audioParking))
+                if (IsTrackBlocked(videoQueue, videoParking)
+                    || IsTrackBlocked(audioQueue, audioParking)
+                    || IsTrackBlocked(alphaQueue, alphaParking))
                 {
                     ReportParkingBudgetOnce();
                     Thread.Sleep(2);
@@ -1046,6 +1116,7 @@ public sealed class VideoPlaybackSession : IDisposable
                     // read, which is why reaching the end of the file above must always be possible.
                     if (videoTrack != null) videoTrackExhausted = reader.IsTrackExhausted(videoTrack.Id);
                     if (audioTrack != null) audioTrackExhausted = reader.IsTrackExhausted(audioTrack.Id);
+                    if (alphaTrack != null) alphaTrackExhausted = reader.IsTrackExhausted(alphaTrack.Id);
 
                     // An audio packet is handed over HERE, still under the lock a seek takes, so a seek can
                     // never fall between reading it and acting on it. Outside the lock, a packet read just
@@ -1066,6 +1137,10 @@ public sealed class VideoPlaybackSession : IDisposable
                 if (videoTrack != null && packet.TrackId == videoTrack.Id)
                 {
                     Deliver(videoQueue, videoParking, packet, TimeSpan.Zero, generation);
+                }
+                else if (alphaTrack != null && packet.TrackId == alphaTrack.Id)
+                {
+                    Deliver(alphaQueue, alphaParking, packet, TimeSpan.Zero, generation);
                 }
             }
             catch (Exception ex)
@@ -1240,6 +1315,7 @@ public sealed class VideoPlaybackSession : IDisposable
         VideoFrame held = null;
         int consecutiveLate = 0;
         bool drained = false;
+        AlphaPairing alpha = alphaDecoder == null ? null : new AlphaPairing(this);
 
         try
         {
@@ -1255,6 +1331,7 @@ public sealed class VideoPlaybackSession : IDisposable
                     drained = false;
                     videoDrained = false;
                     decoder.Flush();
+                    alpha?.Reset();
                     presenter.Clear();
                 }
 
@@ -1270,8 +1347,28 @@ public sealed class VideoPlaybackSession : IDisposable
                     continue;
                 }
 
+                if (alpha != null && alpha.IsWaiting)
+                {
+                    // A picture frame is waiting for its alpha plane, which may need more alpha packets than
+                    // the demultiplexer has delivered yet. Nothing else moves until it is paired.
+                    if (!alpha.TryComplete(generation, out VideoFrame paired))
+                    {
+                        Thread.Sleep(1);
+                        continue;
+                    }
+
+                    held = ScreenFrame(paired, generation, ref consecutiveLate);
+                    continue;
+                }
+
                 if (decoder.TryReceiveFrame(out VideoFrame frame))
                 {
+                    if (alpha != null)
+                    {
+                        alpha.Begin(frame);
+                        continue;
+                    }
+
                     held = ScreenFrame(frame, generation, ref consecutiveLate);
                     continue;
                 }
@@ -1336,6 +1433,118 @@ public sealed class VideoPlaybackSession : IDisposable
         finally
         {
             held?.Dispose();
+            alpha?.Reset();
+        }
+    }
+
+    /// <summary>
+    /// Pairs each picture frame with the alpha-plane frame that carries the same timestamp, decoding the alpha
+    /// track on demand. Lives on, and is only ever touched by, the decoding thread.
+    /// </summary>
+    /// <remarks>
+    /// The authoring library guarantees lock step and the reader checks it from the index, so in a well-formed
+    /// file every picture frame finds its alpha frame. Alpha frames OLDER than the picture frame being paired
+    /// are frames whose picture was dropped - before a seek target, or late - and are released. An alpha frame
+    /// NEWER than the picture frame means the picture frame has no alpha frame at all; it is presented without
+    /// one rather than held up, and the newer alpha frame waits for its own picture. The alpha track is never
+    /// skipped ahead when the picture skips to a key frame: it keeps decoding in order, which a monochrome plane
+    /// does cheaply, so its reference frames are always intact.
+    /// </remarks>
+    private sealed class AlphaPairing
+    {
+        private readonly VideoPlaybackSession session;
+        private VideoFrame waiting;
+        private VideoFrame pending;
+        private bool drained;
+
+        internal AlphaPairing(VideoPlaybackSession session)
+        {
+            this.session = session;
+        }
+
+        internal bool IsWaiting => waiting != null;
+
+        internal void Begin(VideoFrame picture) => waiting = picture;
+
+        internal bool TryComplete(int generation, out VideoFrame paired)
+        {
+            paired = null;
+            VideoFrame picture = waiting;
+            IVideoDecoder alphaDecoder = session.alphaDecoder;
+            PacketRing queue = session.alphaQueue;
+
+            while (true)
+            {
+                if (pending != null)
+                {
+                    if (pending.Timestamp < picture.Timestamp)
+                    {
+                        pending.Dispose();
+                        pending = null;
+                        continue;
+                    }
+
+                    if (pending.Timestamp == picture.Timestamp)
+                    {
+                        picture.AttachAlpha(pending, session.alphaTrack.IsAlphaPremultiplied);
+                        pending = null;
+                    }
+
+                    // Either attached, or the alpha frame is for a later picture and this one has none.
+                    waiting = null;
+                    paired = picture;
+                    return true;
+                }
+
+                if (alphaDecoder.TryReceiveFrame(out VideoFrame decoded))
+                {
+                    pending = decoded;
+                    continue;
+                }
+
+                if (queue != null && queue.TryBeginRead(out RingPacket queued))
+                {
+                    if (queued.Generation == generation)
+                    {
+                        alphaDecoder.SendPacket(new VideoPacket(
+                            queued.Data,
+                            queued.Timestamp,
+                            queued.IsKeyFrame,
+                            queued.Duration,
+                            0));
+                    }
+
+                    queue.EndRead();
+                    continue;
+                }
+
+                if (session.alphaSupplyFinished)
+                {
+                    if (!drained)
+                    {
+                        drained = true;
+                        alphaDecoder.Drain();
+                        continue;
+                    }
+
+                    // The alpha track has nothing more to give: present the picture as it is.
+                    waiting = null;
+                    paired = picture;
+                    return true;
+                }
+
+                return false;
+            }
+        }
+
+        internal void Reset()
+        {
+            waiting?.Dispose();
+            waiting = null;
+            pending?.Dispose();
+            pending = null;
+            drained = false;
+            session.alphaDecoder?.Flush();
         }
     }
 
@@ -1720,6 +1929,8 @@ public sealed class VideoPlaybackSession : IDisposable
 
         decoder?.Dispose();
         decoder = null;
+        alphaDecoder?.Dispose();
+        alphaDecoder = null;
 
         presenter.Clear();
         presenter.ResetStatistics();
@@ -1742,6 +1953,14 @@ public sealed class VideoPlaybackSession : IDisposable
         audioParking?.Clear();
         videoParking = null;
         audioParking = null;
+
+        alphaQueue?.Clear();
+        alphaParking?.Clear();
+        alphaQueue = null;
+        alphaParking = null;
+        alphaTrack = null;
+        alphaTrackExhausted = false;
+        alphaSupplyFinished = false;
 
         lock (noticeGate) sessionNotices.Clear();
         parkingBudgetReported = false;

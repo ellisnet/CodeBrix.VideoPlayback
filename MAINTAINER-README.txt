@@ -20,7 +20,8 @@ This repository produces THREE NuGet packages:
   CodeBrix.VideoPlayback.Skia.MitLicenseForever
       License:       MIT
       Consumer doc:  src/CodeBrix.VideoPlayback.Skia/AGENT-README.txt
-      Dependencies:  CodeBrix.VideoPlayback.MitLicenseForever (same version) and
+      Dependencies:  CodeBrix.VideoPlayback.MitLicenseForever (same version),
+                     CodeBrix.Audio.Core.MitLicenseForever (the core's pin) and
                      plain SkiaSharp, and nothing else
 
   CodeBrix.VideoPlayback.Authoring.MitLicenseForever
@@ -67,12 +68,17 @@ HARD RULES FOR THIS REPOSITORY
 ==============================
 1. THE CORE REFERENCES CodeBrix.Audio.Core.MitLicenseForever AND NOTHING ELSE.
    Not the desktop CodeBrix.Audio.MitLicenseForever package - that one carries
-   the native audio engine, and the presenter and the application take it, not
-   the core - not the Opus package, not a codec package, not SkiaSharp, not any
+   the native audio engine, and ONLY the application takes it (on Android the
+   application takes CodeBrix.Audio.Android instead) - not the core, not the
+   presenter - not the Opus package, not a codec package, not SkiaSharp, not any
    drawing library.
    The test project may reference the Opus package - and does, to prove the Opus
    path works once an application registers it - but the library must not.
-1a. THE PRESENTER REFERENCES THE CORE AND PLAIN SkiaSharp, AND NOTHING ELSE.
+1a. THE PRESENTER REFERENCES THE CORE, CodeBrix.Audio.Core (AT THE CORE'S PIN)
+   AND PLAIN SkiaSharp, AND NOTHING ELSE. It has no source that touches audio;
+   the Audio.Core reference only keeps the pin explicit. Never the desktop
+   CodeBrix.Audio package: that would hand the desktop natives to an Android
+   application.
    Never SkiaSharp.Views.*, never a windowing toolkit, and NEVER a
    SkiaSharp.NativeAssets.* package: the application picks the native asset that
    suits the platforms it ships on, and a library that picks one for it breaks
@@ -184,6 +190,16 @@ native engine; the opt-in tests that open the audio device need the package that
 does, and without it every one of them fails to load the native library. The
 LIBRARY never takes that reference. The authoring test project does not need it:
 its sessions are built with PlayAudio false and open no device.
+
+THE SKIP-MARKED FLAC DECODE TESTS. A master file's sound is FLAC, and decoding
+FLAC packets needs a CodeBrix.Audio.Core whose shared output serves them (its
+FlacPacketCodecFactory). The pinned Core does not yet, so the tests that DECODE
+FLAC - MasterFixtureTests (two) and MasterAuthoringTests (one) - are written and
+marked [Fact(Skip = "needs CodeBrix.Audio.Core with FlacPacketCodecFactory -
+unskip after the Core pin is raised")]. When the core project's
+CodeBrix.Audio.Core pin is raised to a Core that has it, remove the Skip and run
+them. Every container test of the FLAC track - codec private, packets, byte-exact
+round trip - needs no decoder and runs today.
 
 The suite depends on the golden corpus under tests/assets. When it is missing,
 the tests that need it SKIP rather than fail - see EXTRAS-README.txt for how to
@@ -1130,6 +1146,64 @@ reader" step existed in three places - the session, cbvinfo and cbvdecode - and 
 now one public method in the core that all three, and the authoring library, call.
 
 
+MASTER FILES (MODE3): THE DECISIONS AND THE MEASUREMENTS
+=========================================================
+What a master file IS is written in CBV-FORMAT.txt, section 6. What is worth
+knowing when changing the code around it:
+
+THE VERSION STAMP IS THE LOWEST THAT DESCRIBES THE FILE. CbvFormat.Version
+stays 0 and is what every Mode2 file is still stamped with, byte for byte;
+CbvMuxer.RequiredVersion() returns 1 only when a track has the alpha-plane flags
+or the codec "flac". That keeps every existing .cbv - and every new Mode2 one -
+playable on an older reader, and makes an older reader refuse only the files it
+genuinely cannot play. CbvFormat.HighestReadableVersion is what the reader
+accepts.
+
+LOCK STEP IS CHECKED THREE TIMES. The authoring library compares the two IVFs it
+encoded (Internal/IvfKeyFrames) before muxing; the muxer compares the two
+tracks' chunks in Complete() before it writes a byte (Containers/Cbv/
+CbvAlphaLockStep); and the reader compares them again from the index when it
+opens a file. The session can therefore pair frames by timestamp and treat a
+mismatch as a corrupt-file edge case: an alpha frame older than its picture is
+released, a newer one waits, and a picture with none is shown without one.
+
+THE SESSION NEVER SKIPS THE ALPHA TRACK AHEAD. When the picture falls behind and
+skips to its next key frame, the alpha decoder simply keeps decoding in order
+and the stale alpha frames are released at pairing. A monochrome plane decodes
+cheaply, and its reference frames are never broken. It is flushed only on a
+seek, where the reader has backed up to the first chunk at the key frame's
+timestamp so both tracks restart on the same key frame.
+
+THE CPU PATH GRADES BEFORE IT PREMULTIPLIES. A grade applied to premultiplied
+colour darkens soft edges, so the presenter converts, applies the lookup table,
+and only then calls VideoFrameConverter.PremultiplyByAlpha. A frame without an
+alpha plane takes exactly the code path it always took.
+
+THE ALPHA PASS USES libaom IN REALTIME MODE, AND THAT WAS MEASURED. FFmpeg 7.1.5
+with libaom on this machine: in the default "good" usage, every FORCED key frame
+came out followed by a second key frame on the next frame (and at -cpu-used 8 the
+encoder's own key frames did too, unless enable-keyframe-filtering=0); in
+"-usage realtime" the forced list came out exactly. -g and -keyint_min are set
+far beyond any clip so that libaom places no key frame of its own. The forced
+times are each key frame's time less half a frame, so FFmpeg's "first frame at or
+after" rule picks exactly that frame whatever its time base rounds to.
+SVT-AV1 is never used for the alpha plane: it cannot write a monochrome sequence
+header.
+
+THE FLAC SPLIT IS MANAGED AND CONSERVATIVE. Internal/FlacFrameScanner accepts a
+frame boundary only when the next header parses, its CRC-8 matches, its stream
+parameters equal STREAMINFO's, its frame (or sample) number is the expected next
+one AND the CRC-16 of the frame it closes matches. Its tests prove that the
+frames tile the file's audio bytes exactly and that the packets come back out of
+a master file byte for byte.
+
+THE BRIDGE DOES NOT FILL TRANSPARENT PIXELS. Decided for Mode3: fully
+transparent pixels should carry the nearest opaque colour. FFmpeg has no filter
+for it, so the FFmpeg bridge does not, and the Authoring AGENT-README says so. It
+belongs to the managed encoding path, when Authoring moves onto
+CodeBrix.VideoProcessing.Core.
+
+
 BENCHMARKS
 ==========
 Measured 2026-08-28 on a 12th Gen Intel Core i7-12850HX (24 threads), LMDE 7,
@@ -1160,6 +1234,14 @@ tests/assets holds the golden corpus. Two scripts rebuild it:
                            always Vorbis - cbvmux refuses an Ogg Opus, because a
                            bespoke .cbv has to play with the core package and a
                            video decoder and nothing else.
+
+The two master (Mode3) fixtures, av1-alpha-flac.cbvmaster and av1-flac.cbvmaster,
+are made by the authoring library itself, from synthetic sources:
+
+  dotnet run --project tools/CodeBrix.VideoPlayback.AssetAuthoring -c Release -- --master-fixtures
+
+ASSETS.txt records how and what. Like every encoder-made file they are not
+byte-reproducible across encoder builds.
 
 The FFmpeg-produced files are NOT byte-reproducible (FFmpeg picks random track
 UIDs and Ogg serial numbers); the mkvmerge ones are. ASSETS.txt records the

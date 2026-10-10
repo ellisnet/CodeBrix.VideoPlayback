@@ -17,8 +17,9 @@ namespace CodeBrix.VideoPlayback.ConsumerShape;
 /// </summary>
 /// <remarks>
 /// <para>
-/// It exists to be PUBLISHED and then looked at. The playback library depends on CodeBrix.Audio and nothing
-/// else; the presenter depends on the playback library and plain SkiaSharp. So the publish output of an
+/// It exists to be PUBLISHED and then looked at. The playback library depends on CodeBrix.Audio.Core and
+/// nothing else; the presenter depends on the playback library, CodeBrix.Audio.Core and plain SkiaSharp; the
+/// application adds the audio engine for its platform (CodeBrix.Audio here). So the publish output of an
 /// application that plays Vorbis-audio files contains no Opus binary, no codec binary and no windowing
 /// toolkit - which is the promise the whole family is built around, and is checked by looking at the
 /// published folder rather than by taking anybody's word for it.
@@ -58,7 +59,8 @@ public static class Program
         Console.WriteLine($"playing  {mediaPath}");
         Console.WriteLine($"snapshot {snapshotPath}");
 
-        // 1. A session. Audio plays through CodeBrix.Audio, which has Vorbis built in - no extra package.
+        // 1. A session. Audio decodes in CodeBrix.Audio.Core, which has Vorbis built in, and plays through the
+        //    engine package this application references (CodeBrix.Audio on the desktop).
         using VideoPlaybackSession session = new VideoPlaybackSession();
 
         // 2. A decoder - and there is nothing to do. The uncompressed codec this clip uses is built into the

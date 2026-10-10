@@ -22,8 +22,23 @@ public sealed class CbvAuthoringRequest
     /// <summary>The path of an IVF file holding the coded video, or null for a file with no video.</summary>
     public string VideoIvfPath { get; set; }
 
+    /// <summary>
+    /// The path of a second IVF file holding the picture's ALPHA CHANNEL as a monochrome AV1 stream, or null
+    /// for a file with no alpha. It must be in lock step with <see cref="VideoIvfPath" /> - the same size, bit
+    /// depth, frame count, timestamps and key-frame positions - and full range. Supplying it makes the file a
+    /// master (Mode3, format version 1) file.
+    /// </summary>
+    public string AlphaIvfPath { get; set; }
+
     /// <summary>The path of an Ogg Opus or Ogg Vorbis file, or null for a file with no audio.</summary>
     public string AudioOggPath { get; set; }
+
+    /// <summary>
+    /// An audio track supplied as ready-made packets - a FLAC stream split into frames - or null. At most one
+    /// of this and <see cref="AudioOggPath" /> may be set. FLAC makes the file a master (Mode3, format version 1)
+    /// file.
+    /// </summary>
+    public CbvPacketAudioInput PacketAudio { get; set; }
 
     /// <summary>The caption files to include, each with its language and flags.</summary>
     public IList<CbvCaptionInput> Captions { get; } = new List<CbvCaptionInput>();

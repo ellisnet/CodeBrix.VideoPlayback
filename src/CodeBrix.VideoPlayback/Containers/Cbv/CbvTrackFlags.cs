@@ -22,4 +22,20 @@ public enum CbvTrackFlags
 
     /// <summary>The track should be ignored unless an application asks for it by name.</summary>
     Disabled = 8,
+
+    /// <summary>
+    /// A video track that is NOT a picture: a monochrome stream of the alpha channel of the file's picture
+    /// track, luma only, full range, in lock step with it - the same dimensions, bit depth, frame count,
+    /// timestamps and key-frame positions. Unless <see cref="PremultipliedAlpha" /> is also set, the picture
+    /// track's colours are STRAIGHT (not multiplied by this alpha). A file with this flag on any track is
+    /// version 1 or later.
+    /// </summary>
+    AlphaPlane = 16,
+
+    /// <summary>
+    /// On an <see cref="AlphaPlane" /> track: the picture track's colours have already been multiplied by
+    /// this alpha. Reserved so the format can record the fact; the authoring library never sets it, and the
+    /// player treats the colours as straight unless it is set.
+    /// </summary>
+    PremultipliedAlpha = 32,
 }

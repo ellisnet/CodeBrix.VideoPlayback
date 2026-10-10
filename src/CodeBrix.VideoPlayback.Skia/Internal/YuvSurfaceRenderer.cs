@@ -38,6 +38,9 @@ internal sealed class YuvSurfaceRenderer : IDisposable
     private SKRuntimeEffect plainEffect;
     private SKRuntimeEffect tetrahedralEffect;
     private SKRuntimeEffect trilinearEffect;
+    private SKRuntimeEffect plainAlphaEffect;
+    private SKRuntimeEffect tetrahedralAlphaEffect;
+    private SKRuntimeEffect trilinearAlphaEffect;
 
     /// <summary>Draws a frame onto a surface.</summary>
     /// <param name="frame">The frame to draw.</param>
@@ -81,7 +84,13 @@ internal sealed class YuvSurfaceRenderer : IDisposable
             SKImage redChroma = monochrome ? luma : PreparePlane(frame.V, "second chroma", graphicsContext);
 
             bool useLookup = lookupAtlas != null;
-            SKRuntimeEffect effect = useLookup ? EnsureLookupEffect(interpolation) : EnsurePlainEffect();
+            bool withAlpha = frame.HasAlpha;
+            SKRuntimeEffect effect = withAlpha
+                ? (useLookup ? EnsureLookupAlphaEffect(interpolation) : EnsurePlainAlphaEffect())
+                : (useLookup ? EnsureLookupEffect(interpolation) : EnsurePlainEffect());
+
+            // The alpha plane samples exactly like the luma plane: one texel per pixel, never filtered.
+            SKImage alphaPlane = withAlpha ? PreparePlane(frame.A, "alpha", graphicsContext) : null;
 
             using SKShader lumaShader =
                 luma.ToRawShader(SKShaderTileMode.Clamp, SKShaderTileMode.Clamp, LumaSampling);
@@ -98,6 +107,10 @@ internal sealed class YuvSurfaceRenderer : IDisposable
                     YuvShaderSource.NeedsFilteredAtlas(interpolation) ? SmoothSampling : ExactSampling)
                 : null;
 
+            using SKShader alphaShader = withAlpha
+                ? alphaPlane.ToRawShader(SKShaderTileMode.Clamp, SKShaderTileMode.Clamp, LumaSampling)
+                : null;
+
             using SKRuntimeEffectUniforms uniforms = new SKRuntimeEffectUniforms(effect);
             uniforms.Add("chromaShift", new[] { numbers.ChromaShiftX, numbers.ChromaShiftY });
             uniforms.Add("chromaCosited", new[] { numbers.ChromaCositedX, numbers.ChromaCositedY });
@@ -107,12 +120,18 @@ internal sealed class YuvSurfaceRenderer : IDisposable
             uniforms.Add("greenRow", numbers.GreenRow);
             uniforms.Add("blueRow", numbers.BlueRow);
             if (useLookup) uniforms.Add("lookupSize", (float)lookupSize);
+            if (withAlpha)
+            {
+                uniforms.Add("alphaScale", frame.A.BytesPerSample >= 2 ? 65535f / frame.MaxSampleValue : 1f);
+                uniforms.Add("alphaPremultiplied", frame.IsAlphaPremultiplied ? 1f : 0f);
+            }
 
             using SKRuntimeEffectChildren children = new SKRuntimeEffectChildren(effect);
             children.Add(YuvShaderSource.LumaChild, new SKRuntimeEffectChild(lumaShader));
             children.Add(YuvShaderSource.ChromaBlueChild, new SKRuntimeEffectChild(blueShader));
             children.Add(YuvShaderSource.ChromaRedChild, new SKRuntimeEffectChild(redShader));
             if (useLookup) children.Add(YuvShaderSource.LookupChild, new SKRuntimeEffectChild(lookupShader));
+            if (withAlpha) children.Add(YuvShaderSource.AlphaChild, new SKRuntimeEffectChild(alphaShader));
 
             using SKShader shader = effect.ToShader(uniforms, children);
             if (shader == null)
@@ -155,6 +174,12 @@ internal sealed class YuvSurfaceRenderer : IDisposable
         tetrahedralEffect = null;
         trilinearEffect?.Dispose();
         trilinearEffect = null;
+        plainAlphaEffect?.Dispose();
+        plainAlphaEffect = null;
+        tetrahedralAlphaEffect?.Dispose();
+        tetrahedralAlphaEffect = null;
+        trilinearAlphaEffect?.Dispose();
+        trilinearAlphaEffect = null;
     }
 
     private SKImage PreparePlane(in VideoFramePlane plane, string which, GRContext graphicsContext)
@@ -205,6 +230,19 @@ internal sealed class YuvSurfaceRenderer : IDisposable
         }
 
         return tetrahedralEffect ??= Compile(YuvShaderSource.Build(interpolation), interpolation);
+    }
+
+    private SKRuntimeEffect EnsurePlainAlphaEffect() =>
+        plainAlphaEffect ??= Compile(YuvShaderSource.Build(true), null);
+
+    private SKRuntimeEffect EnsureLookupAlphaEffect(LutInterpolation interpolation)
+    {
+        if (interpolation == LutInterpolation.Trilinear)
+        {
+            return trilinearAlphaEffect ??= Compile(YuvShaderSource.Build(interpolation, true), interpolation);
+        }
+
+        return tetrahedralAlphaEffect ??= Compile(YuvShaderSource.Build(interpolation, true), interpolation);
     }
 
     private static SKRuntimeEffect Compile(string source, LutInterpolation? interpolation)

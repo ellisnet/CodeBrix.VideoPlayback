@@ -1,8 +1,8 @@
 namespace CodeBrix.VideoPlayback.Authoring;
 
 /// <summary>
-/// Which of the two <c>.cbv</c> flavours to write. Both carry the same extension; the reader sniffs the
-/// first four bytes and knows which it has.
+/// Which <c>.cbv</c> flavour to write. The first two carry the <c>.cbv</c> extension and the third
+/// <c>.cbvmaster</c>; whatever the extension says, the reader sniffs the first four bytes and knows what it has.
 /// </summary>
 public enum VideoAuthoringFlavour
 {
@@ -31,4 +31,24 @@ public enum VideoAuthoringFlavour
     /// index in front of the media data by construction.
     /// </remarks>
     Bespoke = 1,
+
+    /// <summary>
+    /// The bespoke <c>CBVF</c> container in its master form (format version 1), written with the
+    /// <c>.cbvmaster</c> extension. Marketed as "CodeBrix Video Mode3".
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Everything the bespoke flavour keeps, plus two things it cannot carry: the source's ALPHA CHANNEL, as a
+    /// second AV1 track holding a monochrome, full-range stream in lock step with the picture (see
+    /// <see cref="Encoding.AuthoringVideoSettings.Alpha" />), and LOSSLESS sound - FLAC, the only codec this
+    /// flavour takes. Alpha is stored straight, not premultiplied.
+    /// </para>
+    /// <para>
+    /// The picture is encoded exactly as the bespoke flavour encodes it. The alpha plane is encoded by
+    /// <c>libaom-av1</c> - the only encoder here that writes a monochrome AV1 stream - with its key frames forced
+    /// onto the picture's, and the run checks that the two came out in lock step before muxing. Playing the
+    /// sound needs a CodeBrix.Audio.Core whose shared output serves the <c>flac</c> packet codec.
+    /// </para>
+    /// </remarks>
+    Master = 2,
 }

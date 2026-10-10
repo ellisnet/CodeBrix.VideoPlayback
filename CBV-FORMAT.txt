@@ -1,12 +1,15 @@
 ================================================================================
-CBV-FORMAT: the bespoke ".cbv" container, version 0
+CBV-FORMAT: the bespoke ".cbv" container, versions 0 and 1
 The on-disk layout CodeBrix.VideoPlayback writes and reads
 ================================================================================
 
 STATUS
 ======
-Version 0. Finalised 2026-08-28. This document is the authority: where it and
-any other document disagree, this one is right.
+Version 0 finalised 2026-08-28. Version 1 - the MASTER form, ".cbvmaster" -
+added 2026-10-10; it is version 0 plus an optional alpha-plane track and FLAC
+audio, and changes no byte of what version 0 means (see section 6). This
+document is the authority: where it and any other document disagree, this one
+is right.
 
 The ".cbv" extension covers TWO file formats, told apart by their first four
 bytes:
@@ -17,7 +20,9 @@ bytes:
                 written by CbvMuxer.
 
 A reader sniffs those four bytes and picks its reader. Nothing else in either
-file is used for identification.
+file is used for identification. A master file carries the ".cbvmaster"
+extension by convention; it too is a "CBVF" file, and the extension is a hint,
+never consulted.
 
 
 WHY A BESPOKE FORMAT AT ALL
@@ -74,7 +79,7 @@ index entry's own absolute offset to find a chunk.
 ==========================
   off  size  field
     0   4    magic, the ASCII bytes "CBVF"
-    4   2    u16  version                 = 0
+    4   2    u16  version                 0, or 1 (section 6)
     6   2    u16  flags                   (see below)
     8   4    u32  header_length           bytes from offset 0 to the end of the
                                           chapter table
@@ -111,17 +116,20 @@ index entry's own absolute offset to find a chunk.
     u8       track_id          1-based; unique in the file; also the value in a
                                chunk header
     u8       kind              1 = video, 2 = audio, 3 = caption
-    char[8]  codec_id          "av01", "raw", "opus", "vorbis", "webvtt",
-                               "srt", "ass" - lower case
+    char[8]  codec_id          "av01", "raw", "opus", "vorbis", "flac",
+                               "webvtt", "srt", "ass" - lower case
     char[36] language          BCP 47 tag, or all zeros for "not stated"
     u16      name_length
     u8[]     name              UTF-8, name_length bytes
     u8       flags             bit 0 default, bit 1 forced,
-                               bit 2 hearing-impaired, bit 3 disabled
+                               bit 2 hearing-impaired, bit 3 disabled,
+                               bit 4 alpha plane, bit 5 premultiplied alpha
+                               (bits 4 and 5: version 1 only, section 6)
     u32      codec_private_length
     u8[]     codec_private     codec_private_length bytes: an av1C record for
                                "av01", an OpusHead for "opus", the three
-                               Xiph-laced setup headers for "vorbis", empty for
+                               Xiph-laced setup headers for "vorbis", the FLAC
+                               stream header for "flac" (section 6), empty for
                                "raw" and for caption tracks
     ...      kind-specific body (below)
 
@@ -238,6 +246,63 @@ index entry's own absolute offset to find a chunk.
   Chunks are written in ascending presentation order across all tracks, so a
   player reading forwards fills its per-track queues evenly and never has to
   seek backwards.
+
+
+6. VERSION 1: THE MASTER FILE (".cbvmaster")
+============================================
+Version 1 is version 0 plus two optional things. Not one field moves and no
+version-0 field changes meaning, so a version-1 reader reads a version-0 file
+exactly as before. A version-0 reader refuses a version-1 file outright, with a
+message saying a newer writer produced it - which is the point: such a reader
+would otherwise play the alpha plane as a second picture and choke on FLAC.
+
+THE VERSION A WRITER STAMPS is the LOWEST that describes the file: 1 when any
+track carries flag bit 4 or 5 or the codec "flac", and 0 otherwise. A file that
+uses neither is therefore byte for byte a version-0 file, and still plays on a
+version-0 reader.
+
+6a. THE ALPHA-PLANE TRACK
+  A video track (kind 1) with flag bit 4 (AlphaPlane) is not a picture: it is
+  the alpha channel of the file's picture track, as a monochrome stream.
+    - at most ONE alpha-plane track per file, and then exactly ONE picture
+      track (a kind-1 track without bit 4); the alpha-plane track is declared
+      AFTER the picture track
+    - the SAME width, height and bit depth as the picture track
+    - pixel_layout 1 (gray) and color_range 2 (full): sample 0 is fully
+      transparent, the largest sample (255, 1023, 4095) fully opaque
+    - LOCK STEP: the same number of chunks as the picture track, at the same
+      timestamps, with the key-frame flag set on exactly the same ones; a writer
+      refuses to write a file that breaks it, and a reader refuses to open one
+    - the picture's colour is STRAIGHT - not multiplied by the alpha - unless
+      flag bit 5 (PremultipliedAlpha) is also set on the alpha-plane track. Bit 5
+      is reserved so the format can record the fact; the CodeBrix authoring
+      library never sets it, and bit 5 without bit 4 is invalid.
+  The alpha-plane track uses the picture's codec - "av01" (a monochrome AV1
+  sequence header) for anything authored for distribution, "raw" with a gray
+  descriptor in tests.
+
+  CHUNK ORDER AND SEEKING. Chunks sharing a timestamp are stored in track order,
+  so in a file written by this library the picture chunk precedes its alpha
+  chunk. A reader seeking to a key frame starts at the FIRST chunk carrying that
+  key frame's timestamp, whichever track it belongs to, so both decoders start
+  on the same frame.
+
+6b. THE FLAC TRACK
+  An audio track (kind 2) with codec_id "flac":
+    codec_private   a FLAC stream header in Matroska's A_FLAC convention: the
+                    four bytes "fLaC", then the metadata blocks, STREAMINFO
+                    (type 0, 34 bytes) FIRST, the last block flagged as last.
+                    The writer refuses one that does not begin that way, or
+                    whose STREAMINFO sample rate and channel count disagree
+                    with the track body. (The authoring library keeps
+                    STREAMINFO and VORBIS_COMMENT and drops PADDING.)
+    chunks          exactly ONE complete FLAC frame each - sync code through
+                    CRC-16 - every one flagged a key frame, timestamp = the
+                    frame's first sample / sample_rate, duration = its block
+                    size / sample_rate
+    body            sample_rate and channels as STREAMINFO says; pre_skip,
+                    trailing_trim, codec_delay and seek_preroll all 0 (FLAC
+                    frames decode independently and exactly)
 
 
 WHAT DELIBERATELY IS NOT IN VERSION 0

@@ -39,6 +39,7 @@ public static class Program
     public static int Main(string[] args)
     {
         bool dryRun = false;
+        bool masterFixtures = false;
         bool skipProfileCheck = false;
         string only = null;
         string root = null;
@@ -75,6 +76,9 @@ public static class Program
                     root = args[i];
                     break;
 
+                case "--master-fixtures":
+                    masterFixtures = true;
+                    break;
                 case "-h":
                 case "--help":
                     WriteUsage();
@@ -88,6 +92,23 @@ public static class Program
         }
 
         string repositoryRoot = FindRepositoryRoot();
+
+        if (masterFixtures)
+        {
+            if (repositoryRoot == null)
+            {
+                Console.Error.WriteLine("The repository root could not be found from " + AppContext.BaseDirectory + ".");
+                return 1;
+            }
+
+            if (!CbvAuthor.TryVerifyTools(out string problem))
+            {
+                Console.Error.WriteLine(problem);
+                return 1;
+            }
+
+            return MasterFixtures.Write(Path.Combine(repositoryRoot, "tests", "assets"));
+        }
         if (root == null)
         {
             if (repositoryRoot == null)
@@ -412,6 +433,9 @@ public static class Program
         Console.Error.WriteLine("                           never describes a corpus that is half stale.");
         Console.Error.WriteLine("    --skip-profile-check   do not judge each finished file against the profile");
         Console.Error.WriteLine("    --authoring-root <p>   use this folder instead of the repository's own");
+        Console.Error.WriteLine("    --master-fixtures      write ONLY the two small synthetic master (Mode3)");
+        Console.Error.WriteLine("                           fixtures, tests/assets/av1-alpha-flac.cbvmaster and");
+        Console.Error.WriteLine("                           tests/assets/av1-flac.cbvmaster, and nothing else");
         Console.Error.WriteLine();
         Console.Error.WriteLine("  Needs ffmpeg and ffprobe on the PATH, built with libsvtav1, libopus and");
         Console.Error.WriteLine("  libvorbis. Nothing else: the bespoke container is written by managed code.");

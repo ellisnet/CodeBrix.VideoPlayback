@@ -23,6 +23,7 @@ public sealed class AuthoringAudioSettings
     private int bitrateKilobitsPerSecond = 128;
     private int sampleRateHz = 48000;
     private int channels = 2;
+    private int flacBitDepth = 16;
 
     /// <summary>Which encoder to ask FFmpeg for. Per-flavour by default.</summary>
     public AuthoringAudioCodec Codec { get; set; } = AuthoringAudioCodec.Default;
@@ -93,6 +94,24 @@ public sealed class AuthoringAudioSettings
 
     /// <summary>A BCP 47 language tag for the audio track, or null.</summary>
     public string Language { get; set; }
+
+    /// <summary>
+    /// The bits per sample of a FLAC track: 16 (the default) or 24. Only the master flavour writes FLAC.
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException">A value other than 16 or 24 was assigned.</exception>
+    public int FlacBitDepth
+    {
+        get => flacBitDepth;
+        set
+        {
+            if (value != 16 && value != 24)
+            {
+                throw new ArgumentOutOfRangeException(nameof(value), value, "A FLAC track is 16-bit or 24-bit.");
+            }
+
+            flacBitDepth = value;
+        }
+    }
 
     /// <summary>A name for the audio track, or null.</summary>
     public string Name { get; set; }

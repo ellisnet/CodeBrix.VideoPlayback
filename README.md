@@ -45,11 +45,14 @@ Each package pulls in what it needs automatically; no version pinning is needed 
 
 * `CodeBrix.VideoPlayback.MitLicenseForever` pulls in `CodeBrix.Audio.Core.MitLicenseForever`, the managed
   audio library with Vorbis built in. That is the whole list - no native binary, no drawing dependency. To hear
-  the sound, an application adds the desktop audio package `CodeBrix.Audio.MitLicenseForever`, which carries
-  the native engine; the Skia package below brings it in already.
+  the sound, an application adds the audio package that carries the native engine for its platform -
+  `CodeBrix.Audio.MitLicenseForever` on Windows, Linux and macOS, `CodeBrix.Audio.Android.ApacheLicenseForever`
+  on Android. No package in this repository chooses it for you.
 * `CodeBrix.VideoPlayback.Skia.MitLicenseForever` pulls in the playback package and `SkiaSharp`. It
   deliberately does NOT bring a SkiaSharp native-asset package: a consuming application adds the
-  `SkiaSharp.NativeAssets` package for each platform it ships on, and so chooses its own native binary.
+  `SkiaSharp.NativeAssets` package for each platform it ships on, and so chooses its own native binary. It
+  does not bring an audio engine either - the application adds the audio package for its platform, exactly
+  as with the playback package alone.
 * `CodeBrix.VideoPlayback.Authoring.MitLicenseForever` pulls in the playback package and
   `CodeBrix.VideoProcessing.MitLicenseForever`, which is how it launches the FFmpeg installed on the machine
   that runs it.
@@ -67,6 +70,10 @@ Add, as your application needs them:
   caption tracks
 * Reading and writing `.cbv`, the bespoke container, with its index and every caption cue in front of the
   media data
+* Reading and writing `.cbvmaster`, the bespoke container's master form: an optional alpha-plane track beside
+  the picture, for video with real transparency, and lossless FLAC sound
+* Playing transparent video: the alpha plane is decoded beside the picture, kept frame for frame in step with
+  it, and handed on as premultiplied colour with real opacity
 * Playing from files, streams, memory, memory-mapped files and HTTP
 * A frame-buffer pool whose layout lets a decoder write straight into the memory a presenter uploads from -
   no copy in between, and nothing allocated per frame once playback is warm
@@ -91,6 +98,7 @@ Add, as your application needs them:
 * Drawing over the video - a `Composing` event that hands you the canvas, and `IVideoLayer` overlay layers
 * Colour effects, including lookup-table chains, and the resultant table they compose to
 * Capturing the composed frame as an `SKImage`
+* Transparent video on both paths: premultiplied colour with real opacity, drawn over whatever is behind it
 * Composition statistics and frame counters
 * Plain SkiaSharp only: no view package, no native asset, no windowing toolkit
 
@@ -100,12 +108,15 @@ Add, as your application needs them:
   flavour: one FFmpeg pass for the WebM-profile one, two passes and this repository's own muxer for the
   bespoke one
 * Frame sizes by source, exact size, long side or short side, with rate control and encoder settings
+* A master flavour, `.cbvmaster`: the source's alpha channel as a second, monochrome AV1 track whose key
+  frames are forced onto the picture's, and lossless FLAC sound split into frames by managed code
 * Device-class presets, applied to a request in one call
 * A colour grade baked from a chain of `.cube` tables with the same composer the presenter uses
 * A dry run that renders every command line without running anything
 * A streamable-profile report over the finished file
 * Refusing, before any process starts, what would not play or would not encode: Opus in a bespoke file,
-  SubRip in a WebM-profile file, a Vorbis bit rate outside the encoder's band, a malformed language tag
+  anything but FLAC in a master file, SubRip in a WebM-profile file, a Vorbis bit rate outside the encoder's
+  band, a malformed language tag
 
 ## Decoders
 

@@ -861,12 +861,53 @@ public sealed class SkiaVideoPresenter : IDisposable
         // every pixel is replaced, nothing needs preserving.
         surface.Canvas.Discard();
 
+        if (frame.HasAlpha)
+        {
+            ComposeWithAlphaOnCpu(frame);
+            return;
+        }
+
         VideoFrameConverter.ToBgra32(frame, cpuSurfaceBuffer.AsSpan(), cpuSurfaceBuffer.Stride);
 
         if (!effectsActive || resultantLut == null) return;
 
         WarnOnceAboutEffectsOnCpu();
         CpuLutApplier.Apply(resultantLut, cpuSurfaceBuffer, effectInterpolation);
+    }
+
+    // A master file's frame: the colour is converted and graded while it is still STRAIGHT, and only then
+    // multiplied by the alpha plane - a grade applied to premultiplied colour would darken every edge. What
+    // lands on the surface is premultiplied BGRA with real opacity, which is what Skia composites.
+    private void ComposeWithAlphaOnCpu(VideoFrame frame)
+    {
+        Span<byte> pixels = cpuSurfaceBuffer.AsSpan();
+
+        VideoFrameConverter.ToBgra32(
+            frame.Y,
+            frame.U,
+            frame.V,
+            frame.Width,
+            frame.Height,
+            frame.Layout,
+            frame.BitDepth,
+            frame.Color,
+            pixels,
+            cpuSurfaceBuffer.Stride);
+
+        if (effectsActive && resultantLut != null)
+        {
+            WarnOnceAboutEffectsOnCpu();
+            CpuLutApplier.Apply(resultantLut, cpuSurfaceBuffer, effectInterpolation);
+        }
+
+        VideoFrameConverter.PremultiplyByAlpha(
+            frame.A,
+            frame.BitDepth,
+            frame.Width,
+            frame.Height,
+            pixels,
+            cpuSurfaceBuffer.Stride,
+            frame.IsAlphaPremultiplied);
     }
 
     private void ComposeOnGpu(VideoFrame frame)

@@ -79,10 +79,12 @@
   <ItemGroup>
     <PackageReference Include="SkiaSharp" Version="4.153.1" />
     <!--
-    This library requires CodeBrix.Audio (vs. CodeBrix.Audio.Core) because it actually plays videos with
-    audio; which requires an audio player, like the ones that CodeBrix.Audio ships for Linux/Windows/MacOS
+    CodeBrix.Audio.Core only - the same pin the core project uses. This library has no source that touches
+    audio; sound comes from the core's playback session. The audio NATIVES are the application's choice:
+    CodeBrix.Audio.MitLicenseForever on Windows/Linux/macOS, CodeBrix.Audio.Android.ApacheLicenseForever on
+    Android. A library that picked the desktop natives for the application would be wrong on Android.
     -->
-    <PackageReference Include="CodeBrix.Audio.MitLicenseForever" Version="1.0.271.1165" />
+    <PackageReference Include="CodeBrix.Audio.Core.MitLicenseForever" Version="1.0.271.1165" />
   </ItemGroup>
 
   <!--

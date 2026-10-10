@@ -45,6 +45,7 @@ public sealed class AuthoringVideoSettings
     private int constantRateFactor = 30;
     private AuthoringFrameSize frameSize = AuthoringFrameSize.Source;
     private string scalerFlags = "lanczos";
+    private int? alphaConstantRateFactor;
 
     /// <summary>Which AV1 encoder to ask FFmpeg for. SVT-AV1 by default.</summary>
     public AuthoringVideoEncoder Encoder { get; set; } = AuthoringVideoEncoder.LibSvtAv1;
@@ -189,6 +190,36 @@ public sealed class AuthoringVideoSettings
     /// </remarks>
     public string ComposedLutPath { get; set; }
 
-    /// <summary>A name for the video track, or null. Carried by the bespoke flavour only.</summary>
+    /// <summary>A name for the video track, or null. Carried by the bespoke and master flavours only.</summary>
     public string TrackName { get; set; }
+
+    /// <summary>
+    /// Whether a master (Mode3) file carries the source's alpha channel. <see cref="AuthoringAlphaMode.Auto" />
+    /// - the default - carries it when the source has one. Ignored by the other flavours.
+    /// </summary>
+    public AuthoringAlphaMode Alpha { get; set; } = AuthoringAlphaMode.Auto;
+
+    /// <summary>
+    /// The constant rate factor of the alpha plane, or null - the default - for six below
+    /// <see cref="ConstantRateFactor" /> (clamped to 0..63). An edge in the alpha channel shows far more than the
+    /// same error in the picture, so the plane is encoded at a higher quality than the picture it belongs to.
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException">A value outside 0 to 63 was assigned.</exception>
+    public int? AlphaConstantRateFactor
+    {
+        get => alphaConstantRateFactor;
+        set
+        {
+            if (value.HasValue && (value.Value < 0 || value.Value > 63))
+            {
+                throw new ArgumentOutOfRangeException(nameof(value), value, "A constant rate factor runs 0 to 63.");
+            }
+
+            alphaConstantRateFactor = value;
+        }
+    }
+
+    /// <summary>The alpha plane's constant rate factor, with the default resolved.</summary>
+    internal int ResolvedAlphaConstantRateFactor =>
+        alphaConstantRateFactor ?? Math.Max(0, Math.Min(63, constantRateFactor - 6));
 }

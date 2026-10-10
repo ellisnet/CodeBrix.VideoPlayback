@@ -5,6 +5,7 @@ using System.IO;
 using System.Text;
 using CodeBrix.VideoPlayback.Captions;
 using CodeBrix.VideoPlayback.Chapters;
+using CodeBrix.VideoPlayback.Codecs;
 using CodeBrix.VideoPlayback.Decoding;
 using CodeBrix.VideoPlayback.Internal;
 
@@ -25,6 +26,15 @@ namespace CodeBrix.VideoPlayback.Containers.Cbv;
 /// written to it as they arrive while the index accumulates; <see cref="Complete" /> then writes the header
 /// and the index to the real output and copies the chunks in behind them, adjusting each index offset by the
 /// distance the chunks moved.
+/// </para>
+/// <para>
+/// MASTER (MODE3) FILES. A second video track declared with <see cref="CbvTrackFlags.AlphaPlane" /> carries
+/// the picture's alpha channel as a monochrome stream, and an audio track may be FLAC
+/// (<see cref="VideoCodecIds.Flac" />). Either makes the file format version 1 (<see cref="CbvFormat.MasterVersion" />);
+/// a file with neither is version 0, byte for byte what this muxer has always written. An alpha-plane track
+/// is checked twice: when it is declared (dimensions, bit depth, monochrome layout, full range against the
+/// picture track) and when the file is completed (the same frame count, the same timestamps, key frames in
+/// the same places) - and refused with a message saying exactly what differs.
 /// </para>
 /// <para>
 /// The complete layout is written out in <c>CBV-FORMAT.txt</c> at the root of this library's repository.
@@ -84,6 +94,13 @@ public sealed class CbvMuxer : IDisposable
     /// <summary>How many chunks have been written so far.</summary>
     public int ChunkCount => entries.Count;
 
+    /// <summary>
+    /// The format version the file will be stamped with, given the tracks declared so far: 1
+    /// (<see cref="CbvFormat.MasterVersion" />) when one of them is an alpha-plane track or FLAC audio, 0
+    /// (<see cref="CbvFormat.Version" />) otherwise.
+    /// </summary>
+    public ushort FormatVersion => RequiredVersion();
+
     /// <summary>Declares a video track.</summary>
     /// <param name="codecId">The codec identifier - see <see cref="VideoCodecIds" />.</param>
     /// <param name="codecPrivate">The codec's initialisation data, such as an AV1 configuration record.</param>
@@ -101,10 +118,17 @@ public sealed class CbvMuxer : IDisposable
     /// </param>
     /// <param name="language">A BCP 47 language tag, or null.</param>
     /// <param name="name">A name for the track, or null.</param>
-    /// <param name="flags">What the track is for.</param>
+    /// <param name="flags">
+    /// What the track is for. <see cref="CbvTrackFlags.AlphaPlane" /> declares the alpha channel of the picture
+    /// track declared before it: it must then be <see cref="VideoPixelLayout.Gray" />, full range, and the same
+    /// size and bit depth as that picture track.
+    /// </param>
     /// <returns>The identifier the track was given, for use with <see cref="WriteChunk" />.</returns>
     /// <exception cref="InvalidOperationException">The file has already been completed.</exception>
-    /// <exception cref="VideoPlaybackException">A field will not fit the format, or a chunk has already been written.</exception>
+    /// <exception cref="VideoPlaybackException">
+    /// A field will not fit the format, a chunk has already been written, or an alpha-plane track does not
+    /// match its picture track.
+    /// </exception>
     public int AddVideoTrack(
         string codecId,
         ReadOnlyMemory<byte> codecPrivate,
@@ -121,7 +145,12 @@ public sealed class CbvMuxer : IDisposable
         string name = null,
         CbvTrackFlags flags = CbvTrackFlags.None)
     {
+        ValidateVideoTrack(width, height, bitDepth, layout, color, flags);
+
         TrackDefinition track = BeginTrack(codecId, 1, language, name, flags, codecPrivate);
+        track.Width = width;
+        track.Height = height;
+        track.BitDepth = bitDepth;
 
         using MemoryStream body = new MemoryStream();
         WriteUInt32(body, (uint)width);
@@ -163,7 +192,7 @@ public sealed class CbvMuxer : IDisposable
     /// <param name="codecId">The codec identifier - see <see cref="VideoCodecIds" />.</param>
     /// <param name="codecPrivate">
     /// The codec's initialisation data: the <c>OpusHead</c> bytes for Opus, the three Xiph-laced setup headers
-    /// for Vorbis.
+    /// for Vorbis, the FLAC stream header (<c>fLaC</c> and the metadata blocks, STREAMINFO first) for FLAC.
     /// </param>
     /// <param name="sampleRate">Samples per second.</param>
     /// <param name="channels">How many channels.</param>
@@ -194,6 +223,17 @@ public sealed class CbvMuxer : IDisposable
         {
             throw new VideoPlaybackException(
                 $"A pre-skip of {preSkipSamples} samples does not fit the format's 16-bit field.");
+        }
+
+        if (string.Equals(codecId, VideoCodecIds.Flac, StringComparison.OrdinalIgnoreCase))
+        {
+            ValidateFlacTrack(codecPrivate.Span, sampleRate, channels);
+        }
+
+        if ((flags & (CbvTrackFlags.AlphaPlane | CbvTrackFlags.PremultipliedAlpha)) != 0)
+        {
+            throw new VideoPlaybackException(
+                "The alpha-plane flags belong on a video track; an audio track cannot carry them.");
         }
 
         TrackDefinition track = BeginTrack(codecId, 2, language, name, flags, codecPrivate);
@@ -353,6 +393,8 @@ public sealed class CbvMuxer : IDisposable
             throw new VideoPlaybackException("A bespoke file must declare at least one track.");
         }
 
+        ValidateAlphaLockStep();
+
         byte[] header = BuildHeader();
         byte[] index = BuildIndex(header.Length);
 
@@ -422,6 +464,151 @@ public sealed class CbvMuxer : IDisposable
         };
     }
 
+    /// <summary>
+    /// The lowest format version that describes what has been declared: version 1 when any track uses a
+    /// version-1 feature, version 0 otherwise - so a file without them is exactly what version 0 always was.
+    /// </summary>
+    private ushort RequiredVersion()
+    {
+        foreach (TrackDefinition track in trackDefinitions)
+        {
+            if ((track.Flags & (CbvTrackFlags.AlphaPlane | CbvTrackFlags.PremultipliedAlpha)) != 0)
+            {
+                return CbvFormat.MasterVersion;
+            }
+
+            if (track.Kind == 2 && string.Equals(track.CodecId, VideoCodecIds.Flac, StringComparison.OrdinalIgnoreCase))
+            {
+                return CbvFormat.MasterVersion;
+            }
+        }
+
+        return CbvFormat.Version;
+    }
+
+    private void ValidateVideoTrack(
+        int width,
+        int height,
+        int bitDepth,
+        VideoPixelLayout layout,
+        VideoColorInfo color,
+        CbvTrackFlags flags)
+    {
+        bool alpha = (flags & CbvTrackFlags.AlphaPlane) != 0;
+
+        if (!alpha && (flags & CbvTrackFlags.PremultipliedAlpha) != 0)
+        {
+            throw new VideoPlaybackException(
+                "PremultipliedAlpha describes an alpha-plane track; set it only together with AlphaPlane.");
+        }
+
+        TrackDefinition picture = null;
+        TrackDefinition existingAlpha = null;
+
+        foreach (TrackDefinition track in trackDefinitions)
+        {
+            if (track.Kind != 1) continue;
+            if ((track.Flags & CbvTrackFlags.AlphaPlane) != 0) existingAlpha = track;
+            else if (picture == null) picture = track;
+            else if (alpha)
+            {
+                throw new VideoPlaybackException(
+                    "A file with an alpha-plane track carries exactly one picture track, and this one already "
+                    + "declares two; which picture the alpha belongs to would be a guess.");
+            }
+        }
+
+        if (!alpha)
+        {
+            if (existingAlpha != null)
+            {
+                throw new VideoPlaybackException(
+                    $"Track {existingAlpha.Id} is an alpha-plane track, so this file carries exactly one picture "
+                    + "track; a second picture track cannot be declared beside it.");
+            }
+
+            return;
+        }
+
+        if (existingAlpha != null)
+        {
+            throw new VideoPlaybackException(
+                $"Track {existingAlpha.Id} is already the alpha-plane track; a file carries at most one.");
+        }
+
+        if (picture == null)
+        {
+            throw new VideoPlaybackException(
+                "An alpha-plane track is the alpha channel OF a picture track, so the picture track must be "
+                + "declared first, and none has been.");
+        }
+
+        if (width != picture.Width || height != picture.Height)
+        {
+            throw new VideoPlaybackException(
+                $"The alpha-plane track is {width}x{height} and its picture track {picture.Id} is "
+                + $"{picture.Width}x{picture.Height}; the two must be exactly the same size.");
+        }
+
+        if (bitDepth != picture.BitDepth)
+        {
+            throw new VideoPlaybackException(
+                $"The alpha-plane track is {bitDepth}-bit and its picture track {picture.Id} is "
+                + $"{picture.BitDepth}-bit; the alpha plane is stored at the picture's own bit depth.");
+        }
+
+        if (layout != VideoPixelLayout.Gray)
+        {
+            throw new VideoPlaybackException(
+                $"The alpha-plane track declares the {layout} layout; an alpha plane is a monochrome stream "
+                + "(VideoPixelLayout.Gray), luma only.");
+        }
+
+        if (color.Range != VideoColorRange.Full)
+        {
+            throw new VideoPlaybackException(
+                $"The alpha-plane track declares the {color.Range} sample range; an alpha plane is FULL range, "
+                + "so that 0 is fully transparent and the largest sample fully opaque.");
+        }
+    }
+
+    private static void ValidateFlacTrack(ReadOnlySpan<byte> codecPrivate, int sampleRate, int channels)
+    {
+        if (!FlacStreamHeader.TryRead(codecPrivate, out int streamRate, out int streamChannels, out _, out string problem))
+        {
+            throw new VideoPlaybackException("The FLAC track cannot be declared: " + problem + ".");
+        }
+
+        if (streamRate != sampleRate || streamChannels != channels)
+        {
+            throw new VideoPlaybackException(
+                $"The FLAC track is declared as {sampleRate} Hz with {channels} channel(s), and its STREAMINFO says "
+                + $"{streamRate} Hz with {streamChannels}; the track header and the stream must agree.");
+        }
+    }
+
+    private void ValidateAlphaLockStep()
+    {
+        TrackDefinition picture = null;
+        TrackDefinition alpha = null;
+
+        foreach (TrackDefinition track in trackDefinitions)
+        {
+            if (track.Kind != 1) continue;
+            if ((track.Flags & CbvTrackFlags.AlphaPlane) != 0) alpha = track;
+            else if (picture == null) picture = track;
+        }
+
+        if (alpha == null) return;
+
+        string problem = CbvAlphaLockStep.Describe(entries, picture.Id, alpha.Id, TimeSpan.FromTicks);
+        if (problem != null)
+        {
+            throw new VideoPlaybackException(
+                problem + " The file was not written: a player pairs the two tracks frame for frame.");
+        }
+    }
+
     private TrackDefinition FindTrack(int id)
     {
         foreach (TrackDefinition track in trackDefinitions)
@@ -436,7 +623,7 @@ public sealed class CbvMuxer : IDisposable
     {
         using MemoryStream stream = new MemoryStream();
         stream.Write(CbvFormat.Magic);
-        WriteUInt16(stream, CbvFormat.Version);
+        WriteUInt16(stream, RequiredVersion());
         WriteUInt16(stream, (ushort)(CbvHeaderFlags.HasIndex | CbvHeaderFlags.ChunksInPresentationOrder));
 
         Span<byte> placeholder = stackalloc byte[CbvFormat.FixedHeaderLength - 8];
@@ -576,5 +763,11 @@ public sealed class CbvMuxer : IDisposable
         internal byte[] CodecPrivate { get; set; }
 
         internal byte[] Body { get; set; }
+
+        internal int Width { get; set; }
+
+        internal int Height { get; set; }
+
+        internal int BitDepth { get; set; }
     }
 }

@@ -12,6 +12,10 @@ using CodeBrix.VideoPlayback.Captions;
 using CodeBrix.VideoPlayback.Chapters;
 using CodeBrix.VideoPlayback.Containers;
 using CodeBrix.VideoPlayback.Containers.Cbv;
+using CodeBrix.VideoPlayback.Containers.Ivf;
+using CodeBrix.VideoPlayback.Codecs;
+using CodeBrix.VideoPlayback.Decoding;
+using CodeBrix.VideoPlayback.Sources;
 using CodeBrix.VideoProcessing;
 using CodeBrix.VideoProcessing.Exceptions;
 
@@ -36,6 +40,12 @@ namespace CodeBrix.VideoPlayback.Authoring;
 /// IVF wrapper, the sound as an Ogg stream - which the core's own muxer then turns into a <c>CBVF</c> file
 /// together with the caption and chapter text. The temporary files are deleted whether the run succeeded or
 /// failed.
+/// </para>
+/// <para>
+/// The master flavour (<c>.cbvmaster</c>, Mode3) is the bespoke flavour's video pass unchanged, an ALPHA pass
+/// when the source has an alpha channel (a monochrome AV1 stream whose key frames are forced onto the video
+/// pass's), and a lossless FLAC audio pass whose frames are split out by managed code - then the same muxer.
+/// The two video streams are checked for lock step before they are muxed.
 /// </para>
 /// <para>
 /// WHAT IS TAKEN FROM THE SOURCE. Its picture and its sound - the first video and the first audio stream, or
@@ -99,12 +109,37 @@ public static class CbvAuthor
             };
         }
 
-        List<AuthoringCommand> commands = new List<AuthoringCommand>(2)
+        List<AuthoringCommand> commands = new List<AuthoringCommand>(3)
         {
             new AuthoringCommand(
                 "video pass",
                 AuthoringCommandFactory.BuildBespokeVideo(request, lut, IvfPathFor(request, temporaryFolder)).Arguments),
         };
+
+        if (request.Flavour == VideoAuthoringFlavour.Master)
+        {
+            // Whether an Auto request carries alpha depends on the source, which a dry run does not read - so
+            // the alpha pass is listed unless the request rules it out, and its key-frame list, which only the
+            // video pass can produce, is shown as a placeholder.
+            if (request.Video.Alpha != AuthoringAlphaMode.Exclude)
+            {
+                commands.Add(new AuthoringCommand(
+                    "alpha pass",
+                    AuthoringCommandFactory.BuildMasterAlpha(
+                        request,
+                        AlphaIvfPathFor(request, temporaryFolder),
+                        AuthoringCommandFactory.KeyFramesOfVideoPass).Arguments));
+            }
+
+            if (request.Audio.Include)
+            {
+                commands.Add(new AuthoringCommand(
+                    "audio pass",
+                    AuthoringCommandFactory.BuildMasterAudio(request, FlacPathFor(request, temporaryFolder)).Arguments));
+            }
+
+            return commands;
+        }
 
         if (request.Audio.Include)
         {
@@ -181,6 +216,10 @@ public static class CbvAuthor
                 FFMpegArgumentProcessor pass = AuthoringCommandFactory.BuildWebMProfile(request, lut);
                 Run(pass, request, "one pass", 1, 1, commands, notes);
             }
+            else if (request.Flavour == VideoAuthoringFlavour.Master)
+            {
+                mux = WriteMaster(request, lut, survey, temporaryFolder, temporaryFiles, commands, notes);
+            }
             else
             {
                 string ivf = IvfPathFor(request, temporaryFolder);
@@ -205,6 +244,13 @@ public static class CbvAuthor
             }
 
             cancellationToken.ThrowIfCancellationRequested();
+        }
+        catch (VideoAuthoringException) when (request.Flavour == VideoAuthoringFlavour.Master)
+        {
+            // A master run can fail AFTER the muxer has created the output - a lock-step refusal - and an
+            // empty or half-made file must not be left looking like a result.
+            DeleteQuietly(request.OutputPath);
+            throw;
         }
         catch (OperationCanceledException)
         {
@@ -427,7 +473,7 @@ public static class CbvAuthor
             : AuthoringTools.MissingSvtAv1 + " " + AuthoringTools.FallbackCouldNotHelp;
     }
 
-    private static CbvAuthoringResult Mux(VideoAuthoringRequest request, string ivfPath, string oggPath)
+    private static CbvAuthoringRequest BuildMuxRequest(VideoAuthoringRequest request, string ivfPath, string oggPath)
     {
         CbvAuthoringRequest muxRequest = new CbvAuthoringRequest
         {
@@ -444,6 +490,13 @@ public static class CbvAuthor
         {
             muxRequest.Captions.Add(new CbvCaptionInput(caption.Path, caption.Language, caption.Name, caption.Flags));
         }
+
+        return muxRequest;
+    }
+
+    private static CbvAuthoringResult Mux(VideoAuthoringRequest request, string ivfPath, string oggPath)
+    {
+        CbvAuthoringRequest muxRequest = BuildMuxRequest(request, ivfPath, oggPath);
 
         try
         {
@@ -523,6 +576,7 @@ public static class CbvAuthor
         public bool Probed;
         public List<string> SubtitleStreams = new List<string>();
         public int ChapterCount;
+        public string PixelFormat;
     }
 
     private static SourceTextSurvey SurveySourceText(VideoAuthoringRequest request, IList<string> notes)
@@ -546,6 +600,7 @@ public static class CbvAuthor
 
         survey.Probed = true;
         survey.ChapterCount = analysis.Chapters != null ? analysis.Chapters.Count : 0;
+        survey.PixelFormat = analysis.PrimaryVideoStream?.PixelFormat;
 
         if (analysis.SubtitleStreams != null)
         {
@@ -639,6 +694,28 @@ public static class CbvAuthor
             : null;
 
         bool opus = string.Equals(audioEncoder, AuthoringEncoderNames.LibOpus, StringComparison.Ordinal);
+        bool flac = string.Equals(audioEncoder, AuthoringEncoderNames.Flac, StringComparison.Ordinal);
+
+        // THE MASTER FILE'S SOUND IS LOSSLESS. FLAC is its only codec, and FLAC is refused everywhere else:
+        // the WebM profile and the bespoke Mode2 file promise Opus or Vorbis to every player, and a FLAC track
+        // needs a CodeBrix.Audio.Core with FLAC packet support on the playing machine.
+        if (request.Audio.Include && request.Flavour == VideoAuthoringFlavour.Master && !flac)
+        {
+            throw new VideoAuthoringException(
+                "The request asks for " + audioEncoder + " audio in a master ('.cbvmaster') file. A master file's "
+                + "sound is lossless: FLAC is the only codec it carries. Leave Audio.Codec at Default or set it to "
+                + "AuthoringAudioCodec.Flac, or author VideoAuthoringFlavour.Bespoke for Vorbis.");
+        }
+
+        if (request.Audio.Include && request.Flavour != VideoAuthoringFlavour.Master && flac)
+        {
+            throw new VideoAuthoringException(
+                "The request asks for FLAC audio in a " + (request.Flavour == VideoAuthoringFlavour.Bespoke
+                    ? "bespoke (Mode2)"
+                    : "WebM-profile (Mode1)")
+                + " file. FLAC is carried only by the master flavour (VideoAuthoringFlavour.Master, '.cbvmaster'); "
+                + "this flavour promises Opus or Vorbis to every player.");
+        }
 
         // THE BESPOKE FILE'S REASON TO EXIST. A ".cbv" in the bespoke flavour must play with
         // CodeBrix.VideoPlayback - whose CodeBrix.Audio dependency has Vorbis built in - plus a video decoder
@@ -774,6 +851,154 @@ public static class CbvAuthor
         }
     }
 
+    private static CbvAuthoringResult WriteMaster(
+        VideoAuthoringRequest request,
+        ResolvedLutChain lut,
+        SourceTextSurvey survey,
+        string temporaryFolder,
+        List<string> temporaryFiles,
+        List<AuthoringCommand> commands,
+        List<string> notes)
+    {
+        string ivf = IvfPathFor(request, temporaryFolder);
+        string alphaIvf = AlphaIvfPathFor(request, temporaryFolder);
+        string flac = FlacPathFor(request, temporaryFolder);
+
+        bool alpha = ResolveAlpha(request, survey, notes);
+        int passCount = 1 + (alpha ? 1 : 0) + (request.Audio.Include ? 1 : 0);
+        int pass = 1;
+
+        if (!string.Equals(
+                Path.GetExtension(request.OutputPath), CbvFormat.MasterFileExtension, StringComparison.OrdinalIgnoreCase))
+        {
+            notes.Add(
+                "the output is a master (Mode3) file and its name does not end in '" + CbvFormat.MasterFileExtension
+                + "'. Readers sniff the content, so it plays either way; the extension is the convention.");
+        }
+
+        temporaryFiles.Add(ivf);
+        FFMpegArgumentProcessor videoPass = AuthoringCommandFactory.BuildBespokeVideo(request, lut, ivf);
+        Run(videoPass, request, "video pass", pass++, passCount, commands, notes);
+
+        if (alpha)
+        {
+            request.CancellationToken.ThrowIfCancellationRequested();
+
+            IvfKeyFrames picture = IvfKeyFrames.Read(ivf);
+            temporaryFiles.Add(alphaIvf);
+            FFMpegArgumentProcessor alphaPass =
+                AuthoringCommandFactory.BuildMasterAlpha(request, alphaIvf, picture.FormatForceKeyFrames());
+            Run(alphaPass, request, "alpha pass", pass++, passCount, commands, notes);
+
+            IvfKeyFrames plane = IvfKeyFrames.Read(alphaIvf);
+            string mismatch = picture.DescribeMismatch(plane);
+            if (mismatch != null)
+            {
+                throw new VideoAuthoringException(
+                    "The alpha pass did not come out in lock step with the video pass: " + mismatch + " A master "
+                    + "file pairs the two frame for frame, so nothing was written.");
+            }
+        }
+
+        CbvPacketAudioInput audio = null;
+        if (request.Audio.Include)
+        {
+            temporaryFiles.Add(flac);
+            FFMpegArgumentProcessor audioPass = AuthoringCommandFactory.BuildMasterAudio(request, flac);
+            Run(audioPass, request, "audio pass", pass, passCount, commands, notes);
+            request.CancellationToken.ThrowIfCancellationRequested();
+            audio = SplitFlac(flac);
+        }
+
+        request.CancellationToken.ThrowIfCancellationRequested();
+
+        CbvAuthoringRequest muxRequest = BuildMuxRequest(request, ivf, null);
+        muxRequest.AlphaIvfPath = alpha ? alphaIvf : null;
+        muxRequest.PacketAudio = audio;
+
+        try
+        {
+            return CbvAuthoring.Write(muxRequest);
+        }
+        catch (Exception ex) when (ex is not VideoAuthoringException)
+        {
+            throw new VideoAuthoringException(
+                "The encoded streams could not be muxed into '" + request.OutputPath + "': " + ex.Message,
+                ex);
+        }
+    }
+
+    private static bool ResolveAlpha(VideoAuthoringRequest request, SourceTextSurvey survey, List<string> notes)
+    {
+        switch (request.Video.Alpha)
+        {
+            case AuthoringAlphaMode.Include:
+                return true;
+
+            case AuthoringAlphaMode.Exclude:
+                return false;
+        }
+
+        if (!survey.Probed)
+        {
+            notes.Add(
+                "the source could not be probed, so whether it has an alpha channel is unknown and no alpha plane "
+                + "was written. Set Video.Alpha to Include to carry one regardless.");
+            return false;
+        }
+
+        bool hasAlpha = PixelFormatHasAlpha(survey.PixelFormat);
+        if (!hasAlpha)
+        {
+            notes.Add(
+                "the source's pixel format '" + (survey.PixelFormat ?? "unknown") + "' has no alpha channel, so no "
+                + "alpha plane was written and the file plays as an opaque picture. (A VP9 or VP8 WebM whose alpha "
+                + "rides in BlockAdditions reports a plain format here; set Video.Alpha to Include for such a "
+                + "source.)");
+        }
+
+        return hasAlpha;
+    }
+
+    /// <summary>True when an FFmpeg pixel format name carries an alpha channel.</summary>
+    /// <param name="pixelFormat">The name FFprobe reports, such as <c>yuva420p</c> or <c>rgba</c>.</param>
+    /// <returns>True for a format with an alpha component.</returns>
+    internal static bool PixelFormatHasAlpha(string pixelFormat)
+    {
+        if (string.IsNullOrEmpty(pixelFormat)) return false;
+        string name = pixelFormat.ToLowerInvariant();
+
+        return name.StartsWith("yuva", StringComparison.Ordinal)
+            || name.StartsWith("gbrap", StringComparison.Ordinal)
+            || name.StartsWith("rgba", StringComparison.Ordinal)
+            || name.StartsWith("bgra", StringComparison.Ordinal)
+            || name.StartsWith("argb", StringComparison.Ordinal)
+            || name.StartsWith("abgr", StringComparison.Ordinal)
+            || name.StartsWith("ya", StringComparison.Ordinal)
+            || name.StartsWith("ayuv", StringComparison.Ordinal)
+            || name.StartsWith("vuya", StringComparison.Ordinal);
+    }
+
+    private static CbvPacketAudioInput SplitFlac(string flacPath)
+    {
+        FlacFrameScanner scanner = FlacFrameScanner.ScanFile(flacPath);
+        CbvPacketAudioInput audio = new CbvPacketAudioInput(
+            VideoCodecIds.Flac,
+            scanner.CodecPrivate,
+            scanner.SampleRate,
+            scanner.Channels);
+
+        foreach (FlacFrame frame in scanner.Frames)
+        {
+            audio.Packets.Add(new CbvAudioPacket(
+                scanner.CopyFrame(frame),
+                scanner.TimestampOf(frame),
+                scanner.DurationOf(frame)));
+        }
+
+        return audio;
+    }
+
     private static string ResolveTemporaryFolder(VideoAuthoringRequest request) =>
         string.IsNullOrWhiteSpace(request.TemporaryFolder) ? Path.GetTempPath() : request.TemporaryFolder;
 
@@ -782,6 +1007,12 @@ public static class CbvAuthor
 
     private static string OggPathFor(VideoAuthoringRequest request, string temporaryFolder) =>
         Path.Combine(temporaryFolder, BaseNameFor(request) + ".audio.ogg");
+
+    private static string AlphaIvfPathFor(VideoAuthoringRequest request, string temporaryFolder) =>
+        Path.Combine(temporaryFolder, BaseNameFor(request) + ".alpha.ivf");
+
+    private static string FlacPathFor(VideoAuthoringRequest request, string temporaryFolder) =>
+        Path.Combine(temporaryFolder, BaseNameFor(request) + ".audio.flac");
 
     private static string BaseNameFor(VideoAuthoringRequest request) =>
         string.IsNullOrWhiteSpace(request.OutputPath)

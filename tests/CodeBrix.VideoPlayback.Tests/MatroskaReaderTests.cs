@@ -742,6 +742,23 @@ public class MatroskaReaderTests
     }
 
     [Fact]
+    public void Open_maps_an_A_FLAC_track_to_the_flac_codec()
+    {
+        //Arrange
+        byte[] file = BuildMinimalMatroska("A_FLAC", 2);
+
+        //Act
+        using MatroskaReader reader = new MatroskaReader(new MemoryMediaSource(file, "synthetic.mkv"));
+        MediaTrackInfo track = reader.Tracks.Single();
+
+        //Assert
+        track.Kind.Should().Be(MediaTrackKind.Audio);
+        track.CodecId.Should().Be(VideoCodecIds.Flac);
+        track.SampleRate.Should().Be(48000);
+        track.Channels.Should().Be(2);
+    }
+
+    [Fact]
     public void Open_refuses_a_track_whose_frames_have_been_compressed_or_stripped()
     {
         //Arrange

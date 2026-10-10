@@ -36,7 +36,7 @@
     sources - see tests/assets/ASSETS.txt - never third-party media.
   -->
   <ItemGroup>
-    <Content Include="..\assets\*.webm;..\assets\*.mkv;..\assets\*.cbv;..\assets\*.json;..\assets\*.vtt;..\assets\*.srt;..\assets\*.ffmeta;..\assets\*.ivf;..\assets\*.ogg;..\assets\*.opus;..\assets\*.txt">
+    <Content Include="..\assets\*.webm;..\assets\*.mkv;..\assets\*.cbv;..\assets\*.cbvmaster;..\assets\*.json;..\assets\*.vtt;..\assets\*.srt;..\assets\*.ffmeta;..\assets\*.ivf;..\assets\*.ogg;..\assets\*.opus;..\assets\*.txt">
       <Link>assets\%(Filename)%(Extension)</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>

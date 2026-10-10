@@ -154,6 +154,13 @@ public static class CbvInfoCommand
                 $"       flags         default {track.IsDefault}, forced {track.IsForced}, "
                 + $"hearing-impaired {track.IsHearingImpaired}, enabled {track.IsEnabled}");
 
+            if (track.IsAlphaPlane)
+            {
+                Console.WriteLine(
+                    "       role          alpha plane of the picture ("
+                    + (track.IsAlphaPremultiplied ? "picture colours premultiplied" : "straight alpha") + ")");
+            }
+
             if (!track.CodecPrivate.IsEmpty)
             {
                 Console.WriteLine($"       codec data    {track.CodecPrivate.Length} bytes {Hex(track.CodecPrivate.Span, 16)}");

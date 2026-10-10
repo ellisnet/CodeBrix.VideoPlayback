@@ -16,7 +16,7 @@ public enum AuthoringAudioCodec
 {
     /// <summary>
     /// Let the flavour choose: <see cref="LibOpus" /> for a WebM-profile file, <see cref="LibVorbis" /> for
-    /// a bespoke one.
+    /// a bespoke one, <see cref="Flac" /> for a master one.
     /// </summary>
     Default = 0,
 
@@ -28,4 +28,10 @@ public enum AuthoringAudioCodec
     /// the bespoke flavour, so that playing one of its files never needs the Opus package.
     /// </summary>
     LibVorbis = 2,
+
+    /// <summary>
+    /// FLAC (FFmpeg's native <c>flac</c> encoder), lossless, at <see cref="AuthoringAudioSettings.FlacBitDepth" />
+    /// bits. The ONLY codec the master flavour takes, and refused by the other two.
+    /// </summary>
+    Flac = 3,
 }

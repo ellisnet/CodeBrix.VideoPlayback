@@ -64,6 +64,22 @@ public sealed class MediaTrackInfo
     /// </summary>
     public TimeSpan DefaultDuration { get; set; }
 
+    /// <summary>
+    /// For a video track, whether it is the picture or the alpha channel that goes with the picture. Always
+    /// <see cref="VideoTrackRole.Picture" /> except in a master (Mode3) bespoke file.
+    /// </summary>
+    public VideoTrackRole VideoRole { get; set; }
+
+    /// <summary>
+    /// For an <see cref="VideoTrackRole.AlphaPlane" /> track: true when the file says the picture's colours
+    /// have already been multiplied by the alpha. False - the colours are straight - for every file the
+    /// authoring library writes.
+    /// </summary>
+    public bool IsAlphaPremultiplied { get; set; }
+
+    /// <summary>True when this is a video track carrying the alpha channel rather than a picture.</summary>
+    public bool IsAlphaPlane => Kind == MediaTrackKind.Video && VideoRole == VideoTrackRole.AlphaPlane;
+
     /// <summary>Video only: the coded width in pixels.</summary>
     public int Width { get; set; }
 
@@ -127,6 +143,8 @@ public sealed class MediaTrackInfo
         string label = string.IsNullOrEmpty(Name) ? CodecId : $"{Name} ({CodecId})";
         return Kind switch
         {
+            MediaTrackKind.Video when VideoRole == VideoTrackRole.AlphaPlane =>
+                $"track {Id} video (alpha plane): {label}, {Width}x{Height}",
             MediaTrackKind.Video => $"track {Id} video: {label}, {Width}x{Height}",
             MediaTrackKind.Audio => $"track {Id} audio: {label}, {SampleRate} Hz, {Channels} ch, {Language}",
             MediaTrackKind.Caption => $"track {Id} captions: {label}, {Language}",

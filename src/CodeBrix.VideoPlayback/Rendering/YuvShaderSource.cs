@@ -191,6 +191,34 @@ half4 main(float2 coordinate) {
 }
 ";
 
+    /// <summary>The alpha-plane uniforms, shared by both alpha variants.</summary>
+    private const string AlphaUniforms = @"uniform shader aPlane;
+uniform float alphaScale;
+uniform float alphaPremultiplied;
+";
+
+    /// <summary>The end of an alpha variant: opacity from the alpha plane, colour premultiplied by it.</summary>
+    private const string AlphaPlainTail = @"    float opacity = clamp(aPlane.eval(coordinate).r * alphaScale, 0.0, 1.0);
+    return half4(half3(colour * mix(opacity, 1.0, alphaPremultiplied)), half(opacity));
+}
+";
+
+    /// <summary>The end of an alpha variant that reads the lookup table first.</summary>
+    private const string AlphaLookupTail = @"    colour = clamp(sampleLookupTable(colour), 0.0, 1.0);
+    float opacity = clamp(aPlane.eval(coordinate).r * alphaScale, 0.0, 1.0);
+    return half4(half3(colour * mix(opacity, 1.0, alphaPremultiplied)), half(opacity));
+}
+";
+
+    /// <summary>
+    /// The name of the child the alpha plane is bound to, in the alpha variants. The variant also takes two
+    /// uniforms: <c>alphaScale</c>, which turns the plane's normalised sample into opacity (1 for an 8-bit
+    /// plane in an 8-bit texture; 65535 / 1023 for a 10-bit plane in a 16-bit texture), and
+    /// <c>alphaPremultiplied</c>, 1 when the colours are already premultiplied and 0 - the usual case - when
+    /// they are straight.
+    /// </summary>
+    public const string AlphaChild = "aPlane";
+
     /// <summary>The name of the child the luma plane is bound to.</summary>
     public const string LumaChild = "yPlane";
 
@@ -224,6 +252,36 @@ half4 main(float2 coordinate) {
         };
 
         return Preamble + LookupUniforms + lookup + Body + LookupTail;
+    }
+
+    /// <summary>
+    /// Builds the shader source for the plain variant, with or without an alpha plane.
+    /// </summary>
+    /// <param name="withAlpha">
+    /// True for the variant that reads <see cref="AlphaChild" /> and returns PREMULTIPLIED colour with real
+    /// opacity; false for exactly what <see cref="Build()" /> returns.
+    /// </param>
+    /// <returns>The SkSL source.</returns>
+    public static string Build(bool withAlpha) =>
+        withAlpha ? Preamble + AlphaUniforms + Body + AlphaPlainTail : Build();
+
+    /// <summary>
+    /// Builds the shader source for a lookup-table variant, with or without an alpha plane.
+    /// </summary>
+    /// <param name="interpolation">How the lookup table is read between its nodes.</param>
+    /// <param name="withAlpha">
+    /// True for the variant that also reads <see cref="AlphaChild" /> and returns PREMULTIPLIED colour; false
+    /// for exactly what <see cref="Build(LutInterpolation)" /> returns.
+    /// </param>
+    /// <returns>The SkSL source.</returns>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="interpolation" /> is not a known mode.</exception>
+    public static string Build(LutInterpolation interpolation, bool withAlpha)
+    {
+        if (!withAlpha) return Build(interpolation);
+
+        string withoutAlpha = Build(interpolation);
+        string head = withoutAlpha.Substring(0, withoutAlpha.Length - LookupTail.Length);
+        return Preamble + AlphaUniforms + head.Substring(Preamble.Length) + AlphaLookupTail;
     }
 
     /// <summary>Whether a variant needs the atlas bound with a smoothing filter.</summary>

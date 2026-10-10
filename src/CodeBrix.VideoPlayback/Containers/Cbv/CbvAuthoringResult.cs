@@ -34,6 +34,45 @@ public sealed class CbvAuthoringResult
         CaptionCueCount = captionCueCount;
     }
 
+    /// <summary>Creates a result for a file that may carry an alpha-plane track.</summary>
+    /// <param name="path">Where the file was written.</param>
+    /// <param name="sizeInBytes">How big it is.</param>
+    /// <param name="videoTrackId">The picture track's identifier, or 0.</param>
+    /// <param name="alphaTrackId">The alpha-plane track's identifier, or 0.</param>
+    /// <param name="audioTrackId">The audio track's identifier, or 0.</param>
+    /// <param name="videoFrameCount">How many picture frames were written.</param>
+    /// <param name="alphaFrameCount">How many alpha-plane frames were written.</param>
+    /// <param name="audioPacketCount">How many audio packets were written.</param>
+    /// <param name="captionTrackCount">How many caption tracks were written.</param>
+    /// <param name="captionCueCount">How many caption cues were written.</param>
+    /// <param name="formatVersion">The container format version the file was stamped with.</param>
+    public CbvAuthoringResult(
+        string path,
+        long sizeInBytes,
+        int videoTrackId,
+        int alphaTrackId,
+        int audioTrackId,
+        int videoFrameCount,
+        int alphaFrameCount,
+        int audioPacketCount,
+        int captionTrackCount,
+        int captionCueCount,
+        int formatVersion)
+        : this(
+            path,
+            sizeInBytes,
+            videoTrackId,
+            audioTrackId,
+            videoFrameCount,
+            audioPacketCount,
+            captionTrackCount,
+            captionCueCount)
+    {
+        AlphaTrackId = alphaTrackId;
+        AlphaFrameCount = alphaFrameCount;
+        FormatVersion = formatVersion;
+    }
+
     /// <summary>Where the file was written.</summary>
     public string Path { get; }
 
@@ -49,6 +88,15 @@ public sealed class CbvAuthoringResult
     /// <summary>How many video frames were written.</summary>
     public int VideoFrameCount { get; }
 
+    /// <summary>The alpha-plane track's identifier, or 0 when the file has no alpha.</summary>
+    public int AlphaTrackId { get; }
+
+    /// <summary>How many alpha-plane frames were written; 0 when the file has no alpha.</summary>
+    public int AlphaFrameCount { get; }
+
+    /// <summary>The container format version the file was stamped with: 0, or 1 for a master (Mode3) file.</summary>
+    public int FormatVersion { get; }
+
     /// <summary>How many audio packets were written.</summary>
     public int AudioPacketCount { get; }
 
@@ -60,6 +108,8 @@ public sealed class CbvAuthoringResult
 
     /// <inheritdoc />
     public override string ToString() =>
-        $"{Path}: {SizeInBytes:N0} bytes, {VideoFrameCount} video frames, {AudioPacketCount} audio packets, "
+        $"{Path}: {SizeInBytes:N0} bytes, {VideoFrameCount} video frames, "
+        + (AlphaTrackId > 0 ? $"{AlphaFrameCount} alpha frames, " : string.Empty)
+        + $"{AudioPacketCount} audio packets, "
         + $"{CaptionTrackCount} caption track(s) with {CaptionCueCount} cues";
 }

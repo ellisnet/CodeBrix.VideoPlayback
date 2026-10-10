@@ -19,7 +19,7 @@ namespace CodeBrix.VideoPlayback.Containers.Matroska;
 /// how AV1, Opus and Vorbis sit inside Matroska. No code was taken from any existing demultiplexer.
 /// </para>
 /// <para>
-/// <b>What it accepts.</b> <c>V_AV1</c> and <c>V_UNCOMPRESSED</c> video, <c>A_OPUS</c> and <c>A_VORBIS</c>
+/// <b>What it accepts.</b> <c>V_AV1</c> and <c>V_UNCOMPRESSED</c> video, <c>A_OPUS</c>, <c>A_FLAC</c> and <c>A_VORBIS</c>
 /// audio, and text captions in WebVTT, SubRip or Advanced SubStation form. A video or audio track in any other
 /// codec is refused with a message naming the codec, because a file whose picture or sound cannot be decoded
 /// is not playable and saying so at once is kinder than failing later. A SUBTITLE track this library cannot
@@ -2144,7 +2144,7 @@ public sealed class MatroskaReader : IMediaContainerReader
 
         throw new VideoPlaybackException(
             $"'{source.Name}' has a video track (number {trackNumber}) whose CodecID is '{codecId}'. This library "
-            + "reads V_AV1 and V_UNCOMPRESSED video, and A_OPUS or A_VORBIS audio; nothing else.");
+            + "reads V_AV1 and V_UNCOMPRESSED video, and A_OPUS, A_VORBIS or A_FLAC audio; nothing else.");
     }
 
     private string MapAudioCodec(string codecId, int trackNumber)
@@ -2152,9 +2152,14 @@ public sealed class MatroskaReader : IMediaContainerReader
         if (string.Equals(codecId, "A_OPUS", StringComparison.Ordinal)) return VideoCodecIds.Opus;
         if (string.Equals(codecId, "A_VORBIS", StringComparison.Ordinal)) return VideoCodecIds.Vorbis;
 
+        // A_FLAC's CodecPrivate is the FLAC stream header ("fLaC" and the metadata blocks, STREAMINFO first)
+        // and each block one FLAC frame - exactly the shape the bespoke container's FLAC track uses, so it
+        // maps straight through. Whether it can be DECODED is the shared audio output's question.
+        if (string.Equals(codecId, "A_FLAC", StringComparison.Ordinal)) return VideoCodecIds.Flac;
+
         throw new VideoPlaybackException(
             $"'{source.Name}' has an audio track (number {trackNumber}) whose CodecID is '{codecId}'. This library "
-            + "reads V_AV1 and V_UNCOMPRESSED video, and A_OPUS or A_VORBIS audio; nothing else.");
+            + "reads V_AV1 and V_UNCOMPRESSED video, and A_OPUS, A_VORBIS or A_FLAC audio; nothing else.");
     }
 
     private static bool TryMapCaptionCodec(
