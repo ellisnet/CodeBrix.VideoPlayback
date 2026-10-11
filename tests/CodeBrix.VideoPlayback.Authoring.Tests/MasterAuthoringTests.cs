@@ -24,9 +24,6 @@ namespace CodeBrix.VideoPlayback.Authoring.Tests;
 /// </summary>
 public class MasterAuthoringTests
 {
-    private const string FlacDecodeSkipReason =
-        "needs CodeBrix.Audio.Core with FlacPacketCodecFactory - unskip after the Core pin is raised";
-
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(60);
 
     #region Dry run and refusals
@@ -406,7 +403,7 @@ public class MasterAuthoringTests
         tally.FramesWithoutAlpha.Should().Be(tally.Frames);
     }
 
-    [Fact(Skip = FlacDecodeSkipReason)]
+    [Fact]
     public void A_session_opens_a_master_file_with_its_flac_sound()
     {
         //Arrange

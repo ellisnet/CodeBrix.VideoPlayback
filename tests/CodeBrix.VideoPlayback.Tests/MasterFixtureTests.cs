@@ -19,9 +19,6 @@ namespace CodeBrix.VideoPlayback.Tests;
 [Collection("Process-wide registries")]
 public class MasterFixtureTests
 {
-    private const string FlacDecodeSkipReason =
-        "needs CodeBrix.Audio.Core with FlacPacketCodecFactory - unskip after the Core pin is raised";
-
     [Fact]
     public void The_alpha_fixture_carries_a_picture_an_alpha_plane_and_flac_in_lock_step()
     {
@@ -127,7 +124,7 @@ public class MasterFixtureTests
         second.Passes.Should().BeTrue();
     }
 
-    [Fact(Skip = FlacDecodeSkipReason)]
+    [Fact]
     public void The_shared_audio_output_serves_flac_packets()
     {
         //Arrange
@@ -140,7 +137,7 @@ public class MasterFixtureTests
         supported.Should().BeTrue();
     }
 
-    [Fact(Skip = FlacDecodeSkipReason)]
+    [Fact]
     public void The_alpha_fixtures_flac_track_decodes_to_one_second_of_stereo()
     {
         //Arrange

@@ -40,7 +40,7 @@
     the desktop package with the miniaudio natives (an Android application would choose CodeBrix.Audio.Android).
   -->
   <ItemGroup>
-    <PackageReference Include="CodeBrix.Audio.MitLicenseForever" Version="1.0.271.1165" />
+    <PackageReference Include="CodeBrix.Audio.MitLicenseForever" Version="1.0.283.1382" />
   </ItemGroup>
 
   <!--

@@ -20,7 +20,13 @@
       See MAINTAINER-README.txt.
     -->
     <PackageReference Include="CodeBrix.VideoPlayback.Dav1d.BsdLicenseForever" Version="1.0.271.1206" />
-    <PackageReference Include="CodeBrix.Audio.Opus.BsdLicenseForever" Version="1.0.271.1185" />
+    <PackageReference Include="CodeBrix.Audio.Opus.BsdLicenseForever" Version="1.0.283.1405" />
+    <!--
+      The TEST project references the full audio package because the master-file session test opens the
+      audio device and needs its native engine (same arrangement as CodeBrix.VideoPlayback.Tests). The
+      LIBRARIES reference only CodeBrix.Audio.Core, which ships no native, and must keep it that way.
+    -->
+    <PackageReference Include="CodeBrix.Audio.MitLicenseForever" Version="1.0.283.1382" />
   </ItemGroup>
 
   <ItemGroup>

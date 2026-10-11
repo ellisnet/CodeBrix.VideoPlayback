@@ -17,13 +17,13 @@
       The TEST project may reference the Opus package - it proves the Opus path works once an
       application registers it. The LIBRARY never does; see MAINTAINER-README.txt.
     -->
-    <PackageReference Include="CodeBrix.Audio.Opus.BsdLicenseForever" Version="1.0.271.1185" />
+    <PackageReference Include="CodeBrix.Audio.Opus.BsdLicenseForever" Version="1.0.283.1405" />
     <!--
       The TEST project references the full audio package because the opt-in tests that open the audio
       device need its native engine. The LIBRARY references only CodeBrix.Audio.Core, which ships no
       native, and must keep it that way; see MAINTAINER-README.txt.
     -->
-    <PackageReference Include="CodeBrix.Audio.MitLicenseForever" Version="1.0.271.1165" />
+    <PackageReference Include="CodeBrix.Audio.MitLicenseForever" Version="1.0.283.1382" />
   </ItemGroup>
 
   <ItemGroup>

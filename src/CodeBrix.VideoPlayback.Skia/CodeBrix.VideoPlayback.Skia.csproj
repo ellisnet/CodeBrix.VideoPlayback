@@ -84,7 +84,7 @@
     CodeBrix.Audio.MitLicenseForever on Windows/Linux/macOS, CodeBrix.Audio.Android.ApacheLicenseForever on
     Android. A library that picked the desktop natives for the application would be wrong on Android.
     -->
-    <PackageReference Include="CodeBrix.Audio.Core.MitLicenseForever" Version="1.0.271.1165" />
+    <PackageReference Include="CodeBrix.Audio.Core.MitLicenseForever" Version="1.0.283.1382" />
   </ItemGroup>
 
   <!--
