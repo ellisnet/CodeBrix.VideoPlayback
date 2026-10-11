@@ -19,8 +19,9 @@ using Xunit;
 namespace CodeBrix.VideoPlayback.Authoring.Tests;
 
 /// <summary>
-/// The master flavour (<c>.cbvmaster</c>, Mode3) through the FFmpeg bridge: what it would run, what it refuses,
-/// what it writes with and without alpha, and what that PLAYS as with a real AV1 decoder.
+/// The master flavour (<c>.cbvmaster</c>, Mode3): what it would run, what it refuses, what it writes with and
+/// without alpha - decoded through the ffmpeg engine and encoded in process - and what that PLAYS as with a
+/// real AV1 decoder.
 /// </summary>
 public class MasterAuthoringTests
 {
@@ -29,7 +30,7 @@ public class MasterAuthoringTests
     #region Dry run and refusals
 
     [Fact]
-    public void A_master_dry_run_lists_a_video_an_alpha_and_an_audio_pass()
+    public void A_master_dry_run_lists_a_video_an_alpha_and_an_audio_pass_that_run_in_process()
     {
         //Arrange
         VideoAuthoringRequest request = DryRequest();
@@ -42,22 +43,22 @@ public class MasterAuthoringTests
         commands[0].Label.Should().Be("video pass");
         commands[1].Label.Should().Be("alpha pass");
         commands[2].Label.Should().Be("audio pass");
-        commands[0].Arguments.Should().Contain("-c:v libsvtav1");
-        commands[1].Arguments.Should().Contain("-c:v libaom-av1");
-        commands[1].Arguments.Should().Contain("-usage realtime");
-        commands[1].Arguments.Should().Contain("-pix_fmt gray");
-        commands[1].Arguments.Should().Contain("-color_range pc");
-        commands[1].Arguments.Should().Contain("-crf 24");
-        commands[1].Arguments.Should().Contain("alphaextract");
-        commands[1].Arguments.Should().Contain("-force_key_frames " + AuthoringCommandFactory.KeyFramesOfVideoPass);
-        commands[1].Arguments.Should().Contain("-f ivf");
-        commands[2].Arguments.Should().Contain("-c:a flac");
-        commands[2].Arguments.Should().Contain("-sample_fmt s16");
-        commands[2].Arguments.Should().Contain("-f flac");
+        commands[0].RunsFFmpeg.Should().BeFalse();
+        commands[1].RunsFFmpeg.Should().BeFalse();
+        commands[2].RunsFFmpeg.Should().BeFalse();
+        commands[0].Arguments.Should().Be(
+            "av1 i420 8-bit size decoded-cropped-to-even good-quality cq-level 30 cpu-used 6 keyint 48 fill-transparent-pixels "
+            + "<- /nowhere/source.mov -> " + Path.Combine("/nowhere/work", "clip.video.ivf"));
+        commands[1].Arguments.Should().Be(
+            "av1 gray 8-bit size decoded-cropped-to-even full-range realtime cq-level 24 cpu-used 6 key-frames-of-video-pass "
+            + "<- /nowhere/source.mov -> " + Path.Combine("/nowhere/work", "clip.alpha.ivf"));
+        commands[2].Arguments.Should().Be(
+            "flac 16-bit 48000 Hz 2 channel(s) compression-level 5 <- /nowhere/source.mov -> packets");
+        commands[0].ToString().Should().StartWith("in process: av1 i420");
     }
 
     [Fact]
-    public void Excluding_alpha_drops_the_alpha_pass()
+    public void Excluding_alpha_drops_the_alpha_pass_and_the_transparent_pixel_fill()
     {
         //Arrange
         VideoAuthoringRequest request = DryRequest();
@@ -68,11 +69,26 @@ public class MasterAuthoringTests
 
         //Assert
         commands.Count.Should().Be(2);
+        commands[0].Arguments.Should().NotContain("fill-transparent-pixels");
         commands[1].Label.Should().Be("audio pass");
     }
 
     [Fact]
-    public void Twenty_four_bit_flac_is_asked_for_as_s32_with_a_raw_sample_size()
+    public void Turning_the_fill_off_drops_it_from_the_video_pass()
+    {
+        //Arrange
+        VideoAuthoringRequest request = DryRequest();
+        request.Video.FillTransparentPixels = false;
+
+        //Act
+        IReadOnlyList<AuthoringCommand> commands = CbvAuthor.RenderCommands(request);
+
+        //Assert
+        commands[0].Arguments.Should().NotContain("fill-transparent-pixels");
+    }
+
+    [Fact]
+    public void Twenty_four_bit_flac_is_listed_as_such()
     {
         //Arrange
         VideoAuthoringRequest request = DryRequest();
@@ -82,7 +98,68 @@ public class MasterAuthoringTests
         IReadOnlyList<AuthoringCommand> commands = CbvAuthor.RenderCommands(request);
 
         //Assert
-        commands[2].Arguments.Should().Contain("-sample_fmt s32 -bits_per_raw_sample 24");
+        commands[2].Arguments.Should().StartWith("flac 24-bit 48000 Hz 2 channel(s)");
+    }
+
+    [Fact]
+    public void A_master_without_a_key_frame_interval_leaves_it_to_the_encoder()
+    {
+        //Arrange
+        VideoAuthoringRequest request = DryRequest();
+        request.Video.KeyframeIntervalFrames = 0;
+        request.Video.SpeedPreset = 13;
+
+        //Act
+        IReadOnlyList<AuthoringCommand> commands = CbvAuthor.RenderCommands(request);
+
+        //Assert
+        commands[0].Arguments.Should().Contain("cpu-used 8 keyint auto");
+    }
+
+    [Fact]
+    public void A_frame_size_adds_an_ffmpeg_prepare_pass_whose_lossless_output_the_video_pass_reads()
+    {
+        //Arrange
+        VideoAuthoringRequest request = DryRequest();
+        request.Video.FrameSize = AuthoringFrameSize.Exact(640, 360);
+
+        //Act
+        IReadOnlyList<AuthoringCommand> commands = CbvAuthor.RenderCommands(request);
+
+        //Assert
+        string prepared = Path.Combine("/nowhere/work", "clip.prepared.mkv");
+        commands.Count.Should().Be(4);
+        commands[0].Label.Should().Be("prepare pass");
+        commands[0].RunsFFmpeg.Should().BeTrue();
+        commands[0].Arguments.Should().Contain("-c:v ffv1");
+        commands[0].Arguments.Should().Contain("scale=w=640:h=360");
+        commands[0].Arguments.Should().Contain("format=yuva420p");
+        commands[0].Arguments.Should().Contain("-pix_fmt yuva420p");
+        commands[0].Arguments.Should().Contain("-an");
+        commands[0].Arguments.Should().Contain("-f matroska");
+        commands[0].Arguments.Should().Contain(prepared);
+        commands[1].Arguments.Should().Contain("<- " + prepared + " ->");
+        commands[2].Arguments.Should().Contain("<- " + prepared + " ->");
+        commands[3].Arguments.Should().Contain("<- /nowhere/source.mov ->");
+    }
+
+    [Fact]
+    public void A_prepare_pass_without_alpha_keeps_four_two_zero_without_an_alpha_channel()
+    {
+        //Arrange
+        VideoAuthoringRequest request = DryRequest();
+        request.Video.Alpha = AuthoringAlphaMode.Exclude;
+        request.Video.FrameRate = 24;
+        request.Video.FrameRateMode = AuthoringFrameRateMode.Filter;
+
+        //Act
+        IReadOnlyList<AuthoringCommand> commands = CbvAuthor.RenderCommands(request);
+
+        //Assert
+        commands[0].Label.Should().Be("prepare pass");
+        commands[0].Arguments.Should().Contain("fps=24");
+        commands[0].Arguments.Should().Contain("-pix_fmt yuv420p");
+        commands[0].Arguments.Should().NotContain("yuva420p");
     }
 
     [Fact]
@@ -184,45 +261,20 @@ public class MasterAuthoringTests
     }
 
     [Fact]
-    public void A_build_without_libaom_or_flac_is_warned_about_for_the_master_flavour()
+    public void A_build_without_libaom_or_flac_earns_no_master_warning()
     {
         //Arrange
         Func<string, bool> neither = name => name != AuthoringEncoderNames.LibAomAv1 && name != AuthoringEncoderNames.Flac;
 
         //Act
-        IReadOnlyList<string> warnings = AuthoringTools.DescribeMasterEncoderWarnings(neither);
+        IReadOnlyList<string> warnings = AuthoringTools.DescribeEncoderWarnings(neither);
 
         //Assert
-        warnings.Count.Should().Be(2);
-        warnings[0].Should().Contain("(libaom-av1)");
-        warnings[1].Should().Contain("(flac)");
-    }
-
-    [Fact]
-    public void A_build_with_every_encoder_earns_no_master_warning()
-    {
-        //Arrange
-        Func<string, bool> everything = _ => true;
-
-        //Act
-        IReadOnlyList<string> warnings = AuthoringTools.DescribeMasterEncoderWarnings(everything);
-
-        //Assert
-        warnings.Count.Should().Be(0);
-    }
-
-    [Fact]
-    public void This_machines_libaom_writes_monochrome_av1()
-    {
-        //Arrange
-        SyntheticSource.SkipWithoutFFmpeg();
-        Assert.SkipUnless(AuthoringEncoders.HasAomAv1Encoder, "This FFmpeg has no libaom-av1.");
-
-        //Act
-        bool monochrome = AuthoringTools.CanEncodeMonochromeAv1(out string reason);
-
-        //Assert
-        monochrome.Should().BeTrue(reason);
+        foreach (string warning in warnings)
+        {
+            warning.Should().NotContain("cbvmaster");
+            warning.Should().NotContain("(flac)");
+        }
     }
 
     #endregion
@@ -245,17 +297,261 @@ public class MasterAuthoringTests
         //Assert
         result.Flavour.Should().Be(VideoAuthoringFlavour.Master);
         result.Commands.Count.Should().Be(3);
+        result.Commands[0].Label.Should().Be("video pass");
+        result.Commands[0].Arguments.Should().Contain("fill-transparent-pixels");
         result.Commands[1].Label.Should().Be("alpha pass");
-        result.Commands[1].Arguments.Should().NotContain(AuthoringCommandFactory.KeyFramesOfVideoPass);
+        result.Commands[1].Arguments.Should().Contain("<- " + source + " ->");
+        result.Commands[2].Label.Should().Be("audio pass");
+        result.Commands[2].RunsFFmpeg.Should().BeFalse();
         result.Profile.Passes.Should().BeTrue();
         reader.Version.Should().Be(CbvFormat.MasterVersion);
         reader.Tracks.Count.Should().Be(3);
+        reader.Tracks[0].Width.Should().Be(SyntheticSource.Width);
+        reader.Tracks[0].DefaultDuration.Should().Be(TimeSpan.FromMilliseconds(100));
         reader.AlphaPlaneTrack.Should().NotBeNull();
         reader.AlphaPlaneTrack.Layout.Should().Be(VideoPixelLayout.Gray);
         reader.AlphaPlaneTrack.Color.Range.Should().Be(VideoColorRange.Full);
+        reader.AlphaPlaneTrack.DefaultDuration.Should().Be(TimeSpan.FromMilliseconds(100));
         reader.Tracks[2].CodecId.Should().Be(VideoCodecIds.Flac);
+        File.Exists(work.File("clip.video.ivf")).Should().BeFalse();
         File.Exists(work.File("clip.alpha.ivf")).Should().BeFalse();
-        File.Exists(work.File("clip.audio.flac")).Should().BeFalse();
+    }
+
+    [Fact]
+    public void The_master_sound_is_the_sources_sound_bit_for_bit()
+    {
+        //Arrange
+        SkipWithoutMasterTools();
+        using WorkFolder work = new WorkFolder("master-flac-exact");
+        string source = SyntheticAlphaSource.WriteClip(work.File("source.mkv"));
+        VideoAuthoringResult result = CbvAuthor.Write(MasterRequest(source, work.File("clip.cbvmaster"), work));
+        string flac = work.File("extracted.flac");
+
+        //Act
+        using (CbvReader reader = new CbvReader(new FileMediaSource(result.OutputPath)))
+        using (FileStream file = File.Create(flac))
+        {
+            MediaTrackInfo audio = reader.Tracks[2];
+            file.Write(audio.CodecPrivate.Span);
+            while (reader.TryReadPacket(out MediaPacket packet))
+            {
+                if (packet.TrackId == audio.Id) file.Write(packet.Data.Span);
+            }
+        }
+
+        byte[] authored = SyntheticAlphaSource.DecodeSound(flac, work.File("authored.raw"));
+        byte[] original = SyntheticAlphaSource.DecodeSound(source, work.File("original.raw"));
+
+        //Assert
+        authored.Length.Should().Be(original.Length);
+        authored.Should().Equal(original);
+    }
+
+    [Fact]
+    public void A_frame_size_runs_the_prepare_pass_and_the_file_comes_out_at_that_size()
+    {
+        //Arrange
+        SkipWithoutMasterTools();
+        using WorkFolder work = new WorkFolder("master-prepare");
+        string source = SyntheticAlphaSource.WriteClip(work.File("source.mkv"));
+        VideoAuthoringRequest request = MasterRequest(source, work.File("clip.cbvmaster"), work);
+        request.Video.FrameSize = AuthoringFrameSize.Exact(96, 54);
+        request.Audio.Include = false;
+
+        //Act
+        VideoAuthoringResult result = CbvAuthor.Write(request);
+        using CbvReader reader = new CbvReader(new FileMediaSource(result.OutputPath));
+
+        //Assert
+        result.Commands.Count.Should().Be(3);
+        result.Commands[0].Label.Should().Be("prepare pass");
+        result.Commands[0].RunsFFmpeg.Should().BeTrue();
+        result.Commands[1].Arguments.Should().Contain("clip.prepared.mkv");
+        reader.Tracks[0].Width.Should().Be(96);
+        reader.Tracks[0].Height.Should().Be(54);
+        reader.AlphaPlaneTrack.Width.Should().Be(96);
+        File.Exists(work.File("clip.prepared.mkv")).Should().BeFalse();
+    }
+
+    [Fact]
+    public void Transparent_pixels_take_the_colour_of_the_visible_picture_beside_them()
+    {
+        //Arrange
+        SkipWithoutMasterTools();
+        using WorkFolder work = new WorkFolder("master-edge-fill");
+        string source = SyntheticAlphaSource.WriteEdgeClip(work.File("edge.mkv"));
+        VideoAuthoringRequest request = MasterRequest(source, work.File("clip.cbvmaster"), work);
+        request.Audio.Include = false;
+        request.Video.ConstantRateFactor = 20;
+
+        //Act
+        VideoAuthoringResult result = CbvAuthor.Write(request);
+        (int frames, int leftLuma) = DecodeLeftQuarterLuma(result.OutputPath);
+
+        //Assert
+        frames.Should().BeGreaterThan(0);
+        leftLuma.Should().BeGreaterThanOrEqualTo(200);
+    }
+
+    [Fact]
+    public void With_the_fill_off_transparent_pixels_keep_the_sources_colour()
+    {
+        //Arrange
+        SkipWithoutMasterTools();
+        using WorkFolder work = new WorkFolder("master-edge-nofill");
+        string source = SyntheticAlphaSource.WriteEdgeClip(work.File("edge.mkv"));
+        VideoAuthoringRequest request = MasterRequest(source, work.File("clip.cbvmaster"), work);
+        request.Audio.Include = false;
+        request.Video.ConstantRateFactor = 20;
+        request.Video.FillTransparentPixels = false;
+
+        //Act
+        VideoAuthoringResult result = CbvAuthor.Write(request);
+        (int frames, int leftLuma) = DecodeLeftQuarterLuma(result.OutputPath);
+
+        //Assert
+        frames.Should().BeGreaterThan(0);
+        leftLuma.Should().BeLessThanOrEqualTo(60);
+        result.Commands[0].Arguments.Should().NotContain("fill-transparent-pixels");
+    }
+
+    [Fact]
+    public void A_rotated_source_is_turned_the_right_way_up_by_the_prepare_pass()
+    {
+        //Arrange
+        SkipWithoutMasterTools();
+        using WorkFolder work = new WorkFolder("master-rotated");
+        string source = SyntheticAlphaSource.WriteRotatedClip(work.File("rotated.mkv"));
+        VideoAuthoringRequest request = MasterRequest(source, work.File("clip.cbvmaster"), work);
+        request.Audio.Include = false;
+
+        //Act
+        VideoAuthoringResult result = CbvAuthor.Write(request);
+        using CbvReader reader = new CbvReader(new FileMediaSource(result.OutputPath));
+
+        //Assert
+        result.Commands[0].Label.Should().Be("prepare pass");
+        reader.Tracks[0].Width.Should().Be(SyntheticSource.Height);
+        reader.Tracks[0].Height.Should().Be(SyntheticSource.Width);
+        reader.AlphaPlaneTrack.Width.Should().Be(SyntheticSource.Height);
+    }
+
+    [Fact]
+    public void A_rotated_source_without_auto_rotate_is_encoded_as_stored_with_no_prepare_pass()
+    {
+        //Arrange
+        SkipWithoutMasterTools();
+        using WorkFolder work = new WorkFolder("master-rotated-stored");
+        string source = SyntheticAlphaSource.WriteRotatedClip(work.File("rotated.mkv"));
+        VideoAuthoringRequest request = MasterRequest(source, work.File("clip.cbvmaster"), work);
+        request.Audio.Include = false;
+        request.Video.AutoRotate = false;
+
+        //Act
+        VideoAuthoringResult result = CbvAuthor.Write(request);
+        using CbvReader reader = new CbvReader(new FileMediaSource(result.OutputPath));
+
+        //Assert
+        result.Commands[0].Label.Should().Be("video pass");
+        reader.Tracks[0].Width.Should().Be(SyntheticSource.Width);
+    }
+
+    [Theory]
+    [InlineData(129, 72, 128, 72, "the last column was cropped away")]
+    [InlineData(128, 73, 128, 72, "the last row was cropped away")]
+    [InlineData(129, 73, 128, 72, "the last column and the last row were cropped away")]
+    public void An_odd_sized_source_is_cropped_to_even_in_both_planes_and_says_so(
+        int width,
+        int height,
+        int expectedWidth,
+        int expectedHeight,
+        string expectedNote)
+    {
+        //Arrange
+        SkipWithoutMasterTools();
+        using WorkFolder work = new WorkFolder("master-odd-" + width + "x" + height);
+        string source = SyntheticAlphaSource.WriteClip(work.File("odd.mkv"), width, height);
+        VideoAuthoringRequest request = MasterRequest(source, work.File("clip.cbvmaster"), work);
+        request.Audio.Include = false;
+
+        //Act
+        VideoAuthoringResult result = CbvAuthor.Write(request);
+        AlphaTally tally = PlayThrough(result.OutputPath);
+        using CbvReader reader = new CbvReader(new FileMediaSource(result.OutputPath));
+
+        //Assert
+        string notes = string.Join("\n", result.Notes);
+        notes.Should().Contain(expectedNote);
+        notes.Should().Contain("is " + width + "x" + height + ", and 4:2:0 AV1 needs even dimensions");
+        notes.Should().Contain("encoded at " + expectedWidth + "x" + expectedHeight);
+        result.Commands[0].Arguments.Should().Contain(
+            "size " + expectedWidth + "x" + expectedHeight + " cropped-from " + width + "x" + height);
+        result.Commands[1].Arguments.Should().Contain("size " + expectedWidth + "x" + expectedHeight);
+        reader.Tracks[0].Width.Should().Be(expectedWidth);
+        reader.Tracks[0].Height.Should().Be(expectedHeight);
+        reader.AlphaPlaneTrack.Width.Should().Be(expectedWidth);
+        reader.AlphaPlaneTrack.Height.Should().Be(expectedHeight);
+        tally.Failure.Should().BeNull();
+        tally.FramesWithoutAlpha.Should().Be(0);
+        tally.Frames.Should().BeGreaterThanOrEqualTo(15);
+    }
+
+    [Fact]
+    public void An_even_sized_source_is_neither_cropped_nor_noted()
+    {
+        //Arrange
+        SkipWithoutMasterTools();
+        using WorkFolder work = new WorkFolder("master-even");
+        string source = SyntheticAlphaSource.WriteClip(work.File("even.mkv"));
+        VideoAuthoringRequest request = MasterRequest(source, work.File("clip.cbvmaster"), work);
+        request.Audio.Include = false;
+
+        //Act
+        VideoAuthoringResult result = CbvAuthor.Write(request);
+
+        //Assert
+        string.Join("\n", result.Notes).Should().NotContain("cropped");
+        result.Commands[0].Arguments.Should().Contain("size 128x72 good-quality");
+    }
+
+    [Fact]
+    public void A_dry_run_with_an_exact_frame_size_lists_that_size()
+    {
+        //Arrange
+        VideoAuthoringRequest request = DryRequest();
+        request.Video.FrameSize = AuthoringFrameSize.Exact(640, 360);
+
+        //Act
+        IReadOnlyList<AuthoringCommand> commands = CbvAuthor.RenderCommands(request);
+
+        //Assert
+        commands[1].Arguments.Should().StartWith("av1 i420 8-bit size 640x360 ");
+        commands[2].Arguments.Should().StartWith("av1 gray 8-bit size 640x360 ");
+    }
+
+    [Fact]
+    public void A_cancelled_master_run_leaves_neither_the_output_nor_its_intermediates()
+    {
+        //Arrange
+        SkipWithoutMasterTools();
+        using WorkFolder work = new WorkFolder("master-cancel");
+        string source = SyntheticAlphaSource.WriteClip(work.File("source.mkv"));
+        using CancellationTokenSource cancel = new CancellationTokenSource();
+        VideoAuthoringRequest request = MasterRequest(source, work.File("clip.cbvmaster"), work);
+        request.CancellationToken = cancel.Token;
+        request.ProgressCallback = progress =>
+        {
+            if (progress.Label == "video pass") cancel.Cancel();
+        };
+
+        //Act
+        Action write = () => CbvAuthor.Write(request);
+
+        //Assert
+        write.Should().Throw<OperationCanceledException>();
+        File.Exists(work.File("clip.cbvmaster")).Should().BeFalse();
+        File.Exists(work.File("clip.video.ivf")).Should().BeFalse();
+        File.Exists(work.File("clip.alpha.ivf")).Should().BeFalse();
     }
 
     [Fact]
@@ -443,7 +739,6 @@ public class MasterAuthoringTests
             SourcePath = source,
             OutputPath = output,
             TemporaryFolder = work.Path,
-            AllowAv1EncoderFallback = true,
         };
 
         AuthoringEncoders.ApplyFastest(request.Video);
@@ -452,10 +747,47 @@ public class MasterAuthoringTests
         return request;
     }
 
-    private static void SkipWithoutMasterTools()
+    // The master flavour itself needs only the engine - ffmpeg and ffprobe here - and encodes in process. The
+    // opaque synthetic source is written with an AV1 encoder, which SkipWithoutFFmpeg also checks for.
+    private static void SkipWithoutMasterTools() => SyntheticSource.SkipWithoutFFmpeg();
+
+    private static (int Frames, int Luma) DecodeLeftQuarterLuma(string path)
     {
-        SyntheticSource.SkipWithoutFFmpeg();
-        Assert.SkipUnless(AuthoringEncoders.HasAomAv1Encoder, "The master flavour's alpha pass needs libaom-av1.");
+        int frames = 0;
+        long total = 0;
+        long samples = 0;
+
+        using VideoPlaybackSession session = NewSession();
+        int ended = 0;
+        session.PlaybackEnded += (s, e) => Interlocked.Increment(ref ended);
+        session.Open(path);
+        session.Play();
+
+        Stopwatch clock = Stopwatch.StartNew();
+        while (clock.Elapsed < Timeout)
+        {
+            while (session.Presenter.TryTakeLatest(out VideoFrame frame))
+            {
+                using (frame)
+                {
+                    frames++;
+                    for (int y = 0; y < frame.Height; y++)
+                    {
+                        ReadOnlySpan<byte> row = frame.Y.GetRowBytes(y);
+                        for (int x = 0; x < frame.Width / 4; x++)
+                        {
+                            total += row[x];
+                            samples++;
+                        }
+                    }
+                }
+            }
+
+            if (Volatile.Read(ref ended) > 0 && !session.Presenter.HasFrame) break;
+            Thread.Sleep(5);
+        }
+
+        return (frames, samples == 0 ? 0 : (int)(total / samples));
     }
 
     private static VideoPlaybackSession NewSession()

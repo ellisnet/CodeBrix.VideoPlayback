@@ -27,8 +27,16 @@ public enum VideoAuthoringFlavour
     /// video and Ogg audio output. Marketed as "CodeBrix Video Mode2".
     /// </summary>
     /// <remarks>
+    /// <para>
     /// This flavour keeps per-language chapter titles, whole caption tracks in the header region, and the
     /// index in front of the media data by construction.
+    /// </para>
+    /// <para>
+    /// It can also be encoded IN PROCESS - picture by the in-process AV1 encoder, sound by the in-process
+    /// Vorbis encoder, from frames and samples the registered video-processing engine decodes: always with
+    /// <see cref="Encoding.AuthoringVideoEncoder.Av1Package" />, and as the fallback, with a note, when an
+    /// FFmpeg encoder was asked for and the ffmpeg path is not available.
+    /// </para>
     /// </remarks>
     Bespoke = 1,
 
@@ -44,10 +52,15 @@ public enum VideoAuthoringFlavour
     /// flavour takes. Alpha is stored straight, not premultiplied.
     /// </para>
     /// <para>
-    /// The picture is encoded exactly as the bespoke flavour encodes it. The alpha plane is encoded by
-    /// <c>libaom-av1</c> - the only encoder here that writes a monochrome AV1 stream - with its key frames forced
-    /// onto the picture's, and the run checks that the two came out in lock step before muxing. Playing the
-    /// sound needs a CodeBrix.Audio.Core whose shared output serves the <c>flac</c> packet codec.
+    /// This flavour encodes IN PROCESS rather than through FFmpeg command lines: the source is decoded through
+    /// the registered video-processing engine - any engine, Android's included; the desktop ffmpeg engine when
+    /// none is registered - and the picture, the alpha plane and the sound are encoded by in-process AV1 and
+    /// FLAC encoders. The alpha plane's key frames are forced onto the picture's, and the run checks that the two
+    /// came out in lock step before muxing. Fully transparent pixels take the colour of the nearest visible one
+    /// (<see cref="Encoding.AuthoringVideoSettings.FillTransparentPixels" />). Scaling, a frame rate, a colour
+    /// grade and turning a rotated source upright need an FFmpeg prepare pass, so they need the ffmpeg engine;
+    /// on any other engine such a request is refused. Playing the sound needs a CodeBrix.Audio.Core whose shared
+    /// output serves the <c>flac</c> packet codec.
     /// </para>
     /// </remarks>
     Master = 2,

@@ -149,6 +149,50 @@ public static class FfMetadataChapters
         return ordered;
     }
 
+    /// <summary>
+    /// Reads the file-level <c>title=</c> of a chapter file - the one in front of the first section, which FFmpeg
+    /// carries into a file it muxes as the media's title - or null when it has none.
+    /// </summary>
+    /// <param name="path">The path of the metadata file.</param>
+    /// <returns>The title, unescaped, or null.</returns>
+    /// <exception cref="ArgumentException"><paramref name="path" /> is null or blank.</exception>
+    /// <exception cref="FileNotFoundException">There is no file at that path.</exception>
+    internal static string ReadGlobalTitle(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) throw new ArgumentException("A file path is required.", nameof(path));
+        if (!File.Exists(path)) throw new FileNotFoundException($"There is no chapter file at '{path}'.", path);
+
+        return ParseGlobalTitle(File.ReadAllText(path, Encoding.UTF8));
+    }
+
+    /// <summary>Parses the file-level <c>title=</c> out of chapter metadata text.</summary>
+    /// <param name="text">The whole contents of a metadata file.</param>
+    /// <returns>The title, unescaped, or null when the text has none in front of its first section.</returns>
+    internal static string ParseGlobalTitle(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return null;
+
+        string title = null;
+        foreach (string rawLine in text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n'))
+        {
+            string line = rawLine.Trim();
+            if (line.Length == 0 || line[0] == ';' || line[0] == '#') continue;
+
+            // Everything from the first section on belongs to a chapter or a stream, not to the file.
+            if (line[0] == '[') break;
+
+            int equals = line.IndexOf('=');
+            if (equals <= 0) continue;
+
+            if (string.Equals(line.Substring(0, equals).Trim(), "title", StringComparison.OrdinalIgnoreCase))
+            {
+                title = Unescape(line.Substring(equals + 1));
+            }
+        }
+
+        return title;
+    }
+
     /// <summary>Writes chapters as metadata text, with a millisecond timebase.</summary>
     /// <param name="chapters">The chapters to write.</param>
     /// <returns>The whole contents of a metadata file.</returns>

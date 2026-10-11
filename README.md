@@ -55,7 +55,7 @@ Each package pulls in what it needs automatically; no version pinning is needed 
   as with the playback package alone.
 * `CodeBrix.VideoPlayback.Authoring.MitLicenseForever` pulls in the playback package and
   `CodeBrix.VideoProcessing.MitLicenseForever`, which is how it launches the FFmpeg installed on the machine
-  that runs it.
+  that runs it, and the AV1, FLAC, Vorbis and Opus encoder packages its in-process passes write with.
 
 Add, as your application needs them:
 
@@ -68,6 +68,9 @@ Add, as your application needs them:
 * A playback session with a transport, a clock, A/V sync, seeking, looping, captions and chapters
 * Reading WebM and Matroska files carrying AV1 video with Opus or Vorbis audio, plus any number of text
   caption tracks
+* Writing WebM and Matroska files in managed code - AV1 video, Opus or Vorbis audio, WebVTT captions and
+  chapters, with the index in front of the media - so a CodeBrix Video Mode1 file can be authored where
+  FFmpeg does not exist
 * Reading and writing `.cbv`, the bespoke container, with its index and every caption cue in front of the
   media data
 * Reading and writing `.cbvmaster`, the bespoke container's master form: an optional alpha-plane track beside
@@ -82,7 +85,7 @@ Add, as your application needs them:
 * A managed SIMD converter from planar YUV to BGRA, for when there is no graphics device to do it
 * Colour lookup tables - 1D and 3D, `.cube` reading and writing, and layered chains composed into one
   resultant table
-* Container readers for EBML, Matroska/WebM and `.cbv`, and writers for `.cbv`, IVF and Ogg
+* Container readers for EBML, Matroska/WebM and `.cbv`, and writers for Matroska/WebM, `.cbv`, IVF and Ogg
 * A codec-neutral decoder seam that decoder packages register themselves into
 * A streamable-profile checker that says whether a file really is laid out the way a `.cbv` promises
 
@@ -108,15 +111,26 @@ Add, as your application needs them:
   flavour: one FFmpeg pass for the WebM-profile one, two passes and this repository's own muxer for the
   bespoke one
 * Frame sizes by source, exact size, long side or short side, with rate control and encoder settings
-* A master flavour, `.cbvmaster`: the source's alpha channel as a second, monochrome AV1 track whose key
-  frames are forced onto the picture's, and lossless FLAC sound split into frames by managed code
+* A master flavour, `.cbvmaster`, encoded in process from frames the registered video-processing engine
+  decodes - on any engine, with no FFmpeg encoder involved: the source's alpha channel as a second,
+  monochrome AV1 track whose key frames are forced onto the picture's, fully transparent pixels filled with
+  the colour of the nearest visible one, and lossless FLAC sound
+* The bespoke flavour encoded in process too, on request or when FFmpeg is not available: AV1 and Vorbis
+  from the in-process encoders, with the same captions, chapters and container
+* The WebM-profile flavour - CodeBrix Video Mode1 - encoded and muxed in process too, on request or when
+  FFmpeg is not available: AV1 and Opus from the in-process encoders and the file written by this
+  repository's own WebM muxer, with WebVTT captions, chapters in every title language, the index in front
+  and the streamable-profile check, so a Mode1 file can be authored where FFmpeg does not exist
+* An optional FFmpeg prepare pass for in-process runs that need scaling, a frame rate, a colour grade or
+  rotation
 * Device-class presets, applied to a request in one call
 * A colour grade baked from a chain of `.cube` tables with the same composer the presenter uses
-* A dry run that renders every command line without running anything
+* A dry run that renders every command line - and every in-process pass's settings - without running
+  anything
 * A streamable-profile report over the finished file
 * Refusing, before any process starts, what would not play or would not encode: Opus in a bespoke file,
-  anything but FLAC in a master file, SubRip in a WebM-profile file, a Vorbis bit rate outside the encoder's
-  band, a malformed language tag
+  anything but FLAC in a master file, SubRip in a WebM-profile file, Vorbis or surround Opus in a WebM file
+  encoded in process, a Vorbis bit rate outside the encoder's band, a malformed language tag
 
 ## Decoders
 

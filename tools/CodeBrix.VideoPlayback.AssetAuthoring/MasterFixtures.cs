@@ -83,7 +83,7 @@ internal static class MasterFixtures
                 Console.WriteLine(
                     name + "  " + result.SizeInBytes.ToString("N0", CultureInfo.InvariantCulture) + " bytes");
                 foreach (string note in result.Notes) Console.WriteLine("    note: " + note);
-                foreach (AuthoringCommand command in result.Commands) Console.WriteLine("    [" + command.Label + "] ffmpeg " + command.Arguments);
+                foreach (AuthoringCommand command in result.Commands) Console.WriteLine("    [" + command.Label + "] " + command);
             }
 
             return 0;

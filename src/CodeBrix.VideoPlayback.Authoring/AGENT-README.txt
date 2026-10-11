@@ -19,12 +19,31 @@ master flavour, with the source's ALPHA CHANNEL and LOSSLESS sound.
        can decode)           and the sound; CodeBrix   the bespoke CBVF)
                              for the container)
 
+    your source video ─► CbvAuthor.Write(request) ─► clip.cbv
+      (anything the         (Video.Encoder =          (WebM-profile with
+       registered engine     Av1Package: the engine    Opus, or bespoke -
+       can decode)           decodes; CodeBrix         the same files,
+                             encodes AND muxes, in     no ffmpeg encoder)
+                             process)
+
+    your source video ─► CbvAuthor.Write(request) ─► clip.cbvmaster
+      (anything the         (the registered engine    (the master CBVF:
+       registered engine     decodes; CodeBrix         alpha + FLAC)
+       can decode)           encodes and muxes, in
+                             process)
+
 THIS IS A DEVELOPER-MACHINE LIBRARY, AND THAT IS NOT A DISCLAIMER - IT IS THE
-DESIGN. It launches ffmpeg as a child process, so it expects an encoder to be
-sitting on the machine. An application that PLAYS video needs none of that: it
-needs CodeBrix.VideoPlayback, a decoder package and, optionally, a presenter.
-Put this package in your build tool, your asset pipeline, your content-authoring
-utility - never in the thing you ship to a customer.
+DESIGN. Its WebM-profile and bespoke flavours launch ffmpeg as a child process,
+so they expect an encoder to be sitting on the machine. (The master flavour is
+the exception: it decodes through whichever video-processing engine the
+application registered and encodes in process, so it also runs where there is
+no ffmpeg - see THE MASTER FLAVOUR. The other two flavours do the same with
+Video.Encoder = Av1Package, or when ffmpeg is not there - see THE BESPOKE
+FLAVOUR IN PROCESS and THE WEBM-PROFILE FLAVOUR IN PROCESS.) An application that PLAYS video needs
+none of that: it needs CodeBrix.VideoPlayback, a decoder package and,
+optionally, a presenter. Put this package in your build tool, your asset
+pipeline, your content-authoring utility - never in the thing you ship to a
+customer.
 
 WHAT IT ACTUALLY DOES, AND WHY THE SHAPE IS WHAT IT IS
 
@@ -34,12 +53,15 @@ WHAT IT ACTUALLY DOES, AND WHY THE SHAPE IS WHAT IT IS
     which it has. They share a REQUEST here for the same reason: almost every
     decision - the encoder, the frame size, the rate, the captions, the
     chapters - means the same thing either way, and the handful that do not are
-    named where they differ.
+    named where they differ. The bespoke flavour can also be encoded IN
+    PROCESS - see THE BESPOKE FLAVOUR IN PROCESS.
 
   * AND A THIRD FLAVOUR FOR MASTERS. VideoAuthoringFlavour.Master writes the
     bespoke container in its version-1 form, ".cbvmaster" ("CodeBrix Video
-    Mode3"): the bespoke flavour's picture, plus an ALPHA-PLANE track when the
-    source has an alpha channel, plus FLAC sound. See THE MASTER FLAVOUR.
+    Mode3"): an AV1 picture, plus an ALPHA-PLANE track when the source has an
+    alpha channel, plus FLAC sound - all encoded IN PROCESS from frames and
+    samples the registered video-processing engine decodes, on any engine.
+    See THE MASTER FLAVOUR.
 
   * ONE FFMPEG PASS, OR TWO AND A MUX. The WebM-profile flavour is a single
     ffmpeg command: pixels, sound and every caption file go in together and
@@ -48,19 +70,26 @@ WHAT IT ACTUALLY DOES, AND WHY THE SHAPE IS WHAT IT IS
     an IVF wrapper, the sound as an Ogg stream - which the playback library's
     own managed muxer then turns into a CBVF file together with the caption and
     chapter text. The temporary files are deleted whether the run succeeded or
-    failed.
+    failed. Both can instead be encoded IN PROCESS, the WebM-profile file then
+    written by the playback library's own managed WebM muxer - see THE
+    WEBM-PROFILE FLAVOUR IN PROCESS.
 
   * ONE TOOL, AND ONLY ONE. FFmpeg (ffmpeg and ffprobe) is the only thing that
     has to be installed. Not mkvtoolnix, not a dav1d command-line tool, not
     Python, not anything else. Everything past the encoder is CodeBrix code.
     That is a rule of this program, not an accident of the current version, and
-    a step that needed a second tool would be a step designed wrong.
+    a step that needed a second tool would be a step designed wrong. The
+    master flavour needs even less: ffmpeg only as the desktop engine that
+    decodes its source (and for its optional prepare pass), and nothing at all
+    on an engine of its own.
 
   * A DRY RUN THAT TOUCHES NOTHING. RenderCommands returns the exact command
     lines a request would execute, without running them, without reading the
     source, and without writing a temporary file. It works on a machine with no
     ffmpeg at all. That is what makes the arguments TESTABLE, and it is what
-    lets a pipeline show its work before it spends an hour encoding.
+    lets a pipeline show its work before it spends an hour encoding. A master
+    request's in-process passes are listed as settings lines (see THE MASTER
+    FLAVOUR).
 
   * IT JUDGES WHAT IT WROTE. Every authored file is read back and checked
     against the streamable-profile rules that live in the playback library -
@@ -68,12 +97,20 @@ WHAT IT ACTUALLY DOES, AND WHY THE SHAPE IS WHAT IT IS
     result. By default a file that does not pass is a failure.
 
   * IT TELLS YOU WHAT IT COULD NOT KEEP. Two things do not survive the
-    WebM-profile flavour, and neither is papered over: per-language chapter
-    titles and the hearing-impaired caption flag. See THE TWO ASYMMETRIES.
+    WebM-profile flavour when ffmpeg writes it, and neither is papered over:
+    per-language chapter titles and the hearing-impaired caption flag. See THE
+    TWO ASYMMETRIES. (Written in process, that flavour keeps both.)
 
-Package references: the playback core, and CodeBrix.VideoProcessing. There is
-never a third. No SkiaSharp, no codec package, no Opus: this library writes
-files, it does not play them or draw them.
+Package references: the playback core; CodeBrix.VideoProcessing (the ffmpeg
+command lines, and the desktop engine); CodeBrix.VideoProcessing.Core (the
+engine-neutral contract the in-process passes decode through); and the four
+ENCODER packages the in-process passes write with - CodeBrix.VideoEncoding.Av1
+(picture and alpha plane), CodeBrix.Audio.FlacWriter (the master flavour's
+lossless sound), CodeBrix.Audio.Vorbis (the bespoke flavour's sound when it is
+encoded in process) and CodeBrix.Audio.Opus, for its ENCODER only (the
+WebM-profile flavour's sound when it is encoded in process). No SkiaSharp, no
+decoder, no presenter, and nothing is ever registered for playback: this library
+writes files, it does not play them or draw them.
 
 Target framework: .NET 10 or later. License: MIT.
 
@@ -86,9 +123,11 @@ Or in a project file:
 
     <PackageReference Include="CodeBrix.VideoPlayback.Authoring.MitLicenseForever" Version="*" />
 
-That pulls in CodeBrix.VideoPlayback (and, through it, CodeBrix.Audio.Core) and
-CodeBrix.VideoProcessing. Then install FFMPEG on the machine that will run the
-authoring, built with the encoders you intend to name:
+That pulls in CodeBrix.VideoPlayback (and, through it, CodeBrix.Audio.Core),
+CodeBrix.VideoProcessing, CodeBrix.VideoProcessing.Core, and the AV1, FLAC,
+Vorbis and Opus encoder packages (which carry their own encoders for every
+supported platform - nothing to install for them). Then install FFMPEG on the
+machine that will run the authoring, built with the encoders you intend to name:
 
     sudo apt install ffmpeg          (a Debian-based machine)
     ffmpeg -encoders | grep -E 'libsvtav1|libaom-av1|libopus|libvorbis'
@@ -132,6 +171,8 @@ duplicates:
     using CodeBrix.VideoPlayback.Captions;            // CaptionTrackFlags
     using CodeBrix.VideoPlayback.Containers;          // StreamableProfileReport
     using CodeBrix.VideoPlayback.Containers.Cbv;      // CbvAuthoringResult (the mux summary)
+    using CodeBrix.VideoPlayback.Containers.Matroska; // MatroskaAuthoringResult (the in-process
+                                                      //   WebM-profile mux summary)
 
 
 CORE API REFERENCE
@@ -143,10 +184,16 @@ CbvAuthor (static) - the whole front door
         The dry run. Validates the request, resolves the colour-grade chain to
         the one file ffmpeg would look up, and renders the command lines. Reads
         nothing, writes nothing, needs no ffmpeg. One command for a WebM-profile
-        file, two for a bespoke one (one when its audio is left out).
+        file, two for a bespoke one (one when its audio is left out). A master
+        file lists its in-process passes as settings lines, preceded by the
+        ffmpeg prepare pass when the request needs one - see THE MASTER FLAVOUR;
+        so does a bespoke or WebM-profile file encoded in process, the latter
+        with its mux listed last - see THE WEBM-PROFILE FLAVOUR IN PROCESS.
 
     VideoAuthoringResult Write(VideoAuthoringRequest request)
-        The real run. Validates, checks that ffmpeg is there, composes the grade
+        The real run. Validates, checks that ffmpeg is there (for a master file,
+        or any file encoded in process: that an engine is there - see THE MASTER
+        FLAVOUR), composes the grade
         chain if it needs composing, encodes, muxes where muxing is needed,
         deletes every temporary file, reads the finished file back and checks it
         against the streamable profile. It watches request.CancellationToken
@@ -163,7 +210,9 @@ CbvAuthor (static) - the whole front door
         The same check, plus one warning per encoder this library can ask for
         that the build does not have - libsvtav1, libaom-av1, libopus,
         libvorbis - each saying what will fail and what to do about it. A
-        missing encoder never makes the check fail or throw.
+        missing encoder never makes the check fail or throw. The master flavour
+        asks the installed ffmpeg for no encoder at all, so nothing here is
+        about it.
 
   Everything throws VideoAuthoringException, which derives from the playback
   library's VideoPlaybackException, so one catch covers the family. Every message
@@ -287,7 +336,9 @@ VideoAuthoringRequest - one file's worth of decisions
 
 AuthoringVideoSettings - the picture
 -------------------------------------
-    AuthoringVideoEncoder Encoder            LibSvtAv1 (default) | LibAomAv1
+    AuthoringVideoEncoder Encoder            LibSvtAv1 (default) | LibAomAv1 |
+                                             Av1Package (bespoke and
+                                             WebM-profile: in process)
     int SpeedPreset                          0..13; 6 by default
     int ConstantRateFactor                   0..63; 30 by default
     AuthoringFrameSize FrameSize             Source by default
@@ -298,9 +349,12 @@ AuthoringVideoSettings - the picture
     bool AutoRotate                          true by default
     IList<AuthoringLutInput> Luts            the colour grade, in order
     string ComposedLutPath                   keep the effective table here
-    string TrackName                         bespoke and master flavours only
+    string TrackName                         bespoke and master flavours, and
+                                             the WebM-profile one in process
     AuthoringAlphaMode Alpha                 Auto (default) | Include | Exclude;
                                              master flavour only
+    bool FillTransparentPixels               true by default; master flavour
+                                             with alpha only
     int? AlphaConstantRateFactor             null = six below ConstantRateFactor
 
     const string PixelFormat = "yuv420p"     NOT a setting - see below
@@ -358,6 +412,15 @@ AuthoringAudioSettings - the sound
     string Language                          a well-formed BCP 47 tag, or null
     string Name                              a menu name, or null
     int FlacBitDepth                         16 (default) or 24; master only
+
+  IN PROCESS, THE WEBM-PROFILE FLAVOUR'S SOUND IS OPUS AT 48000 Hz, MONO OR
+  STEREO. BitrateKilobitsPerSecond means what -b:a means to libopus: the target
+  of the whole stream, all channels together, variable bit rate, complexity 10,
+  general audio. SampleRateHz is not used for Opus (it codes at 48000 Hz; the
+  result says so when another rate was asked for), and more than two Channels
+  is refused there. Vorbis in a WebM document is refused in process - Mode1 is
+  WebM with Opus - and allowed in a Matroska document (Container = Matroska),
+  with the bespoke flavour's Vorbis rules.
 
   DEFAULT RESOLVES PER FLAVOUR: Opus for a WebM-profile file, which is what the
   wider world expects of a WebM, Vorbis for a bespoke one, which is the
@@ -535,7 +598,11 @@ VideoAuthoringResult - what came out
                                              after any AV1 fallback rewrite
     StreamableProfileReport Profile          null when validation was switched off
     bool PassesProfile
-    CbvAuthoringResult Mux                   bespoke only; frame and packet counts
+    CbvAuthoringResult Mux                   bespoke and master; frame and
+                                             packet counts
+    MatroskaAuthoringResult MatroskaMux      WebM-profile in process only:
+                                             tracks, clusters, cue points,
+                                             chapters, the muxer's own notices
     IReadOnlyList<string> Notes              what could not be kept, and what
                                              the source had that was left behind
     string ComposedLutTitle                  int ComposedLutSize
@@ -561,46 +628,110 @@ DeviceClassPresets - starting numbers, not limits
 
 THE MASTER FLAVOUR (.cbvmaster, "CodeBrix Video Mode3")
 =======================================================
-A master file is the bespoke container at format version 1. Three passes, then
-the same managed muxer:
+A master file is the bespoke container at format version 1. It is written IN
+PROCESS: the source is DECODED through the video-processing engine the
+application registered (VideoProcessors in CodeBrix.VideoProcessing.Core - the
+desktop ffmpeg engine when it registered none; the library never registers one
+itself), and ENCODED by the AV1 and FLAC encoder packages this library
+references. Up to four passes, then the same managed muxer:
 
-  1. THE VIDEO PASS - exactly the bespoke flavour's, unchanged: AV1 (libsvtav1,
-     or libaom-av1 by request or through the fallback) into an IVF.
-  2. THE ALPHA PASS - only when the file carries alpha. The source's alpha
-     channel, through the SAME scale, frame rate and rotation as the video pass
-     (no colour grade - it is opacity, not colour), then
-     format=yuva420p,alphaextract,format=gray, encoded by libaom-av1 - which,
-     given gray input, writes a MONOCHROME AV1 sequence header - at FULL range
-     (-color_range pc), with -usage realtime and its key frames FORCED onto the
-     video pass's own (-force_key_frames with each key frame's time less half a
-     frame, -g and -keyint_min far beyond any clip so libaom adds none of its
-     own). Its rate factor is AlphaConstantRateFactor, by default six below the
-     picture's: an error in an edge shows more in the alpha than in the colour.
-     Afterwards both IVFs are read back and compared frame for frame - count,
-     timestamps, key frames - and a mismatch fails the run with the frame that
-     differs; nothing is written.
-  3. THE AUDIO PASS - ffmpeg's native flac encoder into a .flac file (s16, or
-     s32 with -bits_per_raw_sample 24 for FlacBitDepth = 24), which a managed
-     FLAC frame scanner then splits into the stream header and one packet per
-     frame. A boundary is accepted only when the next frame's header CRC-8, its
-     stream parameters and its frame number all agree AND the frame it closes
-     passes its CRC-16, so nothing is ever cut in the middle of compressed
-     audio. The header keeps STREAMINFO and the comment block and drops the
-     padding.
+  0. THE PREPARE PASS - ffmpeg, and only when it is needed. The engine delivers
+     the source's frames as they are stored, so anything that RESHAPES them is
+     done first by one ffmpeg command writing a LOSSLESS intermediate (FFV1 in
+     Matroska, yuva420p when alpha is carried, yuv420p otherwise, no sound)
+     through the same filter chain the bespoke flavour uses - scale, fps,
+     lut3d, then format. It runs when the request sets ANY of:
+         Video.FrameSize       (anything but Source)
+         Video.FrameRate       (above 0, in either FrameRateMode)
+         Video.Luts            (a grade that is not empty)
+         Video.AutoRotate      (true, and the source carries a rotation)
+     and never otherwise: a request that needs none of them reads the source
+     directly. The intermediate is large; it lives in TemporaryFolder and is
+     deleted like every other intermediate. THE PREPARE PASS EXISTS ONLY WITH
+     THE FFMPEG ENGINE: on any other engine such a request is REFUSED up front
+     with one message naming the settings, because there the master flavour
+     encodes the source exactly as it is decoded (set AutoRotate = false to
+     author a rotated source as stored).
+  1. THE VIDEO PASS - the picture as 8-bit 4:2:0 AV1 into an IVF: good-quality
+     usage, cq-level = Video.ConstantRateFactor (the same 0..63 number ffmpeg's
+     -crf hands libaom), cpu-used = Video.SpeedPreset capped at 8, at most
+     KeyframeIntervalFrames between key frames, colour tags from the source.
+     Video.Encoder and AllowAv1EncoderFallback do not apply. When the file
+     carries alpha, FULLY transparent pixels first take the colour of the
+     nearest visible one (see THE TRANSPARENT-PIXEL FILL). 4:2:0 AV1 needs EVEN
+     dimensions: an odd last column and/or row is CROPPED away (never
+     resampled) - in the alpha pass too, so both planes stay the same size - and
+     result.Notes says exactly what was cropped. (A picture 1 pixel wide or high
+     is refused.) Set FrameSize on the ffmpeg engine to choose the size instead.
+  2. THE ALPHA PASS - only when the file carries alpha. The source is decoded a
+     SECOND time and its alpha channel encoded as a MONOCHROME, FULL-range AV1
+     stream at AlphaConstantRateFactor (by default six below the picture's: an
+     error in an edge shows more in the alpha than in the colour), in realtime
+     usage with no key frame of the encoder's own and a key frame FORCED on
+     exactly the frames that are key frames in the picture. The frame counts
+     and key frames are compared before muxing, and the muxer checks again; a
+     mismatch fails the run naming the frame, and nothing is written.
+  3. THE AUDIO PASS - the source's first sound stream, decoded by the engine at
+     Audio.SampleRateHz and Audio.Channels and encoded as lossless FLAC at
+     FlacBitDepth (16 or 24), one packet per FLAC frame, straight into the
+     muxer. The stream header is checked before it is stored: "fLaC", a
+     34-byte STREAMINFO first, the last-block flag on the last block, and the
+     final sample count. A 16-bit source comes out sample for sample.
+
+THE DRY RUN of a master request lists one AuthoringCommand per pass. The
+prepare pass, when the request's own settings need it, is a real ffmpeg command
+(RunsFFmpeg = true). The in-process passes have RunsFFmpeg = false and an
+Arguments string that is a SETTINGS LINE, always in this shape:
+    video  av1 i420 8-bit <size> good-quality cq-level <crf> cpu-used <n>
+           keyint <frames|auto>[ fill-transparent-pixels] <- <input> -> <ivf>
+    alpha  av1 gray 8-bit <size> full-range realtime cq-level <crf>
+           cpu-used <n> key-frames-of-video-pass
+           <- <input|fully-opaque-plane> -> <ivf>
+<size> in a dry run is "size WxH" when Video.FrameSize is Exact and otherwise
+"size decoded-cropped-to-even" (a dry run reads no source); in result.Commands
+it is the size really encoded, "size 128x72", plus " cropped-from 129x73" when
+an odd size was cropped.
+    audio  flac <16|24>-bit <rate> Hz <n> channel(s) compression-level 5
+           <- <source> -> packets
+<input> is the source, or the prepared intermediate when there is a prepare
+pass. result.Commands holds the same objects for what REALLY ran; it differs
+from the dry run only where the source decided: Auto finding no alpha (no alpha
+pass, no fill), a rotated source (a prepare pass the dry run could not see),
+and Include on a source without alpha (the alpha pass reads nothing). Progress
+for the in-process passes is reported from frames and samples counted, with or
+without SourceDuration.
+
+THE TRANSPARENT-PIXEL FILL - Video.FillTransparentPixels (true by default):
+  Alpha is stored straight, not premultiplied, so the colour under a fully
+  transparent pixel is still in the picture, and a player that scales or
+  filters mixes it into the visible pixels beside it. Left as most tools leave
+  it - usually black - it shows as a dark fringe around a soft edge. Filled,
+  every pixel whose alpha is 0 takes the colour of the NEAREST pixel whose
+  alpha is above 0 (chessboard distance; one breadth-first flood from every
+  visible pixel, fixed neighbour order, so every run gives the same picture).
+  Partly transparent pixels keep their colour; the alpha plane is never
+  touched; a frame with nothing visible is left alone; a chroma sample changes
+  only when all four pixels it covers are fully transparent. Set it false to
+  keep the source's colour there. It does nothing without alpha.
 
 WHETHER IT CARRIES ALPHA - Video.Alpha:
-    Auto      carry alpha when ffprobe reports a pixel format with an alpha
-              channel (yuva*, rgba, bgra, argb, abgr, gbrap*, ya*); otherwise
-              leave it out and say so in the result's notes
+    Auto      carry alpha when the engine describes the source's picture as
+              having an alpha channel (the ffmpeg engine: yuva*, rgba, bgra,
+              argb, abgr, gbrap*, ya* pixel formats, and a VP8/VP9 WebM whose
+              alpha rides alongside); otherwise leave it out and say so in the
+              result's notes
     Include   always; a source with no alpha yields a fully opaque plane
     Exclude   never; the file plays like a Mode2 file with lossless sound
-  A VP8/VP9 WebM whose alpha rides in BlockAdditions reports a plain pixel
-  format, so Auto leaves it out - set Include for such a source.
+  An engine that cannot deliver alpha at all leaves Auto opaque (with a note)
+  and refuses Include on a source that has alpha.
 
-WHAT IT NEEDS. ffmpeg with libaom-av1 (whose gray input must produce a
-monochrome stream - TryVerifyTools checks that with a one-frame probe and warns
-when it does not) for the alpha pass, and the native flac encoder for the sound.
-A missing one is a WARNING from TryVerifyTools, never a failure of the check.
+WHAT IT NEEDS. An engine. On the desktop with no engine registered that is the
+ffmpeg engine, which needs ffmpeg and ffprobe - and nothing else: no particular
+encoder in the ffmpeg build, because nothing is encoded by ffmpeg. On an engine
+of its own (Android's), nothing to install at all. The AV1 and FLAC encoders
+travel inside their packages. With the ffmpeg engine the source is also probed
+for subtitle streams and chapters of its own, as in the other flavours; on
+another engine that check is skipped and the result says so.
 
 WHAT PLAYING IT NEEDS. The AV1 decoder package as usual - the alpha plane is an
 ordinary monochrome AV1 stream - and, for the sound, a CodeBrix.Audio.Core whose
@@ -610,20 +741,117 @@ presents premultiplied BGRA with real opacity.
 THE EXTENSION is ".cbvmaster" by convention; any other name earns a note, and
 the file plays either way because readers sniff the content.
 
-A KNOWN DIFFERENCE OF THIS FFMPEG BRIDGE. A master file is meant to carry, in
-fully transparent pixels, the colour of the nearest opaque pixel, so that
-scaling and filtering never bleed a meaningless colour (usually black) into a
-soft edge. FFmpeg has no filter for that, so this bridge does NOT do it: the
-colour under fully transparent pixels is whatever the source had there. It will
-be done when authoring moves to managed encoding. Until then, a source whose
-transparent pixels are black can show a faint dark fringe on soft edges when it
-is scaled.
+AN RGB SOURCE ON THE FFMPEG ENGINE. The ffmpeg engine describes the picture it
+delivers from an RGB source (PNG or other RGBA codecs in a .mov, for example)
+with the source's RGB colour matrix, although what it delivers is 4:2:0 YUV.
+That cannot be tagged correctly, so the run - any in-process run, master or
+bespoke - is refused with a message saying so. Convert such a source to YUV
+first:
+    ffmpeg -i in.mov -c:v ffv1 -pix_fmt yuva420p -c:a copy in.mkv
 
-A LIMIT TO KNOW ABOUT. The forced key-frame list is one command-line argument
-with one entry per key frame. On Windows, where a command line is limited to
-32,767 characters, a very long clip with very frequent key frames can exceed it;
-a key-frame interval of a second or more keeps that out of reach for any clip
-under several hours.
+
+THE BESPOKE FLAVOUR IN PROCESS (Video.Encoder = AuthoringVideoEncoder.Av1Package)
+==================================================================================
+  A bespoke ".cbv" can be written without any ffmpeg ENCODER: the picture by the
+  in-process AV1 encoder and the sound by the in-process Vorbis encoder, from
+  frames and samples the registered engine decodes - the master flavour's
+  machinery, without alpha and without the fill. The result is the same kind of
+  Mode2 file (Vorbis sound, captions and chapters exactly as on the ffmpeg
+  path), so it plays with the same packages. An odd-sized source is cropped to
+  even exactly as in the master flavour, with the same note.
+  THE RULE:
+    Av1Package               ALWAYS in process.
+    LibSvtAv1 / LibAomAv1    ffmpeg command lines when the ffmpeg engine is the
+                             one in use and ffmpeg can be run; otherwise - a
+                             non-ffmpeg engine registered (Android), or no
+                             ffmpeg - IN PROCESS, with a note in result.Notes
+                             saying what was asked for and what ran.
+  THE TRADE-OFF: the in-process AV1 encoder is the same reference encoder
+  ffmpeg names libaom-av1, which is slower than libsvtav1 on a desktop, and
+  the same rate factor does not give identical quality. The scale is the
+  same - ConstantRateFactor is the encoder's cq-level - and the speed is
+  cpu-used = SpeedPreset capped at 8. The same prepare-pass rule applies
+  (FrameSize, FrameRate, Luts, AutoRotate on a rotated source need the ffmpeg
+  engine, and are refused on any other). Vorbis settings mean what they mean to
+  libvorbis: VorbisQuality q is Vorbis quality q / 10, otherwise
+  BitrateKilobitsPerSecond is the nominal bit rate, and the same bit-rate bands
+  are refused up front. The dry run lists the passes as settings lines:
+    video  av1 i420 8-bit <size> good-quality cq-level <crf> cpu-used <n>
+           keyint <frames|auto> <- <input> -> <ivf>
+    audio  vorbis <quality q|N kbit/s> <rate> Hz <n> channel(s)
+           <- <source> -> <ogg>
+  A dry run decides the path from the registered engine alone (it runs
+  nothing); only a real run can find that ffmpeg is missing, and says so in its
+  notes and commands. The WebM-profile flavour follows the same rule - see the
+  next section.
+
+
+THE WEBM-PROFILE FLAVOUR IN PROCESS (Mode1 without ffmpeg)
+==========================================================
+  A WebM-profile file - CodeBrix Video Mode1, WebM with AV1 and Opus - can be
+  written without ffmpeg at all: the picture by the in-process AV1 encoder, the
+  sound by the in-process Opus encoder, and the CONTAINER by the playback
+  library's own managed WebM muxer (MatroskaMuxer), from frames and samples the
+  registered engine decodes. It runs anywhere an engine does - Android
+  included.
+  THE RULE is the bespoke flavour's:
+    Av1Package               ALWAYS in process.
+    LibSvtAv1 / LibAomAv1    the one ffmpeg pass when the ffmpeg engine is the
+                             one in use and ffmpeg can be run; otherwise IN
+                             PROCESS, with a note in result.Notes saying what
+                             was asked for and what ran.
+  THE PASSES - [prepare] -> video -> [audio] -> mux:
+    prepare  ffmpeg, only for FrameSize, FrameRate, Luts or AutoRotate on a
+             rotated source, and only on the ffmpeg engine - the same rule, the
+             same refusal on any other engine, as the master flavour.
+    video    the bespoke in-process video pass: 8-bit 4:2:0 AV1, cq-level =
+             ConstantRateFactor, cpu-used = SpeedPreset capped at 8, at most
+             KeyframeIntervalFrames between key frames; an odd last column or
+             row is cropped, with the same note.
+    audio    the source's first sound stream decoded at 48000 Hz in
+             Audio.Channels and encoded as Opus at BitrateKilobitsPerSecond
+             (see AuthoringAudioSettings). Handed to the muxer as packets: the
+             OpusHead as the track's codec-private data, the first packet at
+             zero, the encoder's pre-skip as the track's CodecDelay, the
+             padding at the end as the last block's DiscardPadding. In a
+             Matroska document that asks for Vorbis, the bespoke Vorbis pass
+             instead, into an Ogg file.
+    mux      MatroskaMuxer.Write: document type webm (or matroska with
+             Container = Matroska), the caption tracks with their language,
+             name and flags, the chapters, the index in front (CuesToFront),
+             and the streamable profile judged on the finished file when
+             ValidateProfile is set - FailWhenProfileFails then refuses a file
+             that does not pass, exactly as on the ffmpeg path.
+  THE DRY RUN lists them as settings lines:
+    video  av1 i420 8-bit <size> good-quality cq-level <crf> cpu-used <n>
+           keyint <frames|auto> <- <input> -> <ivf>
+    audio  opus <N> kbit/s 48000 Hz <n> channel(s) vbr complexity 10
+           <- <source> -> packets
+           (or the bespoke "vorbis ..." line, in a Matroska document)
+    mux    mux <webm|matroska> <cues-to-front|cues-at-end> <n> caption track(s)
+           <chapters <path>|no chapters> <- <ivf>[ + packets| + <ogg>]
+           -> <output>
+  result.Commands holds what really ran, result.MatroskaMux the muxer's own
+  summary (result.Mux is null), and result.Profile the muxer's profile report.
+  WHAT DIFFERS FROM THE FFMPEG PASS:
+    * Every chapter title's translation is KEPT, and the hearing-impaired flag
+      survives (the codec identifier D_WEBVTT/CAPTIONS and the flag element),
+      so neither of THE TWO ASYMMETRIES applies and no note is added for them.
+    * The file's title is the chapter file's own file-level "title=" line, as
+      the ffmpeg pass's -map_metadata makes it; nothing else of the source's
+      metadata is copied. CopySourceMetadata has no in-process meaning, and
+      the result says so when it is set.
+    * The source's FIRST video and FIRST audio stream are read, which is what
+      SelectStreamsExplicitly = true asks of ffmpeg; setting it false has no
+      in-process meaning, and the result says so.
+    * Audio.Language and Audio.Name, and Video.TrackName, are written onto
+      their tracks.
+    * Captions are WebVTT only, as on the ffmpeg pass.
+  WHAT IT NEEDS: an engine (on the desktop with none registered, the ffmpeg
+  engine - ffmpeg and ffprobe, no particular encoder). The AV1 and Opus encoders
+  travel inside their packages; the muxer is managed code.
+  WHAT PLAYING IT NEEDS: exactly what any Mode1 file needs - the AV1 decoder
+  package and CodeBrix.Audio.Opus with CodeBrixAudioOpus.Register().
 
 
 WHAT IS TAKEN FROM THE SOURCE, AND WHAT IS LEFT BEHIND
@@ -675,10 +903,11 @@ says so in the result's Notes rather than letting you find out later.
        title-de=Anfang
        title-fr=Ouverture
 
-   The BESPOKE flavour keeps all three. The WEBM-PROFILE flavour keeps only the
-   untagged one: ffmpeg's Matroska muxer writes a single, unlanguaged chapter
-   title per chapter, so `title-de` and `title-fr` are dropped on the way in.
-   The result carries a note naming the languages that were lost.
+   The BESPOKE flavour keeps all three. The WEBM-PROFILE flavour written by
+   ffmpeg keeps only the untagged one: ffmpeg's Matroska muxer writes a single,
+   unlanguaged chapter title per chapter, so `title-de` and `title-fr` are
+   dropped on the way in. The result carries a note naming the languages that
+   were lost. Written IN PROCESS the WebM-profile flavour keeps all three.
 
    This is a limitation of the container path, not a decision, and it is not
    worked around here. Matroska can express the missing titles as Tags attached
@@ -690,9 +919,11 @@ says so in the result's Notes rather than letting you find out later.
    list never did - so ffmpeg's WebM muxer writes the default and forced flags
    and silently drops that one. The bespoke flavour keeps all three, and so does
    Container = Matroska. Again the result says which tracks it happened to.
+   Written IN PROCESS, a WebM document keeps it: the track's codec identifier
+   becomes D_WEBVTT/CAPTIONS and the flag element is written as well.
 
 If your captions carry an SDH track, or your chapters are multilingual, author
-the BESPOKE flavour.
+the BESPOKE flavour, or the WebM-profile flavour in process.
 
 
 COMPLETE EXAMPLES
@@ -806,6 +1037,24 @@ COMPLETE EXAMPLES
     StreamableProfileReport report = StreamableProfile.EvaluateFile("theirs.webm");
     Console.WriteLine(report);          // the whole report, as cbvinfo prints it
 
+11. A Mode1 WebM with no ffmpeg encoder and no ffmpeg muxer.
+
+    VideoAuthoringRequest request = new VideoAuthoringRequest
+    {
+        SourcePath = "master.mov",          // WebMProfile is the default flavour
+        OutputPath = "clip.webm",
+        ChaptersPath = "chapters.ffmeta",   // its title= line becomes the title
+    };
+
+    request.Video.Encoder = AuthoringVideoEncoder.Av1Package;
+    request.Audio.BitrateKilobitsPerSecond = 96;   // Opus, 48000 Hz, stereo
+    request.Captions.Add(new AuthoringCaptionInput(
+        "en.sdh.vtt", "en", "English SDH", CaptionTrackFlags.HearingImpaired));
+
+    VideoAuthoringResult result = CbvAuthor.Write(request);
+    Console.WriteLine(result.MatroskaMux);   // tracks, clusters, cue points
+    foreach (AuthoringCommand pass in result.Commands) Console.WriteLine(pass);
+
 
 MINIMUM VIABLE PROJECT TEMPLATE
 ===============================
@@ -891,20 +1140,27 @@ COMMON PITFALLS TO AVOID
     SubRip.
 
   * DO NOT EXPECT MULTILINGUAL CHAPTER TITLES OR AN SDH FLAG TO SURVIVE THE
-    WEBM-PROFILE FLAVOUR. See THE TWO ASYMMETRIES. The result's Notes say so
-    every time it happens; read them.
+    WEBM-PROFILE FLAVOUR WHEN FFMPEG WRITES IT. See THE TWO ASYMMETRIES. The
+    result's Notes say so every time it happens; read them.
+
+  * DO NOT ASK FOR VORBIS, OR FOR MORE THAN TWO CHANNELS, IN A WEBM-PROFILE FILE
+    ENCODED IN PROCESS. Mode1 is WebM with Opus, and the in-process Opus encoder
+    codes mono and stereo. Both are refused before anything runs; Vorbis is
+    allowed with Container = Matroska.
 
   * DO NOT ASK FOR ANYTHING BUT FLAC IN A MASTER FILE, OR FOR FLAC ANYWHERE
     ELSE. A master file's sound is lossless by definition; the other two
     flavours promise Opus or Vorbis to every player. Both are refused before
     anything runs.
 
-  * DO NOT EXPECT AUTO TO FIND ALPHA IT CANNOT SEE. Video.Alpha = Auto trusts the
-    pixel format ffprobe reports. A VP8/VP9 WebM carries its alpha in
-    BlockAdditions and reports a plain format; set Include for it.
+  * DO NOT EXPECT AUTO TO FIND ALPHA THE ENGINE CANNOT SEE. Video.Alpha = Auto
+    trusts the engine's description of the source; set Include when you know
+    better.
 
-  * DO NOT EXPECT THE BRIDGE TO FILL TRANSPARENT PIXELS. The colour under fully
-    transparent pixels is whatever the source had there - see THE MASTER FLAVOUR.
+  * DO NOT ASK A NON-FFMPEG ENGINE TO RESHAPE A MASTER. FrameSize, FrameRate,
+    Luts and AutoRotate on a rotated source need the ffmpeg prepare pass; on any
+    other engine the request is refused. Prepare the source beforehand, or
+    author on the desktop.
 
   * DO NOT ASK FOR OPUS IN A BESPOKE FILE. It is refused outright, and not
     because of a switch: a bespoke ".cbv" has to play with the core package and a
@@ -983,8 +1239,8 @@ WHAT THIS PACKAGE DOES NOT DO
     duration - progress reporting - you supply it. FFProbe.Analyse, from the
     video-processing package, is one call away.
 
-  * IT DOES NOT WRITE MULTILINGUAL CHAPTER TITLES INTO A WEBM. See THE TWO
-    ASYMMETRIES.
+  * IT DOES NOT WRITE MULTILINGUAL CHAPTER TITLES INTO A WEBM THROUGH FFMPEG.
+    See THE TWO ASYMMETRIES; the in-process WebM-profile path does write them.
 
 
 WORKING EXAMPLES ON GITHUB
@@ -1018,6 +1274,7 @@ Author a master .cbvmaster            request.Flavour = VideoAuthoringFlavour.Ma
 Force alpha in, or leave it out       Video.Alpha = AuthoringAlphaMode.Include / Exclude
 Raise the alpha plane's quality       Video.AlphaConstantRateFactor = 20
 24-bit lossless sound                 Audio.FlacBitDepth = 24
+Keep the colour under transparency    Video.FillTransparentPixels = false
 See the command without running it    CbvAuthor.RenderCommands(request)
 Check ffmpeg is installed             CbvAuthor.TryVerifyTools(out string problem)
 Check its encoders as well            CbvAuthor.TryVerifyTools(out problem, out warnings)
@@ -1029,6 +1286,10 @@ Pin the frame rate                    Video.FrameRate = 30
 Drop frames before the grade          Video.FrameRateMode = AuthoringFrameRateMode.Filter
 Make scrubbing quick                  Video.KeyframeIntervalFrames = 60
 Use the reference encoder             Video.Encoder = AuthoringVideoEncoder.LibAomAv1
+Author a bespoke .cbv in process      Video.Encoder = AuthoringVideoEncoder.Av1Package
+Author a WebM (Mode1) with no ffmpeg  Video.Encoder = AuthoringVideoEncoder.Av1Package
+  encoder and no ffmpeg muxer           (Flavour WebMProfile, the default)
+See the in-process WebM mux summary   result.MatroskaMux
 Bake one colour grade                 Video.Luts.Add(new AuthoringLutInput(path))
 Bake a chain, dialled back            Video.Luts.Add(new AuthoringLutInput(path, 40))
 Keep the table it was graded with     Video.ComposedLutPath = "grades/intro.cube"
@@ -1041,6 +1302,7 @@ Refuse anything needing Opus          request.RequireNoExtraPlaybackPackages = t
 Author a deliberate non-profile file  Container = Matroska; CuesToFront = false;
                                         FailWhenProfileFails = false
 Report progress                       SourceDuration + ProgressCallback
+                                        (master: ProgressCallback alone)
 Stop a run in progress                request.CancellationToken = source.Token
 See what could not be kept            result.Notes
 See the profile report                result.Profile

@@ -1,10 +1,10 @@
 THIRD-PARTY SOFTWARE NOTICES AND INFORMATION
 
-CodeBrix.VideoPlayback is a video playback library for .NET: it reads WebM,
-Matroska and .cbv containers carrying AV1 video with Opus or Vorbis audio,
-exposes a codec-neutral decoder seam, pools decoded frames, presents them to
-whatever draws, and converts them to BGRA on the CPU when no graphics device is
-doing it. This repository produces TWO MORE ASSEMBLIES beside it:
+CodeBrix.VideoPlayback is a video playback library for .NET: it reads and
+writes WebM, Matroska and .cbv containers carrying AV1 video with Opus or Vorbis
+audio, exposes a codec-neutral decoder seam, pools decoded frames, presents them
+to whatever draws, and converts them to BGRA on the CPU when no graphics device
+is doing it. This repository produces TWO MORE ASSEMBLIES beside it:
 CodeBrix.VideoPlayback.Skia, which draws those frames through SkiaSharp, and
 CodeBrix.VideoPlayback.Authoring, a developer-machine library that WRITES the
 files the first one reads. This file ships inside all three packages.
@@ -35,6 +35,9 @@ The specifications used, all of them public documents:
   AV1 Codec ISO Media File Format Binding, Alliance for Open Media
                (the AV1CodecConfigurationRecord, "av1C")
   WebM Container Guidelines, the WebM Project
+  WebVTT in WebM, the WebM Project
+               (the D_WEBVTT codec identifiers and the cue block layout:
+               identifier, settings, then the cue text)
   AV1 in Matroska / WebM, Opus in Matroska and Vorbis in Matroska - the codec
                mapping documents for the codecs this library carries
   Vorbis I specification, Xiph.Org Foundation
@@ -43,9 +46,9 @@ The specifications used, all of them public documents:
   IVF: the simple frame container written by the libvpx and AV1 encoding tools,
                as documented publicly alongside them
   FLAC format specification, Xiph.Org Foundation, and FLAC in Matroska
-               (the stream marker, the STREAMINFO block, and the frame
-               header, CRC-8 and CRC-16 that the authoring library's managed
-               frame scanner checks; the A_FLAC codec-private convention)
+               (the stream marker and the STREAMINFO block the container and
+               the authoring library check; the A_FLAC codec-private
+               convention)
 
 The uncompressed video format this library defines for its own test and
 diagnostics use is described in CBV-FORMAT.txt and in the XML documentation of
@@ -67,13 +70,33 @@ NOT depend on any SkiaSharp.NativeAssets package or on any audio engine package;
 an application chooses the native binaries that suit the platforms it ships on.
 
 CodeBrix.VideoPlayback.Authoring, the authoring package this repository also
-produces, depends on CodeBrix.VideoPlayback and on
-CodeBrix.VideoProcessing.MitLicenseForever, which is MIT-licensed and carries its
-own third-party notices. BOTH ARE PACKAGE DEPENDENCIES AND NEITHER IS
-INCORPORATED: no source of either is vendored, ported or adapted into this
-repository. That second package is how the authoring library reaches FFmpeg - it
-launches the ffmpeg and ffprobe INSTALLED ON THE AUTHORING WORKSTATION as child
-processes. See the note on FFmpeg below.
+produces, depends on CodeBrix.VideoPlayback and on:
+
+  CodeBrix.VideoProcessing.MitLicenseForever (MIT) - how the authoring library
+      reaches FFmpeg: it launches the ffmpeg and ffprobe INSTALLED ON THE
+      AUTHORING WORKSTATION as child processes. See the note on FFmpeg below.
+  CodeBrix.VideoProcessing.Core.MitLicenseForever (MIT) - the engine-neutral
+      video-processing contract the in-process passes decode through.
+  CodeBrix.VideoEncoding.Av1.BsdLicenseForever (BSD-2-Clause) - the in-process
+      AV1 encoder. Its native encoder is built from the Alliance for Open Media's
+      reference encoder, under the BSD-2-Clause licence and the Alliance for
+      Open Media Patent License 1.0; the package carries both texts beside every
+      native binary and in its own third-party notices.
+  CodeBrix.Audio.FlacWriter.BsdLicenseForever (BSD-3-Clause) - the in-process
+      FLAC encoder. Its native encoder is built from the Xiph.Org reference FLAC
+      library (BSD-3-Clause), whose licence the package carries.
+  CodeBrix.Audio.Vorbis.BsdLicenseForever (BSD-3-Clause) - the in-process Ogg
+      Vorbis encoder. Its native encoder is built from the Xiph.Org reference
+      Vorbis and Ogg libraries (BSD-3-Clause), whose licences the package
+      carries.
+  CodeBrix.Audio.Opus.BsdLicenseForever (BSD-3-Clause) - the in-process Opus
+      encoder, used for its ENCODER only. Pure managed code with no native
+      binary: a port of a managed Opus implementation of the reference Opus
+      codec (BSD-3-Clause), whose licence and notices the package carries.
+
+ALL ARE PACKAGE DEPENDENCIES AND NONE IS INCORPORATED: no source of any of them
+is vendored, ported or adapted into this repository, and each ships its own
+licence and notices.
 
 The test projects additionally reference:
 

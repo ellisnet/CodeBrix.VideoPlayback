@@ -49,7 +49,9 @@ public sealed class VideoAuthoringRequest
     /// ONE FLAG DOES NOT SURVIVE THE WEBM-PROFILE FLAVOUR: hearing-impaired. A WebM document has no element
     /// for it - Matroska gained one, WebM's element list never did - so FFmpeg's WebM muxer writes the
     /// default and forced flags and drops that one. The result carries a note naming the tracks it happened
-    /// to. The bespoke flavour keeps all three, and so does <see cref="AuthoringContainerFormat.Matroska" />.
+    /// to. The bespoke flavour keeps all three, and so does <see cref="AuthoringContainerFormat.Matroska" />. So
+    /// does the WebM-profile flavour encoded IN PROCESS: its managed muxer writes the codec identifier
+    /// <c>D_WEBVTT/CAPTIONS</c> and the flag element.
     /// </para>
     /// </remarks>
     public IList<AuthoringCaptionInput> Captions { get; } = new List<AuthoringCaptionInput>();
@@ -62,7 +64,8 @@ public sealed class VideoAuthoringRequest
     /// The bespoke flavour honours per-language <c>title-&lt;bcp47&gt;=</c> keys. The WebM-profile flavour
     /// cannot: FFmpeg's Matroska muxer writes one untagged <c>ChapterDisplay</c> per chapter, so every
     /// per-language title collapses into the untagged <c>title=</c> and the rest are lost. When that happens
-    /// the result carries a note naming the languages that were dropped.
+    /// the result carries a note naming the languages that were dropped. Encoded IN PROCESS, the WebM-profile
+    /// flavour keeps every language, and takes the file's title from the file-level <c>title=</c> line.
     /// </remarks>
     public string ChaptersPath { get; set; }
 
@@ -115,6 +118,9 @@ public sealed class VideoAuthoringRequest
     /// </summary>
     /// <remarks>
     /// <para>
+    /// The master flavour does not use it: its AV1 encoder runs in process, whatever the installed FFmpeg has.
+    /// </para>
+    /// <para>
     /// WITHOUT IT, a request for the default encoder on a build that lacks SVT-AV1 - the Windows "essentials"
     /// builds are the usual case - fails with a <see cref="VideoAuthoringException" /> whose message explains
     /// that the library is missing and names this setting. WITH IT, the pass that asked for <c>libsvtav1</c> is
@@ -156,18 +162,25 @@ public sealed class VideoAuthoringRequest
     /// </summary>
     /// <remarks>
     /// The bespoke flavour writes an IVF and an Ogg file here and deletes them afterwards, whether the run
-    /// succeeded or failed. A composed lookup table is written here too. Put it on the same volume as the
-    /// output when the media is large.
+    /// succeeded or failed; the master flavour writes two IVF files (picture and alpha plane), and a lossless
+    /// prepared intermediate when it runs a prepare pass, and deletes them the same way. A composed lookup
+    /// table is written here too. Put it on the same volume as the output when the media is large - a lossless
+    /// intermediate is LARGE.
     /// </remarks>
     public string TemporaryFolder { get; set; }
 
     /// <summary>
     /// The source's duration, so progress can be reported as a percentage, or zero for no progress at all.
     /// </summary>
+    /// <remarks>
+    /// The FFmpeg passes need it. The master flavour's in-process passes do not: they count frames and samples
+    /// against what the engine says the source holds, and report whether this is set or not.
+    /// </remarks>
     public TimeSpan SourceDuration { get; set; }
 
     /// <summary>
-    /// Called as each pass advances, or null. Needs <see cref="SourceDuration" /> to be set.
+    /// Called as each pass advances, or null. An FFmpeg pass needs <see cref="SourceDuration" /> to be set; an
+    /// in-process pass of the master flavour does not.
     /// </summary>
     public Action<AuthoringProgress> ProgressCallback { get; set; }
 

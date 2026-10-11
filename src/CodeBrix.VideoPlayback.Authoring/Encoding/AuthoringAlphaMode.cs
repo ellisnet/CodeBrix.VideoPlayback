@@ -5,8 +5,10 @@ namespace CodeBrix.VideoPlayback.Authoring.Encoding;
 public enum AuthoringAlphaMode
 {
     /// <summary>
-    /// Carry alpha when the source has it - when FFprobe reports a pixel format with an alpha channel
-    /// (<c>yuva420p</c>, <c>rgba</c>, <c>gbrap</c> and the like) - and leave it out otherwise. The default.
+    /// Carry alpha when the source has it - when the video-processing engine describes its picture as having an
+    /// alpha channel (for the ffmpeg engine: a pixel format such as <c>yuva420p</c>, <c>rgba</c> or
+    /// <c>gbrap</c>, or a VP8/VP9 WebM that carries its alpha alongside) - and leave it out otherwise. The
+    /// default.
     /// </summary>
     Auto = 0,
 

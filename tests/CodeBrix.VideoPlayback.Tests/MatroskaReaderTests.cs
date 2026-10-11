@@ -833,6 +833,41 @@ public class MatroskaReaderTests
     }
 
     [Fact]
+    public void Open_reads_a_d_webvtt_captions_track_as_hearing_impaired_without_the_flag_element()
+    {
+        //Arrange
+        // How FFmpeg's WebM writer says "for the deaf and hard of hearing": the codec identifier, and no
+        // FlagHearingImpaired element, because a WebM document has none.
+        byte[] file = BuildMinimalMatroska("V_AV1", 1, extraSubtitleCodecId: "D_WEBVTT/CAPTIONS");
+
+        //Act
+        using MatroskaReader reader = new MatroskaReader(new MemoryMediaSource(file, "synthetic.webm"));
+        MediaTrackInfo track = reader.Tracks.Single(t => t.Kind == MediaTrackKind.Caption);
+
+        //Assert
+        reader.CaptionTracks.Count.Should().Be(1);
+        reader.CaptionTracks[0].IsHearingImpaired.Should().BeTrue();
+        (reader.CaptionTracks[0].Flags & CaptionTrackFlags.HearingImpaired).Should().Be(CaptionTrackFlags.HearingImpaired);
+        track.IsHearingImpaired.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Open_reads_a_d_webvtt_subtitles_track_without_the_flag_element_as_not_hearing_impaired()
+    {
+        //Arrange
+        byte[] file = BuildMinimalMatroska("V_AV1", 1, extraSubtitleCodecId: "D_WEBVTT/SUBTITLES");
+
+        //Act
+        using MatroskaReader reader = new MatroskaReader(new MemoryMediaSource(file, "synthetic.webm"));
+        MediaTrackInfo track = reader.Tracks.Single(t => t.Kind == MediaTrackKind.Caption);
+
+        //Assert
+        reader.CaptionTracks.Count.Should().Be(1);
+        reader.CaptionTracks[0].IsHearingImpaired.Should().BeFalse();
+        track.IsHearingImpaired.Should().BeFalse();
+    }
+
+    [Fact]
     public void Open_reports_that_the_golden_files_use_no_unknown_size_elements()
     {
         //Arrange

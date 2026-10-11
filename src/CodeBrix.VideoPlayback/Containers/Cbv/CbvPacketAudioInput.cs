@@ -9,9 +9,9 @@ namespace CodeBrix.VideoPlayback.Containers.Cbv;
 /// </summary>
 /// <remarks>
 /// <para>
-/// The master (Mode3) flavour's FLAC track is the case this exists for: FFmpeg writes a <c>.flac</c> file, the
-/// authoring library splits it into its stream header and one packet per FLAC frame, and this carries them to
-/// the muxer unchanged. Each packet becomes exactly one chunk, byte for byte.
+/// The master (Mode3) flavour's FLAC track is the case this exists for: the authoring library's FLAC encoder
+/// hands over its stream header and one packet per FLAC frame, and this carries them to the muxer unchanged.
+/// Each packet becomes exactly one chunk, byte for byte.
 /// </para>
 /// <para>Every packet is written as a key frame: an audio packet needs nothing before it to be decoded.</para>
 /// </remarks>

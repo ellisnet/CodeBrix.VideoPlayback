@@ -249,6 +249,85 @@ public class IvfWriterTests
     }
 
     [Fact]
+    public void A_writer_with_a_one_frame_time_base_states_it_and_numbers_frames_by_index()
+    {
+        //Arrange
+        MemoryStream buffer = new MemoryStream();
+
+        //Act
+        using (IvfWriter writer = new IvfWriter(buffer, IvfWriter.Av1FourCharacterCode, 128, 72, 1001, 30000, true))
+        {
+            for (long i = 0; i < 4; i++) writer.WriteFrame(new byte[] { 1, 2, 3 }, i);
+            writer.Complete();
+        }
+
+        List<long> raw = new List<long>();
+        List<TimeSpan> times = new List<TimeSpan>();
+        using IvfReader reader = new IvfReader(new MemoryMediaSource(buffer.ToArray(), "one-frame.ivf"));
+        while (reader.TryReadFrame(out _, out TimeSpan timestamp, out long units))
+        {
+            raw.Add(units);
+            times.Add(timestamp);
+        }
+
+        //Assert
+        reader.TimeBaseNumerator.Should().Be(1001u);
+        reader.TimeBaseDenominator.Should().Be(30000u);
+        raw.Should().Equal(0L, 1L, 2L, 3L);
+        Math.Abs((times[3] - TimeSpan.FromSeconds(3 * 1001 / 30000d)).TotalMilliseconds).Should().BeLessThan(0.01);
+    }
+
+    [Fact]
+    public void A_timespan_is_converted_to_the_nearest_unit_of_a_writers_own_time_base()
+    {
+        //Arrange
+        MemoryStream buffer = new MemoryStream();
+
+        //Act
+        using (IvfWriter writer = new IvfWriter(buffer, IvfWriter.Av1FourCharacterCode, 64, 64, 1, 10, true))
+        {
+            writer.WriteFrame(new byte[] { 9 }, TimeSpan.FromMilliseconds(200));
+            writer.WriteFrame(new byte[] { 9 }, TimeSpan.FromMilliseconds(349));
+            writer.Complete();
+        }
+
+        List<long> raw = new List<long>();
+        using IvfReader reader = new IvfReader(new MemoryMediaSource(buffer.ToArray(), "tenths.ivf"));
+        while (reader.TryReadFrame(out _, out _, out long units)) raw.Add(units);
+
+        //Assert
+        raw.Should().Equal(2L, 3L);
+    }
+
+    [Theory]
+    [InlineData(0u, 30u)]
+    [InlineData(1u, 0u)]
+    public void A_time_base_with_a_zero_part_is_refused(uint numerator, uint denominator)
+    {
+        //Arrange
+        MemoryStream buffer = new MemoryStream();
+
+        //Act
+        Action create = () => new IvfWriter(buffer, IvfWriter.Av1FourCharacterCode, 64, 64, numerator, denominator);
+
+        //Assert
+        create.Should().Throw<ArgumentOutOfRangeException>();
+    }
+
+    [Fact]
+    public void A_negative_frame_index_is_refused()
+    {
+        //Arrange
+        using IvfWriter writer = new IvfWriter(new MemoryStream(), IvfWriter.Av1FourCharacterCode, 64, 64, 1, 30);
+
+        //Act
+        Action write = () => writer.WriteFrame(new byte[] { 1 }, -1L);
+
+        //Assert
+        write.Should().Throw<ArgumentOutOfRangeException>();
+    }
+
+    [Fact]
     public void A_file_created_by_path_is_an_av1_ivf_the_reader_accepts()
     {
         //Arrange

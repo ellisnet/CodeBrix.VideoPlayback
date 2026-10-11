@@ -44,6 +44,7 @@ public sealed class MatroskaReader : IMediaContainerReader
     private const int TrackTypeVideo = 1;
     private const int TrackTypeAudio = 2;
     private const int TrackTypeSubtitle = 17;
+    private const string CaptionsCodecIdForHearingImpaired = "D_WEBVTT/CAPTIONS";
     private const int MaxSupportedDocTypeReadVersion = 4;
 
     private static readonly TimeSpan FallbackCueDuration = TimeSpan.FromSeconds(5);
@@ -958,6 +959,17 @@ public sealed class MatroskaReader : IMediaContainerReader
                 info.CodecId = captionCodecId;
                 info.CaptionFormat = format;
                 state.InlineWebVtt = inline;
+
+                // D_WEBVTT/CAPTIONS IS how a WebM document says "captions for the deaf and hard of hearing": the
+                // WebM element list has no FlagHearingImpaired, so FFmpeg's WebM writer states it through the
+                // codec identifier alone. Without this, such a track read back as an ordinary subtitle track.
+                // Found while building MatroskaMuxer (which writes the identifier AND the flag); fixed so that
+                // a file from either writer reads as hearing-impaired.
+                if (string.Equals(codecId, CaptionsCodecIdForHearingImpaired, StringComparison.Ordinal))
+                {
+                    flagHearingImpaired = true;
+                    info.IsHearingImpaired = true;
+                }
 
                 CaptionTrackFlags flags = CaptionTrackFlags.None;
                 if (flagDefault) flags |= CaptionTrackFlags.Default;

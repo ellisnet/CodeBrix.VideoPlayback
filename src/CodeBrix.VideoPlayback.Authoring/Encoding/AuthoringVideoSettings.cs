@@ -47,12 +47,16 @@ public sealed class AuthoringVideoSettings
     private string scalerFlags = "lanczos";
     private int? alphaConstantRateFactor;
 
-    /// <summary>Which AV1 encoder to ask FFmpeg for. SVT-AV1 by default.</summary>
+    /// <summary>
+    /// Which AV1 encoder to ask FFmpeg for. SVT-AV1 by default. The master flavour does not use it: it encodes
+    /// with its own in-process AV1 encoder.
+    /// </summary>
     public AuthoringVideoEncoder Encoder { get; set; } = AuthoringVideoEncoder.LibSvtAv1;
 
     /// <summary>
     /// How hard the encoder works: SVT-AV1's <c>-preset</c>, 0 (slowest, best) to 13 (fastest, worst), or
-    /// libaom's <c>-cpu-used</c>, 0 (slowest) to 8 (fastest). Six by default.
+    /// libaom's <c>-cpu-used</c>, 0 (slowest) to 8 (fastest). Six by default. The master flavour's in-process
+    /// encoder reads it as libaom's cpu-used, capped at 8.
     /// </summary>
     /// <exception cref="ArgumentOutOfRangeException">The value is outside 0 to 13.</exception>
     public int SpeedPreset
@@ -75,7 +79,8 @@ public sealed class AuthoringVideoSettings
     /// <summary>
     /// The constant rate factor - lower is better and bigger. Thirty by default. AV1's rate factor is
     /// resolution-relative: the same number looks better the more pixels are hiding the error, so a rung
-    /// table normally lowers it as the frame gets smaller.
+    /// table normally lowers it as the frame gets smaller. The master flavour's in-process encoder uses it as
+    /// libaom's cq-level - the same 0 to 63 number FFmpeg's <c>-crf</c> hands libaom.
     /// </summary>
     /// <exception cref="ArgumentOutOfRangeException">The value is outside 0 to 63.</exception>
     public int ConstantRateFactor
@@ -198,6 +203,27 @@ public sealed class AuthoringVideoSettings
     /// - the default - carries it when the source has one. Ignored by the other flavours.
     /// </summary>
     public AuthoringAlphaMode Alpha { get; set; } = AuthoringAlphaMode.Auto;
+
+    /// <summary>
+    /// Whether a master (Mode3) file that carries alpha gives every FULLY transparent pixel the colour of the
+    /// nearest pixel that is not fully transparent. True by default. Ignored by the other flavours, and by a
+    /// master file without alpha.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Alpha is stored straight, not premultiplied, so the colour under a transparent pixel is still in the
+    /// picture - and a player that scales or filters mixes it into the visible pixels beside it before it
+    /// applies the alpha. Left as most tools leave it, usually black, it shows as a dark fringe around a soft
+    /// edge. Filled, the edge colour carries outward and the fringe has nothing to come from.
+    /// </para>
+    /// <para>
+    /// Only pixels whose alpha is 0 change; a partly transparent pixel keeps its colour exactly, and the alpha
+    /// plane itself is never touched. "Nearest" is the chessboard distance, found by one breadth-first flood
+    /// from every pixel whose alpha is above 0, so the result is the same on every run. A frame with no pixel
+    /// above 0 is left as it is. Set this false to keep the source's colour under transparent pixels.
+    /// </para>
+    /// </remarks>
+    public bool FillTransparentPixels { get; set; } = true;
 
     /// <summary>
     /// The constant rate factor of the alpha plane, or null - the default - for six below

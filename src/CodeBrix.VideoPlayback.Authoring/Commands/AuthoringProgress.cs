@@ -7,8 +7,10 @@ namespace CodeBrix.VideoPlayback.Authoring.Commands;
 /// How far an authoring run has got, reported as each pass advances.
 /// </summary>
 /// <remarks>
-/// Progress is only reported when the request states the source's duration - FFmpeg reports a position, and
-/// turning a position into a percentage needs to know what it is a percentage of.
+/// An FFmpeg pass reports progress only when the request states the source's duration - FFmpeg reports a
+/// position, and turning a position into a percentage needs to know what it is a percentage of. The master
+/// flavour's in-process passes count frames and samples against what the engine says the source holds, so
+/// they report without it.
 /// </remarks>
 public sealed class AuthoringProgress
 {

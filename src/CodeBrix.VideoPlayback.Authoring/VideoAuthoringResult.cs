@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using CodeBrix.VideoPlayback.Authoring.Commands;
 using CodeBrix.VideoPlayback.Containers;
 using CodeBrix.VideoPlayback.Containers.Cbv;
+using CodeBrix.VideoPlayback.Containers.Matroska;
 
 namespace CodeBrix.VideoPlayback.Authoring;
 
@@ -84,6 +85,57 @@ public sealed class VideoAuthoringResult
         string composedLutTitle,
         int composedLutSize,
         string composedLutPath)
+        : this(
+            outputPath,
+            sizeInBytes,
+            flavour,
+            ranCommands,
+            profile,
+            mux,
+            runNotes,
+            elapsed,
+            composedLutTitle,
+            composedLutSize,
+            composedLutPath,
+            null)
+    {
+    }
+
+    /// <summary>
+    /// Creates a result that also carries the managed WebM / Matroska muxer's own summary, for a WebM-profile
+    /// file encoded in process.
+    /// </summary>
+    /// <param name="outputPath">Where the file was written.</param>
+    /// <param name="sizeInBytes">How big it is.</param>
+    /// <param name="flavour">Which flavour was written.</param>
+    /// <param name="ranCommands">The command lines that were run, in order.</param>
+    /// <param name="profile">What the streamable profile made of the file, or null when it was not checked.</param>
+    /// <param name="mux">The bespoke muxer's own summary for a bespoke or master file, or null.</param>
+    /// <param name="runNotes">Anything the run wants the caller to know.</param>
+    /// <param name="elapsed">How long the whole run took.</param>
+    /// <param name="composedLutTitle">The title of the composed colour table, or null when none was composed.</param>
+    /// <param name="composedLutSize">The composed colour table's nodes a side, or 0 when none was composed.</param>
+    /// <param name="composedLutPath">
+    /// Where the composed table was kept, or null when it was a temporary file and has been deleted.
+    /// </param>
+    /// <param name="matroskaMux">
+    /// The managed WebM / Matroska muxer's own summary for a WebM-profile file encoded in process, or null when
+    /// FFmpeg wrote the file or the flavour is another one.
+    /// </param>
+    /// <exception cref="ArgumentNullException"><paramref name="ranCommands" /> or <paramref name="runNotes" /> is null.</exception>
+    public VideoAuthoringResult(
+        string outputPath,
+        long sizeInBytes,
+        VideoAuthoringFlavour flavour,
+        IReadOnlyList<AuthoringCommand> ranCommands,
+        StreamableProfileReport profile,
+        CbvAuthoringResult mux,
+        IReadOnlyList<string> runNotes,
+        TimeSpan elapsed,
+        string composedLutTitle,
+        int composedLutSize,
+        string composedLutPath,
+        MatroskaAuthoringResult matroskaMux)
     {
         if (ranCommands == null) throw new ArgumentNullException(nameof(ranCommands));
         if (runNotes == null) throw new ArgumentNullException(nameof(runNotes));
@@ -99,6 +151,7 @@ public sealed class VideoAuthoringResult
         ComposedLutTitle = composedLutTitle;
         ComposedLutSize = composedLutSize;
         ComposedLutPath = composedLutPath;
+        MatroskaMux = matroskaMux;
     }
 
     /// <summary>Where the file was written.</summary>
@@ -111,7 +164,9 @@ public sealed class VideoAuthoringResult
     public VideoAuthoringFlavour Flavour { get; }
 
     /// <summary>
-    /// The command lines that were run, in order: one for a WebM-profile file, two for a bespoke one.
+    /// The command lines that were run, in order: one for a WebM-profile file FFmpeg wrote, two for a bespoke
+    /// one; for a file encoded in process, one entry per in-process pass - and, for a WebM-profile file, the mux
+    /// last - each with <see cref="AuthoringCommand.RunsFFmpeg" /> false.
     /// </summary>
     public IReadOnlyList<AuthoringCommand> Commands => commands;
 
@@ -121,8 +176,18 @@ public sealed class VideoAuthoringResult
     /// </summary>
     public StreamableProfileReport Profile { get; }
 
-    /// <summary>The muxer's own summary for a bespoke file, or null for a WebM-profile one.</summary>
+    /// <summary>
+    /// The bespoke muxer's own summary for a bespoke or master file, or null for a WebM-profile one - see
+    /// <see cref="MatroskaMux" /> for that.
+    /// </summary>
     public CbvAuthoringResult Mux { get; }
+
+    /// <summary>
+    /// The managed WebM / Matroska muxer's own summary - tracks, clusters, cue points, chapters, its notices and
+    /// its profile report - for a WebM-profile file encoded in process, or null when FFmpeg wrote the file in its
+    /// one pass, and for the other two flavours.
+    /// </summary>
+    public MatroskaAuthoringResult MatroskaMux { get; }
 
     /// <summary>
     /// Anything the run wants the caller to know that is not a failure - most often the chapter-title

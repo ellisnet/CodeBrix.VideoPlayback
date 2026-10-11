@@ -154,7 +154,7 @@ KEY NAMESPACES / USINGS
     using CodeBrix.VideoPlayback.Containers;    // MediaTrackInfo, MediaPacket, IMediaContainerReader,
                                                 //   MediaContainers, StreamableProfile, LanguageTags
     using CodeBrix.VideoPlayback.Containers.Cbv;       // CbvReader, CbvMuxer, CbvAuthoring
-    using CodeBrix.VideoPlayback.Containers.Matroska;  // MatroskaReader
+    using CodeBrix.VideoPlayback.Containers.Matroska;  // MatroskaReader, MatroskaMuxer
     using CodeBrix.VideoPlayback.Containers.Ebml;      // EbmlReader, EbmlCrc32
     using CodeBrix.VideoPlayback.Containers.Ogg;       // OggAudioStream / OggAudioWriter,
                                                        //   OggReader / OggStreamWriter, OggChecksum
@@ -499,13 +499,100 @@ Authoring a .cbv file
 
     ONE ASYMMETRY WORTH KNOWING WHILE READING FILES. A chapter can carry a title
     per language, and the bespoke flavour stores every one of them. A
-    WebM-profile file cannot: ffmpeg's Matroska muxer writes a single untagged
-    chapter title, so a file authored that way has exactly one title per chapter
-    whatever the chapter source said. TitleFor(chapter, preferredLanguages)
-    falls back to it, so an application need not care - but a chapter list that
-    refuses to translate is explained by the file, not by a bug here. The
-    hearing-impaired caption flag has the same shape: Matroska carries it, WebM
-    has no element for it.
+    WebM-profile file authored by ffmpeg cannot: its Matroska muxer writes a
+    single untagged chapter title, so such a file has exactly one title per
+    chapter whatever the chapter source said. TitleFor(chapter,
+    preferredLanguages) falls back to it, so an application need not care - but
+    a chapter list that refuses to translate is explained by the file, not by a
+    bug here. MatroskaMuxer, this library's own WebM writer, keeps every title's
+    translation as a ChapterDisplay of its own. The hearing-impaired caption flag
+    has a similar shape: ffmpeg says it in a WebM file only through the codec
+    identifier D_WEBVTT/CAPTIONS; MatroskaMuxer writes that identifier AND the
+    FlagHearingImpaired element, and this library's reader takes either as the
+    flag.
+
+Authoring a WebM or Matroska file - the managed muxer
+------------------------------------------------------
+    MatroskaMuxer.Write(new MatroskaAuthoringRequest { OutputPath, DocType,
+        VideoIvfPath, VideoName, VideoLanguage, AudioOggPath | PacketAudio,
+        AudioName, AudioLanguage, Captions, ChaptersPath, Title,
+        CuesToFront = true, EvaluateProfile })     -> MatroskaAuthoringResult
+    MatroskaDocType.WebM (default) | Matroska
+    new MatroskaCaptionInput(path, language, name, CaptionTrackFlags)   // .vtt / .srt
+    new MatroskaPacketAudioInput(codecId, codecPrivate, sampleRate, channels)
+        { Packets = MatroskaAudioPacket(data, timestamp, duration),
+          TrailingTrimSamples }                   // "opus" or "vorbis"
+    MatroskaAuthoringResult: Path, SizeInBytes, DocType, Duration, Tracks
+        (MatroskaAuthoredTrack: Number, Kind, CodecId, Name, Language,
+        BlockCount), ChapterCount, CuePointCount, ClusterCount,
+        CuesPrecedeClusters, Notices, ProfileReport, PassesProfile, FindTrack(kind)
+    MatroskaMuxer.ApplicationName, MaximumClusterMilliseconds (5000),
+        MaximumClusterBytes (5 MiB), OpusSeekPreRollNanoseconds (80 ms)
+
+    This is how a CodeBrix Video Mode1 file - the WebM-profile flavour - is
+    written WITHOUT FFmpeg: an IVF file of AV1 (from any encoder, or from
+    IvfWriter), an Ogg Opus or Ogg Vorbis file or a list of audio packets, and
+    the same caption and chapter files the bespoke muxer takes. Pure managed
+    code, nothing installed, so it runs anywhere the library runs - a phone
+    included. The defaults produce a Mode1 file: document type "webm", the index
+    in front of the clusters, a file that passes StreamableProfile.
+
+    WHAT IT WRITES. One Segment of known size: a SeekHead naming every other
+    top-level element, Info (1 ms timestamp scale, Title, MuxingApp and
+    WritingApp "CodeBrix.VideoPlayback", Duration), Tracks, Chapters (when there
+    are any), Cues, then the clusters - or the Cues after the clusters with
+    CuesToFront = false. Every element has a known size; there is no Void
+    padding and no Tags element. Same inputs, same bytes: no random UIDs, no
+    dates. The Title is request.Title; when that is null it is the chapter
+    file's own file-level "title=" line (the one above its first [CHAPTER]),
+    which is what FFmpeg makes of a chapter file it takes its metadata from. An
+    empty Title writes none.
+
+    TRACKS. Video "V_AV1": the av1C configuration record built from the stream's
+    own sequence header, PixelWidth/Height, DefaultDuration from the IVF
+    timestamps, and a Colour element (bit depth, chroma subsampling and siting,
+    range, and matrix / transfer / primaries when the stream states them).
+    Temporal delimiters and padding units are taken out of every block, as the
+    AV1 mapping asks. Opus "A_OPUS": the OpusHead as CodecPrivate, CodecDelay =
+    the pre-skip, SeekPreRoll = 80 ms, block timestamps on the stream's own
+    timeline (the first packet at zero, the pre-skip still in), and the stream's
+    end trim as DiscardPadding on the last block. Vorbis "A_VORBIS": the three
+    setup headers Xiph-laced. Captions "D_WEBVTT/SUBTITLES" - or
+    "D_WEBVTT/CAPTIONS" with FlagHearingImpaired for a hearing-impaired track -
+    each cue a BlockGroup whose Block is "identifier LF settings LF text" with a
+    BlockDuration, which is byte for byte what FFmpeg writes. A .srt file goes in
+    as WebVTT with its text unchanged and no identifier or settings.
+
+    CHAPTERS. One edition; one ChapterAtom per chapter with its start and end
+    (an open end is closed at the next chapter's start, or the media's end), and
+    one ChapterDisplay PER TITLE LANGUAGE - "title-fr=" in the .ffmeta becomes a
+    second display with ChapLanguage "fre", so a file this muxer writes keeps
+    every chapter title's translation (FFmpeg's writer drops them). The untagged
+    title is written last, because a reader that keeps one display per chapter
+    keeps the last one.
+
+    LANGUAGES. Tags are BCP 47 on the way in and three-letter codes on the wire
+    ("en" -> "eng", "fr" -> "fre"). A tag a three-letter code cannot say all of
+    ("fr-CA") is also written in full as a BCP 47 element in a "matroska"
+    document; a "webm" document has no such element, so the region is dropped
+    and a line in result.Notices says so.
+
+    CLUSTERS AND CUES. A cluster starts at every video key frame (the audio in
+    front of the very first frame shares that frame's cluster), and at whatever
+    block comes next once a cluster spans 5 seconds or holds 5 MiB. One CuePoint
+    per video key frame - per cluster in a file with no video - plus a
+    CueTrackPositions with CueDuration for every caption block, as FFmpeg writes.
+
+WHAT THE MUXER REFUSES, with a message naming the file and the value: an IVF that
+is not AV1, one with no frames, no sequence header in its first frame, a first
+frame that is not a key frame, or timestamps that do not rise; packet audio that
+is not Opus or Vorbis, an OpusHead whose channel count disagrees with the input,
+packets out of order; a caption cue that starts at or after the end of the media,
+or lasts less than a millisecond; chapters that overlap, share a start, end
+before they start, or start at or after the end of the media; audio given twice;
+no media at all; a missing input file (FileNotFoundException). A refused request
+leaves NOTHING at the output path. The first pass writes its clusters to
+"<OutputPath>.pass1.tmp" beside the output, which is always deleted.
 
 Master files (.cbvmaster) - alpha and lossless sound
 ----------------------------------------------------
@@ -579,15 +666,27 @@ to ffmpeg, or to take one file apart and build another.
 
     new IvfWriter(Stream output, string fourCharacterCode, int width, int height,
                   bool leaveOutputOpen = false)
+    new IvfWriter(Stream output, string fourCharacterCode, int width, int height,
+                  uint timeBaseNumerator, uint timeBaseDenominator,
+                  bool leaveOutputOpen = false)
     IvfWriter.CreateAv1(string path, int width, int height)
+    IvfWriter.CreateAv1(string path, int width, int height,
+                        uint timeBaseNumerator, uint timeBaseDenominator)
         void WriteFrame(ReadOnlySpan<byte> data, TimeSpan timestamp)
+        void WriteFrame(ReadOnlySpan<byte> data, long timestamp)   in time-base units
         void Complete()          back-patches the frame count; the stream must seek
         uint FrameCount          string FourCharacterCode   int Width / Height
+        uint TimeBaseNumerator / TimeBaseDenominator
         const string Av1FourCharacterCode = "AV01"
         const uint TickTimeBaseDenominator = 10_000_000
 
-    It states the time base 1/10,000,000 - one unit is one .NET tick - so a
-    frame's timestamp IS its Ticks value and IvfReader gives it back unchanged.
+    By default it states the time base 1/10,000,000 - one unit is one .NET tick
+    - so a frame's timestamp IS its Ticks value and IvfReader gives it back
+    unchanged. Given a time base of its own - one FRAME, the way an encoder's IVF
+    output states it (1001/30000 for 29.97) - frames are written by index with
+    the long overload (a TimeSpan is rounded to the nearest unit). That is the
+    shape to hand CbvAuthoring.Write, which reads an IVF's time base as the
+    track's frame duration.
     Complete() writes the frame count over the header, so an abandoned file
     declares zero frames rather than looking finished. Dispose does not complete.
 
@@ -930,7 +1029,36 @@ COMPLETE EXAMPLES
   oversight: it is the piece the container's own tests drive to build files no
   authoring surface would write.
 
-10. Read a file's structure without playing it.
+10. Author a WebM (Mode1) file from an encoder's output, with no FFmpeg.
+
+    using CodeBrix.VideoPlayback.Captions;
+    using CodeBrix.VideoPlayback.Containers.Matroska;
+
+    MatroskaAuthoringRequest request = new MatroskaAuthoringRequest
+    {
+        OutputPath = "clip.webm",
+        VideoIvfPath = "video.ivf",       // AV1
+        AudioOggPath = "audio.ogg",       // Ogg Opus (the Mode1 default) or Vorbis
+        ChaptersPath = "chapters.ffmeta",
+        AudioLanguage = "en",
+        Title = "My clip",
+        EvaluateProfile = true,           // judge the finished file
+    };
+
+    request.Captions.Add(new MatroskaCaptionInput(
+        "captions.en.vtt", "en", "English", CaptionTrackFlags.Default));
+
+    MatroskaAuthoringResult result = MatroskaMuxer.Write(request);
+    if (!result.PassesProfile) Console.WriteLine(result.ProfileReport);
+    foreach (string notice in result.Notices) Console.WriteLine(notice);
+
+  An encoder that hands its audio over in memory supplies PacketAudio instead of
+  AudioOggPath: new MatroskaPacketAudioInput("opus", opusHead, 48000, channels)
+  with one MatroskaAudioPacket per packet, timed on the stream's own timeline
+  (the first packet at zero, the pre-skip still in - the muxer states it as
+  CodecDelay) and TrailingTrimSamples for the padding at the very end.
+
+11. Read a file's structure without playing it.
 
     using System;
     using CodeBrix.VideoPlayback.Containers;
@@ -1144,7 +1272,10 @@ WHAT THIS PACKAGE DOES NOT DO
   CodeBrix.VideoPlayback.Skia.
 - No rotation metadata for foreign files, no AV1 alpha, no nested or ordered
   chapters, no multiple chapter editions.
-- No writing of WebM or Matroska. It reads them; it writes only .cbv.
+- No writing of WebM or Matroska beyond what MatroskaMuxer writes: AV1 video,
+  Opus or Vorbis audio, WebVTT captions and one chapter edition, unlaced, in
+  one Segment. No other codecs, no attachments, no tags, no live (unsized)
+  output, no appending to an existing file.
 - No encoding of any kind.
 
 
@@ -1197,6 +1328,8 @@ avoid rate conversion                 SharedAudioOutput.Configure(48000) at star
 inspect a file without playing        MediaContainers.Open(path)
 judge a file against the profile      StreamableProfile.EvaluateFile(path)
 mux a .cbv from encoder output        CbvAuthoring.Write(request)
+mux a WebM (Mode1) file, no FFmpeg    MatroskaMuxer.Write(request)
+  with the index at the end instead   request.CuesToFront = false
 know whether a file has transparency  session.HasAlpha / reader.AlphaPlaneTrack
 read a frame's opacity                frame.A (straight, full range) when frame.HasAlpha
 get premultiplied BGRA with alpha     VideoFrameConverter.ToBgra32(frame, span, stride)
@@ -1231,6 +1364,7 @@ Signatures worth memorising:
     void  VideoDecoders.Register(IVideoDecoderFactory factory)
     bool  AudioDecoders.IsCodecSupported(string codecId)
     CbvAuthoringResult CbvAuthoring.Write(CbvAuthoringRequest request)
+    MatroskaAuthoringResult MatroskaMuxer.Write(MatroskaAuthoringRequest request)
     bool  IMediaContainerReader.TryReadPacket(out MediaPacket packet)
     bool  IMediaContainerReader.IsTrackExhausted(int trackId)
 

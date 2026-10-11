@@ -30,8 +30,8 @@ public enum AuthoringAudioCodec
     LibVorbis = 2,
 
     /// <summary>
-    /// FLAC (FFmpeg's native <c>flac</c> encoder), lossless, at <see cref="AuthoringAudioSettings.FlacBitDepth" />
-    /// bits. The ONLY codec the master flavour takes, and refused by the other two.
+    /// FLAC, lossless, at <see cref="AuthoringAudioSettings.FlacBitDepth" /> bits, written in process as one
+    /// packet per FLAC frame. The ONLY codec the master flavour takes, and refused by the other two.
     /// </summary>
     Flac = 3,
 }

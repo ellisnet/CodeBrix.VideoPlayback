@@ -44,7 +44,12 @@ draws frames itself, or on a platform Skia does not reach, takes the core alone.
 The third WRITES what the first reads. It drives the ffmpeg installed on the
 authoring machine, through CodeBrix.VideoProcessing, and produces ".cbv" files in
 both flavours - the WebM-profile one in a single ffmpeg pass, the bespoke one in
-two passes plus the core's own muxer. It is a DEVELOPER-MACHINE package: it has
+two passes plus the core's own muxer. The master flavour (".cbvmaster"), and the
+bespoke and WebM-profile flavours when they are asked for (or have to fall back
+to) the in-process encoder, instead decode through the registered
+CodeBrix.VideoProcessing.Core engine and encode IN PROCESS with the AV1, FLAC,
+Vorbis and Opus encoder packages - the WebM-profile file then written by the
+core's managed WebM muxer. It is a DEVELOPER-MACHINE package: it has
 no place in a shipped application, and nothing an application needs to PLAY video
 depends on it. It is published here rather than in the video-processing
 repository because the muxer and the container knowledge live here (plan decision
@@ -90,10 +95,16 @@ HARD RULES FOR THIS REPOSITORY
    empty:
        grep -rn 'SkiaSharp\|\bSK[A-Z]' src/CodeBrix.VideoPlayback \
            --include=*.cs --include=*.csproj
-1b. THE AUTHORING LIBRARY REFERENCES THE CORE AND CodeBrix.VideoProcessing, AND
-   NOTHING ELSE. Never SkiaSharp, never a decoder package, never
-   CodeBrix.Audio.Opus, never the presenter: it writes files, it does not play
-   them or draw them. Its TEST project references the Dav1d decoder and the Opus
+1b. THE AUTHORING LIBRARY REFERENCES THE CORE, CodeBrix.VideoProcessing,
+   CodeBrix.VideoProcessing.Core and four ENCODER packages -
+   CodeBrix.VideoEncoding.Av1, CodeBrix.Audio.FlacWriter,
+   CodeBrix.Audio.Vorbis and CodeBrix.Audio.Opus (for its ENCODER only: the
+   in-process WebM-profile flavour's sound; nothing in the library ever calls
+   CodeBrixAudioOpus.Register() or decodes with it) - AND NOTHING ELSE. Never
+   SkiaSharp, never a decoder package, never the presenter, never an
+   Android-only package (the application registers the Android engine; the
+   library only consumes the contract): it writes files, it does not play them
+   or draw them. Its TEST project references the Dav1d decoder and the Opus
    package, because proving that an authored file is a video means playing it -
    but the library itself never does.
 1c. THE AUTHORING LIBRARY NEVER BECOMES A DEPENDENCY OF AN APPLICATION. It
@@ -1146,6 +1157,92 @@ reader" step existed in three places - the session, cbvinfo and cbvdecode - and 
 now one public method in the core that all three, and the authoring library, call.
 
 
+THE MANAGED WEBM / MATROSKA MUXER, AND WHY IT IS LAID OUT THE WAY IT IS
+=======================================================================
+Containers/Matroska/MatroskaMuxer.cs (public), with MatroskaClusterWriter (the
+first pass), MatroskaBlockSources (one source per track, read one ahead),
+MatroskaMuxTrack and MatroskaLanguageCodes (all internal), and
+Containers/Ebml/EbmlWriter.cs (internal, bottom-up element building). It exists so
+that Mode1 can be authored where FFmpeg cannot run. The decisions:
+
+TWO PASSES, CUES IN FRONT, NO VOID. The first pass interleaves the tracks and
+writes the clusters back to back into "<output>.pass1.tmp", recording each
+cluster's offset and length and, for every block that is indexed, its cluster
+and its offset inside that cluster's payload. A cluster's bytes depend on nothing
+outside it - every position in it is relative - so it is copied into the final
+file unchanged. The second pass builds Info, Tracks and Chapters (all known by
+then, including the duration and the video's DefaultDuration, which are only
+known at the end of the streams), then the Cues. With the Cues in front, every
+cluster position depends on the Cues' own size; the loop starts at size zero
+and rebuilds until the size stops changing - positions only grow, so the size
+only grows, so it settles (in practice in two or three rounds). The SeekHead's
+positions are written at a FIXED eight bytes, so its size never depends on the
+values in it. The Segment size is written at eight bytes too. The result is one
+forward write with every size exact and no Void padding to reserve or to
+re-patch. Nothing random and no date is written (UIDs are the track and
+chapter numbers), so the same inputs give the same bytes - a test pins that.
+
+CAPTION LAYOUT IS FFMPEG'S, ON PURPOSE. The family's readers and the profile
+checker were written against FFmpeg's output, and FFmpeg writes WebVTT in both
+webm and matroska documents as D_WEBVTT/SUBTITLES (D_WEBVTT/CAPTIONS for a
+hearing-impaired track), each cue a BlockGroup of Block + BlockDuration whose
+payload is "identifier LF settings LF text", both header lines always present.
+S_TEXT/WEBVTT with BlockAdditions is the other dialect; FFmpeg cannot read it
+(see tests/assets/ASSETS.txt), so it is not written. A test compares the caption
+blocks byte for byte with av1-opus-captions-chapters.mkv. The one addition is
+FlagHearingImpaired on a hearing-impaired track: FFmpeg's WebM writer leaves it
+out (it is not in the WebM element list). KEPT on purpose, by ruling: a reader
+that looks for the flag rather than the codec identifier sees it, and a strict
+WebM validator that objects to it is judged the smaller cost. The reader was
+fixed at the same time to take D_WEBVTT/CAPTIONS itself as hearing-impaired
+(MatroskaReader, the caption-track branch, fenced with a comment), so an
+FFmpeg-written WebM captions track - identifier only, no flag - reads right too.
+
+AV1 BLOCKS ARE FFMPEG'S TOO. Temporal delimiters, padding, redundant frame
+headers and tile lists are taken out of every temporal unit, as the AV1 mapping
+asks. A test compares the twelve video blocks byte for byte with av1-opus.webm.
+The av1C is Av1Bitstream.BuildCodecConfigurationRecord over the first frame's
+sequence header, the same synthesis the .cbv muxer uses.
+
+THE CLUSTER RULE. A new cluster at every video key frame, so every video cue
+points at a cluster that STARTS with its key frame and a seek lands on exactly
+that frame; the one exception is that audio stamped before the first video frame
+shares the first frame's cluster rather than sitting alone in one (a seek to the
+start would otherwise skip it). Also a new cluster at whatever block comes next
+once a cluster spans MaximumClusterMilliseconds (5 s) or holds
+MaximumClusterBytes (5 MiB) - the WebM guidelines' numbers - and, hard, before a
+block's 16-bit relative timestamp would overflow. Blocks at the same millisecond
+are ordered video, audio, captions. FFmpeg's rule is different (it can split at
+an audio packet and keeps several key frames in one cluster); nothing in the
+readers or the profile depends on either. KEPT by ruling over FFmpeg's
+"several GOPs per cluster": seek precision is worth the extra clusters a very
+short key-frame interval makes.
+
+OPUS: CODECDELAY, SEEKPREROLL, TIMESTAMPS. CodecDelay is the OpusHead pre-skip
+in nanoseconds (312 samples = 6.5 ms), SeekPreRoll is 80 ms, the values the
+Opus-in-Matroska mapping gives. Block timestamps are on the stream's OWN
+timeline - the first packet at zero with the pre-skip still in, exactly as
+OggAudioStream reports them from the granule positions - because the mapping
+says CodecDelay is subtracted from every block timestamp by the reader, and
+this library's session does exactly that (audioClockCorrection). They are
+rounded to whole milliseconds, which makes them 0, 20, 40 ms where FFmpeg's
+own rounding gives 0, 21, 41 ms. The Ogg stream's end trim goes on the last
+block as DiscardPadding, which the session already turns into the track's
+trailing trim.
+
+DEFAULTDURATION is the AVERAGE step between IVF timestamps, computed in the time
+base's own units before rounding, so an IVF with a millisecond time base (steps
+of 33 and 34) still declares 33.333 ms for a 30-per-second stream.
+
+THE TITLE FALLS BACK TO THE CHAPTER FILE'S. FFmpeg's Mode1 pass names the chapter
+file as its metadata source (-map_metadata), so the file-level "title=" line of
+an .ffmeta became the WebM file's Info/Title. The muxer does the same when
+MatroskaAuthoringRequest.Title is null (FfMetadataChapters.ReadGlobalTitle,
+internal - the public chapter reader has no file-level keys); an empty Title
+writes none. Nothing else of the file-level block (artist=, ...) is carried: the
+muxer writes no Tags.
+
+
 MASTER FILES (MODE3): THE DECISIONS AND THE MEASUREMENTS
 =========================================================
 What a master file IS is written in CBV-FORMAT.txt, section 6. What is worth
@@ -1159,9 +1256,10 @@ playable on an older reader, and makes an older reader refuse only the files it
 genuinely cannot play. CbvFormat.HighestReadableVersion is what the reader
 accepts.
 
-LOCK STEP IS CHECKED THREE TIMES. The authoring library compares the two IVFs it
-encoded (Internal/IvfKeyFrames) before muxing; the muxer compares the two
-tracks' chunks in Complete() before it writes a byte (Containers/Cbv/
+LOCK STEP IS CHECKED THREE TIMES. The authoring library compares the key-frame
+lists of the two streams it encoded, read from the AV1 bitstream exactly as the
+muxer reads them, before muxing (Internal/InProcessAuthoring); the muxer compares
+the two tracks' chunks in Complete() before it writes a byte (Containers/Cbv/
 CbvAlphaLockStep); and the reader compares them again from the index when it
 opens a file. The session can therefore pair frames by timestamp and treat a
 mismatch as a corrupt-file edge case: an alpha frame older than its picture is
@@ -1179,29 +1277,171 @@ colour darkens soft edges, so the presenter converts, applies the lookup table,
 and only then calls VideoFrameConverter.PremultiplyByAlpha. A frame without an
 alpha plane takes exactly the code path it always took.
 
-THE ALPHA PASS USES libaom IN REALTIME MODE, AND THAT WAS MEASURED. FFmpeg 7.1.5
-with libaom on this machine: in the default "good" usage, every FORCED key frame
-came out followed by a second key frame on the next frame (and at -cpu-used 8 the
-encoder's own key frames did too, unless enable-keyframe-filtering=0); in
-"-usage realtime" the forced list came out exactly. -g and -keyint_min are set
-far beyond any clip so that libaom places no key frame of its own. The forced
-times are each key frame's time less half a frame, so FFmpeg's "first frame at or
-after" rule picks exactly that frame whatever its time base rounds to.
-SVT-AV1 is never used for the alpha plane: it cannot write a monochrome sequence
-header.
+MASTER AUTHORING IS IN PROCESS, ON ANY ENGINE. The source is decoded through
+VideoProcessors.TryGetCurrent - the desktop ffmpeg engine
+(CodeBrixVideoProcessing.Processor) when nothing is registered, never registered
+from the library - and encoded by CodeBrix.VideoEncoding.Av1 (picture and alpha)
+and CodeBrix.Audio.FlacWriter (sound). Everything but the optional prepare pass
+goes through the Core contract (Analyse, OpenVideo, OpenAudio); the ffprobe
+survey of subtitle streams and chapters, and the ffprobe pixel-format check
+that can only ADD alpha to the engine's own HasAlpha, run only on the ffmpeg
+engine. The tool check for the master flavour is "an engine is there" - a
+registered non-ffmpeg engine, or ffmpeg + ffprobe for the desktop one - and
+asks the installed ffmpeg for no encoder.
 
-THE FLAC SPLIT IS MANAGED AND CONSERVATIVE. Internal/FlacFrameScanner accepts a
-frame boundary only when the next header parses, its CRC-8 matches, its stream
-parameters equal STREAMINFO's, its frame (or sample) number is the expected next
-one AND the CRC-16 of the frame it closes matches. Its tests prove that the
-frames tile the file's audio bytes exactly and that the packets come back out of
-a master file byte for byte.
+THE PREPARE PASS RULE. The engine delivers stored, unscaled, ungraded frames, so
+FrameSize (not Source), FrameRate (above 0, either mode), a non-empty grade and
+AutoRotate on a source whose engine-reported rotation is not 0 each need ffmpeg:
+one command writes FFV1 (yuva420p with alpha, yuv420p without) in Matroska
+through the bespoke flavour's own filter chain, and the in-process passes read
+that. Nothing else triggers it. With any other engine such a request is refused
+up front (and again after analysis, for the rotation case only the source can
+reveal). The dry run cannot see a rotation; the result's Commands can.
 
-THE BRIDGE DOES NOT FILL TRANSPARENT PIXELS. Decided for Mode3: fully
-transparent pixels should carry the nearest opaque colour. FFmpeg has no filter
-for it, so the FFmpeg bridge does not, and the Authoring AGENT-README says so. It
-belongs to the managed encoding path, when Authoring moves onto
-CodeBrix.VideoProcessing.Core.
+THE ALPHA PASS USES REALTIME USAGE, AND THAT WAS MEASURED. In the encoder's
+good-quality usage every FORCED key frame comes out followed by a second key
+frame on the next frame (the "N+1 rule", measured first through FFmpeg 7.1.5 with
+libaom and documented by the AV1 package); realtime usage places exactly the
+forced key frames. So the picture is encoded in good-quality usage with its own
+key-frame interval, its key frames are read back from its bitstream - N+1 ones
+included - and the alpha plane is encoded in realtime usage with automatic key
+frames OFF and exactly those frames forced. Two lock-step encoders in the same
+usage would also agree, but the alpha plane would then have to give up the
+picture's good-quality settings or the picture its interval; this way neither
+does.
+
+TWO DECODES PER MASTER WITH ALPHA. The alpha pass needs the picture's key
+frames, which good-quality usage only reveals some frames after they are
+submitted, so the alpha plane is encoded AFTER the picture from a second decode
+of the same input rather than buffered. A source with no alpha channel and
+Alpha = Include gets a fully opaque plane made without decoding anything.
+
+THE RATE FACTOR MEANS WHAT IT ALWAYS MEANT. ConstantRateFactor (0..63) is
+handed to the encoder as libaom's cq-level through the pass-through codec option
+"cq-level", exactly what ffmpeg's -crf does for libaom; the request's Core
+quality level is set to the nearest 0..51 equivalent so the rate mode is
+constant quality. Speed is cpu-used = min(8, SpeedPreset).
+
+THE IVF TIME BASE IS ONE FRAME. The muxer takes an IVF's time base as the
+track's frame duration, so the in-process passes write their IVFs with
+IvfWriter's explicit time-base constructor - FrameRate.Denominator /
+FrameRate.Numerator, frame index as the timestamp - which is the shape ffmpeg's
+own IVF output has always had. (An IvfWriter left on its default tick time base
+would give the track a one-tick frame duration.)
+
+THE SOUND IS FLAC PACKETS FROM THE ENCODER. CodeBrix.Audio.FlacWriter's
+FlacPacketEncoder hands over one FLAC frame per packet and a stream header that
+is "fLaC" + STREAMINFO (first, 34 bytes) + VORBIS_COMMENT with the last-block
+flag on the last - Matroska's A_FLAC codec-private convention - which the run
+checks (InProcessAuthoring.DescribeFlacCodecPrivateProblem) before storing it,
+totals included. A 16-bit source round-trips bit for bit; a test proves it
+against ffmpeg's own decode of the source.
+
+THE TRANSPARENT-PIXEL FILL. Fully transparent pixels (A == 0) take the colour of
+the nearest pixel with A > 0: a multi-source breadth-first flood from every A > 0
+pixel over the 8-neighbourhood in a fixed neighbour order (chessboard distance;
+ties go to whichever source arrived first, so the output is deterministic),
+luma copied from the source pixel, and a chroma sample rewritten only when all
+the luma pixels of its 2x2 block are A == 0, from the chroma sample covering the
+source pixel of the block's top-left luma. Partly transparent pixels and the
+alpha plane are never touched. Linear in pixels; a frame with no A == 0 pixel,
+or no A > 0 pixel, is left alone. Internal/TransparentPixelFill.cs;
+Video.FillTransparentPixels turns it off.
+
+ODD SIZES ARE CROPPED, NOT SCALED. The AV1 package refuses odd I420 sizes, so an
+in-process run crops the last column and/or row (views over the decoded planes,
+no copy unless the edge fill needs one) in the picture AND the alpha pass, and
+notes exactly what was cropped (InProcessAuthoring.DescribeCrop); the settings
+line says "size WxH cropped-from WxH". The prepare pass is deliberately NOT asked
+to scale to even: its FrameSize forms already produce even sizes, and for a
+rotation-, rate- or grade-only prepare pass a whole-picture resample to lose one
+row or column would be the worse trade. One rule, applied in one place, on every
+engine. A 1-pixel-wide or -high picture is refused.
+
+AN RGB SOURCE IS REFUSED, NOT GUESSED. The ffmpeg engine reports the SOURCE's
+colour matrix (RGB for a PNG-in-mov) for the 4:2:0 YUV it delivers; the AV1
+encoder refuses an identity matrix for I420, and tagging it anything else would
+be a guess. The run is refused with a message naming the engine; the engine
+should report the matrix of the samples it delivers.
+
+BESPOKE (MODE2) CAN BE AUTHORED IN PROCESS TOO. AuthoringVideoEncoder.Av1Package
+always takes the in-process path: the master flavour's colour pass without alpha
+and without the fill, the sound through CodeBrix.Audio.Vorbis's OggVorbisEncoder
+into the same temporary Ogg file the muxer has always taken, then the same mux
+(captions and chapters unchanged). LibSvtAv1 and LibAomAv1 keep the ffmpeg
+command lines - byte for byte - when the ffmpeg engine is the one in use and
+can be run, and FALL BACK to the in-process path with a note otherwise (a
+registered non-ffmpeg engine, i.e. Android; or no ffmpeg). The dry run judges
+from the registered engine alone; a real run also runs the tool check. Tests
+force either answer through InProcessAuthoring.FFmpegPathAvailableOverride, an
+AsyncLocal so a test's choice never reaches another test. Vorbis settings mean
+what the libvorbis command line made of them: VorbisQuality q -> quality q / 10,
+otherwise BitrateKilobitsPerSecond -> the nominal bit rate. One difference
+remains: ffmpeg's libvorbis wrapper switches the encoder's bit-rate MANAGEMENT
+off (average bit rate by estimate) when only a bit rate is given, and the
+Vorbis package keeps it on; both average to the nominal rate.
+
+WEBM-PROFILE (MODE1) CAN BE AUTHORED IN PROCESS TOO, AND WHY IT EXISTS. ffmpeg
+does not exist on Android, and the family's goal is every CodeBrix Video mode
+authored on every platform. With the managed WebM muxer in the core
+(MatroskaMuxer - see THE MANAGED WEBM / MATROSKA MUXER) the last ffmpeg-only
+step of Mode1 is gone, so the WebM-profile flavour takes the bespoke flavour's
+rule exactly: Av1Package always in process; LibSvtAv1 / LibAomAv1 keep the ONE
+ffmpeg pass byte for byte when the ffmpeg engine is usable (the corpus command
+equivalence test pins it) and fall back with a note otherwise. Passes: [prepare]
+-> the bespoke in-process video pass (same crop rule, same CRF / cpu-used / keyint
+mapping) -> Opus -> MatroskaMuxer.Write. The dry run lists video, audio and a
+"mux pass" whose settings line starts "mux webm"; result.MatroskaMux carries the
+muxer's own summary (Mux stays the .cbv one - its type was not widened), and
+result.Profile IS the muxer's ProfileReport (EvaluateProfile = ValidateProfile),
+so the file is judged once.
+
+  OPUS ENCODER: CodeBrix.Audio.Opus, for its encoder only, and nothing in this
+  library ever calls CodeBrixAudioOpus.Register() (tests assert it stays
+  unregistered). The package's packet-level encoder (OpusSoundEncoder) is
+  INTERNAL - its constructor takes an internal settings type - so the public
+  OpusFileWriter is used: it writes Ogg Opus into a temporary ".audio.opus" file
+  in TemporaryFolder, which the core's OggAudioStream reads straight back into
+  MatroskaAudioPacket values. Mono and stereo only (channel mapping family 0);
+  more channels are refused in process, where libopus through ffmpeg would code
+  surround.
+
+  OPUS TIMING: packets are timed on the stream's OWN timeline, exactly as the
+  Ogg granule positions count it - the first packet at ZERO, the encoder's
+  pre-skip still in - and the pre-skip is stated separately, as the track's
+  CodecDelay, which the muxer derives from the OpusHead. That is the Opus-in-
+  Matroska mapping and what the session's audio clock correction undoes. The
+  encoder's tail padding (its last frame is padded to 20 ms) goes in as
+  TrailingTrimSamples, which the muxer writes as the last block's
+  DiscardPadding. The run refuses a stream whose first packet is not at zero.
+  The OpusHead is BUILT here (InProcessAuthoring.BuildOpusHead: version 1, the
+  channel count, the encoder's pre-skip, input rate 48000, gain 0, mapping
+  family 0) and must equal, byte for byte, the header the encoder wrote, and its
+  pre-skip must equal what OggAudioStream read; a test pins that the built
+  header is byte-identical to the one in the ffmpeg-made opus-audio.ogg fixture.
+
+  BITRATE MAPPING: BitrateKilobitsPerSecond * 1000 as the Opus target bit rate
+  of the whole stream, variable bit rate, complexity 10, general-audio
+  application - libopus's own defaults, which ffmpeg's -b:a leaves alone. The
+  package also fixes the signal hint to MUSIC, where libopus decides for itself;
+  the same rate is not the same bytes, and nothing claims it is. Opus codes at
+  48000 Hz, so the sound is decoded at 48000 Hz whatever SampleRateHz says (a
+  note says so when it says something else).
+
+  WHAT DIFFERS FROM THE FFMPEG PASS, AND IS SAID: CopySourceMetadata has no
+  in-process meaning (nothing of the source's metadata is copied; the title
+  comes from the chapter file's file-level title=, the same thing ffmpeg's
+  -map_metadata does with a chapter file); SelectStreamsExplicitly = false has
+  none either (the engine reads the first video and the first audio stream).
+  Both are noted when set that way. Chapter-title translations and the
+  hearing-impaired flag SURVIVE in process, so the ffmpeg pass's two "DROPPED"
+  notes are not added. Audio.Language / Audio.Name / Video.TrackName ARE written
+  in process - the ffmpeg pass's command line names none of them.
+
+  MODE1 IS WEBM(OPUS): Vorbis in a WebM document is refused in process. A
+  Matroska document (Container = Matroska) keeps what the ffmpeg path allows
+  there - Opus or Vorbis, Vorbis through the bespoke in-process Vorbis pass into
+  an Ogg file the muxer reads.
 
 
 BENCHMARKS

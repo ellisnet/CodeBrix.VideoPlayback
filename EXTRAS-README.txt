@@ -180,8 +180,11 @@ survived as a setting.
                            fixtures, tests/assets/av1-alpha-flac.cbvmaster and
                            tests/assets/av1-flac.cbvmaster, through the
                            authoring library's Master flavour (see
-                           tests/assets/ASSETS.txt). Needs libaom-av1 and the
-                           native flac encoder as well.
+                           tests/assets/ASSETS.txt). Needs ffmpeg and ffprobe
+                           only: that flavour encodes in process. The committed
+                           fixtures were made by an earlier FFmpeg-encoded run
+                           that ASSETS.txt records; a regeneration now writes
+                           different (equally valid) bytes.
 
 Every finished file is read back and checked against the plan - codecs, exact
 dimensions, frame rate, duration, and that no rotation side data survived - and

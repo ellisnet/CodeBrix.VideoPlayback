@@ -130,4 +130,43 @@ public class FfMetadataChaptersTests
         //Assert
         chapters.Count.Should().Be(0);
     }
+
+    [Fact]
+    public void The_file_level_title_is_read_from_in_front_of_the_first_section_only()
+    {
+        //Arrange
+        string text = ";FFMETADATA1\ntitle=Clip \\= one\nartist=someone\n\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=0\nEND=10\ntitle=Opening\n";
+
+        //Act
+        string title = FfMetadataChapters.ParseGlobalTitle(text);
+
+        //Assert
+        title.Should().Be("Clip = one");
+    }
+
+    [Fact]
+    public void A_chapter_file_without_a_file_level_title_has_none()
+    {
+        //Arrange
+        string text = ";FFMETADATA1\n\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=0\nEND=10\ntitle=Opening\n";
+
+        //Act
+        string title = FfMetadataChapters.ParseGlobalTitle(text);
+
+        //Assert
+        title.Should().BeNull();
+    }
+
+    [Fact]
+    public void The_golden_chapter_file_states_a_file_level_title()
+    {
+        //Arrange
+        string path = TestAssets.Path("chapters.ffmeta");
+
+        //Act
+        string title = FfMetadataChapters.ReadGlobalTitle(path);
+
+        //Assert
+        title.Should().Be("CodeBrix VideoPlayback synthetic clip");
+    }
 }

@@ -16,8 +16,8 @@
     <!--
       THE TEST PROJECT may reference the decoder and the Opus package, because it PLAYS what the authoring
       library writes: an authored file that no decoder can open has not been proved to be a video. The
-      AUTHORING LIBRARY references neither, and never will - it writes files, it does not play them.
-      See MAINTAINER-README.txt.
+      AUTHORING LIBRARY never references a decoder, and uses the Opus package for its ENCODER only - it writes
+      files, it does not play them. See MAINTAINER-README.txt.
     -->
     <PackageReference Include="CodeBrix.VideoPlayback.Dav1d.BsdLicenseForever" Version="1.0.271.1206" />
     <PackageReference Include="CodeBrix.Audio.Opus.BsdLicenseForever" Version="1.0.283.1405" />
@@ -45,7 +45,7 @@
     depends on a corpus having been built.
   -->
   <ItemGroup>
-    <Content Include="..\assets\*.vtt;..\assets\*.srt;..\assets\*.ffmeta;..\assets\*.cbvmaster">
+    <Content Include="..\assets\*.vtt;..\assets\*.srt;..\assets\*.ffmeta;..\assets\*.cbvmaster;..\assets\opus-audio.ogg">
       <Link>assets\%(Filename)%(Extension)</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
