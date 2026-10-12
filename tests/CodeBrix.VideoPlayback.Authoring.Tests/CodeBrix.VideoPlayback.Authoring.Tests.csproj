@@ -27,6 +27,12 @@
       LIBRARIES reference only CodeBrix.Audio.Core, which ships no native, and must keep it that way.
     -->
     <PackageReference Include="CodeBrix.Audio.MitLicenseForever" Version="1.0.283.1382" />
+    <!--
+      The desktop ffmpeg ENGINE. The authoring library depends on CodeBrix.VideoProcessing.Core only and works
+      through whichever engine is registered; the test project registers this one (FFmpegEngineRegistration.cs),
+      as an application does, and its fixtures use the package directly to make the clips they author from.
+    -->
+    <PackageReference Include="CodeBrix.VideoProcessing.MitLicenseForever" Version="1.0.285.792" />
   </ItemGroup>
 
   <ItemGroup>

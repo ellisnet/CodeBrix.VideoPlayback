@@ -13,8 +13,8 @@ namespace CodeBrix.VideoPlayback.Authoring.Export;
 /// The source is decoded with the decoders the APPLICATION registered with the core's registries
 /// (<c>VideoDecoders</c> for AV1 - CodeBrix.VideoPlayback.Dav1d - and, for the sound, the packet codecs the shared
 /// audio output holds, asked directly so that no audio device is opened); the
-/// MP4 is written by the video-processing engine the application registered, or the desktop ffmpeg engine when it
-/// registered none. Captions and chapters are not carried into the MP4.
+/// MP4 is written by the video-processing engine the application registered - with none registered, the export
+/// refuses. Captions and chapters are not carried into the MP4.
 /// </remarks>
 public sealed class VideoExportRequest
 {

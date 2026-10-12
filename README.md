@@ -53,9 +53,14 @@ Each package pulls in what it needs automatically; no version pinning is needed 
   `SkiaSharp.NativeAssets` package for each platform it ships on, and so chooses its own native binary. It
   does not bring an audio engine either - the application adds the audio package for its platform, exactly
   as with the playback package alone.
-* `CodeBrix.VideoPlayback.Authoring.MitLicenseForever` pulls in the playback package and
-  `CodeBrix.VideoProcessing.MitLicenseForever`, which is how it launches the FFmpeg installed on the machine
-  that runs it, and the AV1, FLAC, Vorbis and Opus encoder packages its in-process passes write with.
+* `CodeBrix.VideoPlayback.Authoring.MitLicenseForever` pulls in the playback package,
+  `CodeBrix.VideoProcessing.Core.MitLicenseForever` - the engine-neutral contract it works through - and the
+  AV1, FLAC, Vorbis and Opus encoder packages its in-process passes write with. It does not bring a
+  video-processing engine: the application adds `CodeBrix.VideoProcessing.MitLicenseForever` on the desktop
+  (the engine that locates and launches the FFmpeg installed on the machine) or
+  `CodeBrix.VideoProcessing.Android.MitLicenseForever` on Android, and registers it once at start-up -
+  `CodeBrixVideoProcessing.Register()` or `CodeBrixVideoProcessingAndroid.Register()`. Without a registered
+  engine, authoring refuses.
 
 Add, as your application needs them:
 

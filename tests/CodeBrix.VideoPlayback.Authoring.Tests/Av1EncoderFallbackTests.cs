@@ -3,8 +3,6 @@ using System.Collections.Generic;
 using System.IO;
 using CodeBrix.VideoPlayback.Authoring.Encoding;
 using CodeBrix.VideoPlayback.Authoring.Internal;
-using CodeBrix.VideoProcessing;
-using CodeBrix.VideoProcessing.Exceptions;
 using SilverAssertions;
 using Xunit;
 
@@ -25,9 +23,10 @@ namespace CodeBrix.VideoPlayback.Authoring.Tests;
 /// The tests that check the wording run no FFmpeg at all and run everywhere.
 /// </para>
 /// <para>
-/// One test changes the PROCESS-WIDE switch and puts it back. Every test that depends on that switch lives in
-/// this class, and the tests of one class never run at the same time, so none of them can see it changed. No
-/// other class authors with libsvtav1 on a machine that lacks it, so none of them is affected either.
+/// The ffmpeg package's PROCESS-WIDE switch (<c>GlobalFFOptions.AllowAv1EncoderFallback</c>) no longer reaches
+/// authoring - the library composes and runs its own lines through the registered engine's tools and does the
+/// rewrite itself - so only the request's switch is tested here. The same rewrite, with no ffmpeg at all, is pinned
+/// by <see cref="FFmpegVocabularyTests" />.
 /// </para>
 /// </remarks>
 public class Av1EncoderFallbackTests
@@ -73,11 +72,11 @@ public class Av1EncoderFallbackTests
     public void A_failed_pass_that_is_not_a_missing_encoder_keeps_the_message_it_always_had()
     {
         //Arrange
-        FFMpegException failure = new FFMpegException(
-            FFMpegExceptionType.Process, "ffmpeg exited with non-zero exit-code (1 - Invalid data found)");
+        string missingEncoder = null;
 
         //Act
-        string message = CbvAuthor.DescribePassFailure("video pass", "-i \"in.mkv\" -c:v libsvtav1", false, failure);
+        string message = FFmpegVocabulary.DescribePassFailure(
+            "video pass", "-i \"in.mkv\" -c:v libsvtav1", false, missingEncoder, null);
 
         //Assert
         message.Should().Be("The video pass failed. The command was: ffmpeg -i \"in.mkv\" -c:v libsvtav1");
@@ -87,18 +86,16 @@ public class Av1EncoderFallbackTests
     public void A_missing_libsvtav1_is_explained_between_the_failed_pass_and_the_command()
     {
         //Arrange
-        Exception failure = new InvalidOperationException(
-            "wrapped",
-            MissingEncoder("libsvtav1", "The SVT-AV1 encoder library (libsvtav1) is not present on this machine."));
+        string missingEncoder = "libsvtav1";
 
         //Act
-        string message = CbvAuthor.DescribePassFailure("video pass", "-c:v libsvtav1 -preset 8", false, failure);
+        string message = FFmpegVocabulary.DescribePassFailure("video pass", "-c:v libsvtav1 -preset 8", false, missingEncoder, null);
 
         //Assert
         message.Should().StartWith("The video pass failed. " + AuthoringTools.MissingSvtAv1 + " ");
         message.Should().Contain(AuthoringTools.SvtAv1Remedies);
         message.Should().Contain("AllowAv1EncoderFallback = true on the VideoAuthoringRequest");
-        message.Should().Contain("GlobalFFOptions.Configure(o => o.AllowAv1EncoderFallback = true)");
+        message.Should().NotContain("GlobalFFOptions");
         message.Should().EndWith(" The command was: ffmpeg -c:v libsvtav1 -preset 8");
     }
 
@@ -106,18 +103,17 @@ public class Av1EncoderFallbackTests
     public void With_the_fallback_on_a_missing_libsvtav1_is_explained_with_the_reason_it_could_not_help()
     {
         //Arrange
-        const string wrapperExplanation =
-            "The SVT-AV1 encoder library (libsvtav1) is not present on this machine, or the ffmpeg being used could "
-            + "not find it. FFOptions.AllowAv1EncoderFallback is enabled, but the fallback could not be used: this "
-            + "ffmpeg has no libaom-av1 encoder either, so there was nothing to fall back to. Install an ffmpeg build "
-            + "that includes libsvtav1 or libaom-av1.";
-        Exception failure = MissingEncoder("libsvtav1", wrapperExplanation);
+        string problem = FFmpegVocabulary.LibAomMissingProblem;
 
         //Act
-        string message = CbvAuthor.DescribePassFailure("one pass", "-c:v libsvtav1", true, failure);
+        string message = FFmpegVocabulary.DescribePassFailure("one pass", "-c:v libsvtav1", true, "libsvtav1", problem);
 
         //Assert
-        message.Should().Be("The one pass failed. " + wrapperExplanation + " The command was: ffmpeg -c:v libsvtav1");
+        message.Should().Be(
+            "The one pass failed. " + AuthoringTools.MissingSvtAv1 + " AllowAv1EncoderFallback is on, but the "
+            + "fallback to libaom-av1 could not be used: this ffmpeg has no libaom-av1 encoder either, so there was "
+            + "nothing to fall back to. Install an ffmpeg build that includes libsvtav1 or libaom-av1. The command was: "
+            + "ffmpeg -c:v libsvtav1");
         message.Should().NotContain(AuthoringTools.SvtAv1Remedies);
     }
 
@@ -125,11 +121,10 @@ public class Av1EncoderFallbackTests
     public void With_the_fallback_on_and_no_reason_given_the_message_still_says_the_fallback_could_not_help()
     {
         //Arrange
-        FFMpegEncoderNotFoundException failure = new FFMpegEncoderNotFoundException(
-            "libsvtav1", "ffmpeg exited with non-zero exit-code (1 - Unknown encoder 'libsvtav1')");
+        string problem = null;
 
         //Act
-        string message = CbvAuthor.DescribePassFailure("video pass", "-c:v libsvtav1", true, failure);
+        string message = FFmpegVocabulary.DescribePassFailure("video pass", "-c:v libsvtav1", true, "libsvtav1", problem);
 
         //Assert
         message.Should().Be(
@@ -141,10 +136,10 @@ public class Av1EncoderFallbackTests
     public void A_missing_encoder_other_than_libsvtav1_is_named()
     {
         //Arrange
-        Exception failure = MissingEncoder("libopus", string.Empty);
+        string missingEncoder = "libopus";
 
         //Act
-        string message = CbvAuthor.DescribePassFailure("one pass", "-c:a libopus", false, failure);
+        string message = FFmpegVocabulary.DescribePassFailure("one pass", "-c:a libopus", false, missingEncoder, null);
 
         //Assert
         message.Should().Contain("has no 'libopus' encoder");
@@ -303,36 +298,6 @@ public class Av1EncoderFallbackTests
     }
 
     [Fact]
-    public void ZZZ_The_process_wide_switch_turns_the_fallback_on_for_a_request_that_leaves_its_own_off()
-    {
-        //Arrange
-        SkipUnlessSvtAv1IsMissing();
-        Assert.SkipUnless(AuthoringEncoders.HasAomAv1Encoder, AomAv1Missing);
-        using WorkFolder work = new WorkFolder("fallback-global");
-        string source = SyntheticSource.WriteClip(work.File("source.mkv"));
-        VideoAuthoringRequest request =
-            SvtAv1Request(VideoAuthoringFlavour.WebMProfile, source, work.File("clip.cbv"), work);
-        bool previous = GlobalFFOptions.Current.AllowAv1EncoderFallback;
-
-        try
-        {
-            GlobalFFOptions.Configure(options => options.AllowAv1EncoderFallback = true);
-
-            //Act
-            VideoAuthoringResult result = CbvAuthor.Write(request);
-
-            //Assert
-            request.AllowAv1EncoderFallback.Should().BeFalse();
-            result.PassesProfile.Should().BeTrue();
-            AssertRanWithLibAom(result, "one pass");
-        }
-        finally
-        {
-            GlobalFFOptions.Configure(options => options.AllowAv1EncoderFallback = previous);
-        }
-    }
-
-    [Fact]
     public void Without_libsvtav1_the_tool_check_warns_about_it_up_front()
     {
         //Arrange
@@ -402,15 +367,6 @@ public class Av1EncoderFallbackTests
         return request;
     }
 
-    private static Exception MissingEncoder(string encoderName, string explanation)
-    {
-        string message = (explanation.Length > 0 ? explanation + " " : string.Empty)
-            + "ffmpeg exited with non-zero exit-code (1 - Unknown encoder '" + encoderName + "')";
-
-        return new FFMpegEncoderNotFoundException(
-            encoderName, message, null, "[vost#0:0 @ 0000] Unknown encoder '" + encoderName + "'");
-    }
-
     private static void AssertExplainsMissingSvtAv1(VideoAuthoringException failure, string pass)
     {
         // Everything a caller that logs only Message needs, in the order a reader wants it.
@@ -419,11 +375,9 @@ public class Av1EncoderFallbackTests
         failure.Message.Should().Contain("The command was: ffmpeg ");
         failure.Message.Should().Contain("-c:v libsvtav1");
 
-        // And FFmpeg's own account is still underneath it, whole.
-        (failure.InnerException is FFMpegEncoderNotFoundException).Should().BeTrue();
-        FFMpegEncoderNotFoundException missing = (FFMpegEncoderNotFoundException)failure.InnerException;
-        missing.EncoderName.Should().Be(AuthoringEncoderNames.LibSvtAv1);
-        missing.FFMpegErrorOutput.Should().Contain("Unknown encoder 'libsvtav1'");
+        // And FFmpeg's own account follows it: the exit code and the end of its error stream.
+        failure.Message.Should().Contain("ffmpeg exited with code ");
+        failure.Message.Should().Contain("Unknown encoder 'libsvtav1'");
     }
 
     private static void AssertRanWithLibAom(VideoAuthoringResult result, string pass)

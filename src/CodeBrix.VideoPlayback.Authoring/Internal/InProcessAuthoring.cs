@@ -15,13 +15,11 @@ using CodeBrix.VideoPlayback.Containers.Ivf;
 using CodeBrix.VideoPlayback.Containers.Matroska;
 using CodeBrix.VideoPlayback.Containers.Ogg;
 using CodeBrix.VideoPlayback.Processing;
-using CodeBrix.VideoProcessing;
 using CodeBrix.VideoProcessing.Core;
 using CodeBrix.VideoProcessing.Core.Encoding;
 using CodeBrix.VideoProcessing.Core.Frames;
 using CodeBrix.VideoProcessing.Core.Media;
 using CodeBrix.VideoProcessing.Core.Output;
-using CodeBrix.VideoProcessing.Engine;
 
 // Both the playback core and the encoder contract name their codec-id class VideoCodecIds; the container's is
 // the one a FLAC track is declared with.
@@ -37,10 +35,10 @@ namespace CodeBrix.VideoPlayback.Authoring.Internal;
 /// </summary>
 /// <remarks>
 /// <para>
-/// THE ENGINE. The one the application registered with <c>VideoProcessors</c>, or - when it registered none -
-/// the desktop ffmpeg engine, used directly and never registered from here: a library does not choose the
-/// process's engine. Everything below goes through the engine-neutral contract only, so the same passes run
-/// on any engine that can decode the source, Android's included.
+/// THE ENGINE. The one the application registered with <c>VideoProcessors</c> - and ONLY that one: with none
+/// registered, authoring refuses (<see cref="NoEngineRegistered" />). A library does not choose the process's
+/// engine. Everything below goes through the engine-neutral contract only, so the same passes run on any engine
+/// that can decode the source, Android's included.
 /// </para>
 /// <para>
 /// THE ENCODERS. AV1 for the picture and the alpha plane, FLAC, Vorbis or Opus for the sound - all in process,
@@ -98,11 +96,25 @@ internal static class InProcessAuthoring
     internal static readonly AsyncLocal<IVideoProcessor> EngineOverride = new AsyncLocal<IVideoProcessor>();
 
     /// <summary>
+    /// Lets a test see the library behave as if NO engine were registered, for the flow it runs in only, without
+    /// touching the process-wide registry (which cannot take an engine back out, and in which other tests have
+    /// registered the ffmpeg engine). False - the default - asks the registry. <see cref="EngineOverride" /> still
+    /// wins over it.
+    /// </summary>
+    internal static readonly AsyncLocal<bool> NothingRegisteredOverride = new AsyncLocal<bool>();
+
+    /// <summary>What every authoring entry point says when the application registered no engine.</summary>
+    internal const string NoEngineRegistered =
+        "Authoring decodes through the registered video-processing engine and none is registered. Call "
+        + "CodeBrixVideoProcessing.Register() (the ffmpeg engine, desktop) or CodeBrixVideoProcessingAndroid.Register() "
+        + "(Android) once at start-up.";
+
+    /// <summary>
     /// Decides whether a bespoke request runs as FFmpeg command lines or in process, and why when it falls back.
     /// </summary>
     /// <param name="request">The bespoke request.</param>
     /// <param name="probeBinaries">
-    /// True to run <c>ffmpeg</c> and <c>ffprobe</c> to find out whether they are there; false - a dry run - to
+    /// True to have the engine look for <c>ffmpeg</c> and <c>ffprobe</c> to find out whether they are there; false - a dry run - to
     /// judge from the registered engine alone.
     /// </param>
     /// <param name="fallbackReason">
@@ -135,7 +147,7 @@ internal static class InProcessAuthoring
         {
             fallbackReason = "the registered video-processing engine is '" + engine.Name + "', not ffmpeg";
         }
-        else if (probeBinaries && !AuthoringTools.TryVerify(out _))
+        else if (probeBinaries && !AuthoringTools.TryVerify(engine, out _, out _))
         {
             fallbackReason = "ffmpeg and ffprobe cannot be run on this machine";
         }
@@ -173,37 +185,45 @@ internal static class InProcessAuthoring
     /// <returns>True for Opus.</returns>
     internal static bool IsOpus(VideoAuthoringRequest request) =>
         string.Equals(
-            AuthoringCommandFactory.AudioEncoderNameFor(request.Audio.Codec, request.Flavour),
+            FFmpegVocabulary.AudioEncoderNameFor(request.Audio.Codec, request.Flavour),
             AuthoringEncoderNames.LibOpus,
             StringComparison.Ordinal);
 
     /// <summary>
-    /// The engine the in-process passes decode with: a test's override when one is set, else the registered one,
-    /// or the desktop ffmpeg engine when the application registered none.
+    /// The engine authoring works through: a test's override when one is set, else the one the application
+    /// registered. There is no fallback - the ffmpeg command lines run through the engine's external tools too.
     /// </summary>
     /// <returns>The engine.</returns>
+    /// <exception cref="VideoAuthoringException">No engine is registered (<see cref="NoEngineRegistered" />).</exception>
     internal static IVideoProcessor ResolveEngine()
     {
         IVideoProcessor forced = EngineOverride.Value;
         if (forced != null) return forced;
 
-        return VideoProcessors.TryGetCurrent(out IVideoProcessor processor) ? processor : CodeBrixVideoProcessing.Processor;
+        if (!NothingRegisteredOverride.Value && VideoProcessors.TryGetCurrent(out IVideoProcessor processor))
+        {
+            return processor;
+        }
+
+        throw new VideoAuthoringException(NoEngineRegistered);
     }
 
     /// <summary>
-    /// True when an engine is the ffmpeg one - the only engine with an ffmpeg prepare pass and a source survey.
-    /// Every other engine has its picture shaped in process instead (<see cref="ManagedFrameShaping" />).
+    /// True when an engine can run external tools (<see cref="VideoProcessorCapabilities.ExternalTools" />) - the
+    /// ffmpeg engine - and so is the engine with an ffmpeg prepare pass and the ffmpeg command-line flavours. Every
+    /// other engine has its picture shaped in process instead (<see cref="ManagedFrameShaping" />). Judged from the
+    /// engine alone; whether ffmpeg and ffprobe are actually there is <see cref="AuthoringTools" />' question.
     /// </summary>
     /// <param name="engine">The engine.</param>
-    /// <returns>True for the ffmpeg engine.</returns>
-    internal static bool IsFFmpegEngine(IVideoProcessor engine) => engine is FFmpegVideoProcessor;
+    /// <returns>True for an engine with external tools.</returns>
+    internal static bool IsFFmpegEngine(IVideoProcessor engine) => engine.TryGetExternalTools(out _);
 
-    /// <summary>Reports whether the master flavour has an engine to decode with.</summary>
+    /// <summary>Reports whether the in-process passes have an engine to decode with.</summary>
     /// <param name="engine">The engine <see cref="ResolveEngine" /> chose.</param>
     /// <param name="problem">Why not, or an empty string.</param>
     /// <returns>
-    /// True for any registered engine other than ffmpeg, and for the ffmpeg engine when <c>ffmpeg</c> and
-    /// <c>ffprobe</c> can both be run.
+    /// True for any engine without external tools, and for an engine with them (the ffmpeg engine) when it can
+    /// find <c>ffmpeg</c> and <c>ffprobe</c>.
     /// </returns>
     internal static bool TryVerifyEngine(IVideoProcessor engine, out string problem)
     {
@@ -213,17 +233,7 @@ internal static class InProcessAuthoring
             return true;
         }
 
-        if (AuthoringTools.TryVerify(out problem)) return true;
-
-        if (OperatingSystem.IsAndroid() || !VideoProcessors.IsRegistered)
-        {
-            problem = "The master flavour decodes its source through a registered video-processing engine, and none "
-                + "is registered, so it fell back to the desktop ffmpeg engine - which cannot run here. Register "
-                + "the engine for this platform at start-up (CodeBrixVideoProcessingAndroid.Register() on Android, "
-                + "CodeBrixVideoProcessing.Register() on the desktop), or install ffmpeg. " + problem;
-        }
-
-        return false;
+        return AuthoringTools.TryVerify(engine, out _, out problem);
     }
 
     /// <summary>

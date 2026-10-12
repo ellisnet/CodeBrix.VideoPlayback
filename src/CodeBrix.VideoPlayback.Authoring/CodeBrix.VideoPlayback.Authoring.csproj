@@ -69,10 +69,13 @@
 
   <!--
     Every package reference here is there for WRITING, never for playing.
-    CodeBrix.VideoProcessing builds and launches the ffmpeg command lines of the WebM-profile and bespoke
-    flavours, and is the desktop engine the in-process passes fall back to when the application registered
-    none. CodeBrix.VideoProcessing.Core is the engine-neutral contract the in-process passes decode their
-    source through - any registered engine, so they do not depend on ffmpeg. The in-process passes ENCODE IN
+    CodeBrix.VideoProcessing.Core is the ONLY member of the video-processing family referenced: it is the
+    engine-neutral contract the in-process passes decode their source through, and its external-tools facet
+    (CodeBrix.VideoProcessing.Core.Tools) is how the ffmpeg command lines of the WebM-profile and bespoke flavours
+    and the prepare pass are run - Authoring composes them (Internal/FFmpegVocabulary.cs) and the REGISTERED
+    engine locates and launches ffmpeg. The ffmpeg package itself (CodeBrix.VideoProcessing) is NOT referenced:
+    the application registers an engine at start-up (CodeBrixVideoProcessing.Register() on the desktop,
+    CodeBrixVideoProcessingAndroid.Register() on Android), and authoring refuses without one. The in-process passes ENCODE IN
     PROCESS: CodeBrix.VideoEncoding.Av1 writes the picture and the master flavour's monochrome alpha plane,
     CodeBrix.Audio.FlacWriter the master flavour's lossless sound as FLAC packets, CodeBrix.Audio.Vorbis
     the bespoke flavour's sound when that flavour is encoded in process (and Vorbis in a Matroska document),
@@ -87,8 +90,7 @@
     playback registry: authoring writes files, it does not play them or draw them.
   -->
   <ItemGroup>
-    <PackageReference Include="CodeBrix.VideoProcessing.MitLicenseForever" Version="1.0.285.663" />
-    <PackageReference Include="CodeBrix.VideoProcessing.Core.MitLicenseForever" Version="1.0.285.663" />
+    <PackageReference Include="CodeBrix.VideoProcessing.Core.MitLicenseForever" Version="1.0.285.792" />
     <PackageReference Include="CodeBrix.VideoEncoding.Av1.BsdLicenseForever" Version="1.0.284.321" />
     <PackageReference Include="CodeBrix.Audio.FlacWriter.BsdLicenseForever" Version="1.0.284.304" />
     <PackageReference Include="CodeBrix.Audio.Vorbis.BsdLicenseForever" Version="1.0.283.1118" />

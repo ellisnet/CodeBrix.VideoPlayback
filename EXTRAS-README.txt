@@ -161,8 +161,9 @@ Public-Domain phone recordings - and writes the manifest that describes them.
 It is the counterpart to generate-assets.sh, and the difference is the point.
 That script drives ffmpeg from a shell for the golden corpus. This tool builds
 every command line through CodeBrix.VideoPlayback.Authoring, which renders the
-arguments and hands them to CodeBrix.VideoProcessing to run; the tool never
-invokes ffmpeg itself. It used to be the working PROTOTYPE of that authoring
+arguments and runs them through the registered engine's external tools - the
+tool registers the CodeBrix.VideoProcessing ffmpeg engine at start-up
+(CodeBrixVideoProcessing.Register()); the tool never invokes ffmpeg itself. It used to be the working PROTOTYPE of that authoring
 library - CorpusEncoder.cs built its own ffmpeg arguments - and now it is the
 library's reference CONSUMER: CorpusEncoder.cs turns a plan entry into a
 VideoAuthoringRequest and nothing else. Every decision the prototype documented

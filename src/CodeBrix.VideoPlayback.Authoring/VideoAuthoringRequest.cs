@@ -148,10 +148,11 @@ public sealed class VideoAuthoringRequest
     /// rendering the line the request asked for.
     /// </para>
     /// <para>
-    /// This only turns the fallback ON for this request. The process-wide switch,
-    /// <c>GlobalFFOptions.Configure(o =&gt; o.AllowAv1EncoderFallback = true)</c> in CodeBrix.VideoProcessing,
-    /// works too, and a request leaving this false does not turn it off. libaom is far slower than SVT-AV1 and
-    /// the same rate factor does not give identical quality, which is why neither is on by default.
+    /// This is the ONLY switch that reaches authoring. The ffmpeg package's own process-wide switch
+    /// (<c>GlobalFFOptions.AllowAv1EncoderFallback</c>) belongs to that package's operations: authoring composes and
+    /// runs its command lines through the registered engine's external tools and does the rewrite itself, so it
+    /// neither reads nor needs that switch. libaom is far slower than SVT-AV1 and the same rate factor does not give
+    /// identical quality, which is why this is off by default.
     /// </para>
     /// </remarks>
     public bool AllowAv1EncoderFallback { get; set; }

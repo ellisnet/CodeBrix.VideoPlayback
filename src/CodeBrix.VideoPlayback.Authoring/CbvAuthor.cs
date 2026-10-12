@@ -17,10 +17,9 @@ using CodeBrix.VideoPlayback.Containers.Matroska;
 using CodeBrix.VideoPlayback.Codecs;
 using CodeBrix.VideoPlayback.Decoding;
 using CodeBrix.VideoPlayback.Sources;
-using CodeBrix.VideoProcessing;
 using CodeBrix.VideoProcessing.Core;
 using CodeBrix.VideoProcessing.Core.Media;
-using CodeBrix.VideoProcessing.Exceptions;
+using CodeBrix.VideoProcessing.Core.Tools;
 
 // Both libraries have a Chapter type; the one this program means is the container's.
 using Chapter = CodeBrix.VideoPlayback.Chapters.Chapter;
@@ -56,7 +55,7 @@ namespace CodeBrix.VideoPlayback.Authoring;
 /// </para>
 /// <para>
 /// The master flavour (<c>.cbvmaster</c>, Mode3) runs IN PROCESS: its source is decoded through the
-/// video-processing engine the application registered (the desktop ffmpeg engine when it registered none),
+/// video-processing engine the application registered (with none registered, authoring refuses),
 /// the picture is encoded to AV1 by an in-process encoder - fully transparent pixels first given the colour of
 /// the nearest visible one - then, when the file carries alpha, the alpha channel as a monochrome AV1 stream
 /// whose key frames are forced onto the picture's, and the sound as lossless FLAC packets - then the same
@@ -83,6 +82,14 @@ namespace CodeBrix.VideoPlayback.Authoring;
 /// at all on an engine of its own, such as Android's.
 /// </para>
 /// <para>
+/// WHAT HAS TO BE REGISTERED. A video-processing engine, once at start-up: <c>CodeBrixVideoProcessing.Register()</c>
+/// on the desktop (the ffmpeg engine) or <c>CodeBrixVideoProcessingAndroid.Register()</c> on Android. Every entry
+/// point - the dry run included - works through the registered engine, and refuses with a
+/// <see cref="VideoAuthoringException" /> naming those two calls when there is none. The FFmpeg command lines run
+/// through that engine's external tools (<c>CodeBrix.VideoProcessing.Core.Tools</c>); this library composes them
+/// and never references the ffmpeg package.
+/// </para>
+/// <para>
 /// THIS IS A DEVELOPER-MACHINE LIBRARY. It launches a child process and it expects an encoder to be sitting
 /// on the machine. It has no place inside a shipped application, and the packages an application needs to
 /// PLAY what this writes do not include it.
@@ -104,7 +111,9 @@ public static class CbvAuthor
     /// one ends with its mux, <c>mux webm ...</c>.
     /// </returns>
     /// <exception cref="ArgumentNullException"><paramref name="request" /> is null.</exception>
-    /// <exception cref="VideoAuthoringException">The request cannot be honoured as it stands.</exception>
+    /// <exception cref="VideoAuthoringException">
+    /// The request cannot be honoured as it stands, or no video-processing engine is registered.
+    /// </exception>
     /// <exception cref="OperationCanceledException">
     /// <c>request.CancellationToken</c> was already cancelled when this was called. Nothing was rendered and
     /// nothing was touched.
@@ -146,7 +155,7 @@ public static class CbvAuthor
 
             return new[]
             {
-                new AuthoringCommand("one pass", AuthoringCommandFactory.BuildWebMProfile(request, lut).Arguments),
+                new AuthoringCommand("one pass", FFmpegVocabulary.BuildWebMProfile(request, lut).Render()),
             };
         }
 
@@ -166,14 +175,14 @@ public static class CbvAuthor
         {
             new AuthoringCommand(
                 "video pass",
-                AuthoringCommandFactory.BuildBespokeVideo(request, lut, IvfPathFor(request, temporaryFolder)).Arguments),
+                FFmpegVocabulary.BuildBespokeVideo(request, lut, IvfPathFor(request, temporaryFolder)).Render()),
         };
 
         if (request.Audio.Include)
         {
             commands.Add(new AuthoringCommand(
                 "audio pass",
-                AuthoringCommandFactory.BuildBespokeAudio(request, OggPathFor(request, temporaryFolder)).Arguments));
+                FFmpegVocabulary.BuildBespokeAudio(request, OggPathFor(request, temporaryFolder)).Render()));
         }
 
         return commands;
@@ -184,8 +193,8 @@ public static class CbvAuthor
     /// <returns>The file, the commands that made it, the profile report and any notes.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="request" /> is null.</exception>
     /// <exception cref="VideoAuthoringException">
-    /// The request cannot be honoured, FFmpeg is not installed, an encode failed, or the finished file does
-    /// not pass the streamable profile and the request asked to be told so.
+    /// The request cannot be honoured, no video-processing engine is registered, FFmpeg is not installed, an
+    /// encode failed, or the finished file does not pass the streamable profile and the request asked to be told so.
     /// </exception>
     /// <exception cref="OperationCanceledException">
     /// <c>request.CancellationToken</c> was cancelled. The partly written output file has been deleted and so
@@ -201,12 +210,15 @@ public static class CbvAuthor
         // Before the tool check, so a request cancelled before it started never even looks for FFmpeg.
         cancellationToken.ThrowIfCancellationRequested();
 
-        // The master flavour decodes through whichever engine the application registered, and needs FFmpeg only
-        // when that engine IS the ffmpeg one; the other two flavours are FFmpeg command lines.
-        // The bespoke flavour does too when it encodes in process - by request, or as the fallback when the
-        // ffmpeg path is not available.
+        // Everything goes through the engine the application registered - and with none registered, nothing runs.
+        // The master flavour decodes through it, and needs FFmpeg only when that engine IS the ffmpeg one (it has
+        // external tools); the other two flavours are FFmpeg command lines, run through that engine's tools.
+        // The bespoke flavour encodes in process instead - by request, or as the fallback when the ffmpeg path is
+        // not available.
         // The WebM-profile flavour follows the bespoke flavour's rule, with the managed WebM muxer in FFmpeg's place.
+        IVideoProcessor engine = InProcessAuthoring.ResolveEngine();
         IVideoProcessor masterEngine = null;
+        IExternalTools tools = null;
         string fallbackReason = null;
         bool inProcess = request.Flavour == VideoAuthoringFlavour.Master
             || !InProcessAuthoring.UsesFFmpegPath(request, true, out fallbackReason);
@@ -215,7 +227,7 @@ public static class CbvAuthor
         {
             if (request.Flavour == VideoAuthoringFlavour.WebMProfile) RefuseInProcessWebMSound(request);
 
-            masterEngine = InProcessAuthoring.ResolveEngine();
+            masterEngine = engine;
             if (!InProcessAuthoring.TryVerifyEngine(masterEngine, out string problem))
             {
                 throw new VideoAuthoringException(problem);
@@ -225,7 +237,7 @@ public static class CbvAuthor
         }
         else
         {
-            AuthoringTools.Verify();
+            tools = AuthoringTools.Require(engine);
         }
 
         Stopwatch clock = Stopwatch.StartNew();
@@ -234,14 +246,11 @@ public static class CbvAuthor
         List<AuthoringCommand> commands = new List<AuthoringCommand>(2);
         List<string> temporaryFiles = new List<string>(3);
 
-        // One ffprobe of the source, for the text this library does NOT carry: the source's own subtitle
-        // streams and chapters. The run says what it left behind rather than letting the caller find out
-        // from the finished file. A master run on an engine other than ffmpeg has no ffprobe to ask; it says
-        // that instead.
+        // One analysis of the source by the engine, for the text this library does NOT carry: the source's own
+        // subtitle streams and chapters. The run says what it left behind rather than letting the caller find out
+        // from the finished file.
         cancellationToken.ThrowIfCancellationRequested();
-        SourceTextSurvey survey = masterEngine == null || InProcessAuthoring.IsFFmpegEngine(masterEngine)
-            ? SurveySourceText(request, notes)
-            : SkipSourceTextSurvey(masterEngine, notes);
+        SourceTextSurvey survey = SurveySourceText(engine, request, notes);
         NoteUncarriedSourceText(request, survey, notes);
         NoteTitleWithoutField(request, notes);
 
@@ -278,8 +287,8 @@ public static class CbvAuthor
                 NoteCollapsedChapterTitles(request, notes);
                 NoteDroppedCaptionFlags(request, notes);
 
-                FFMpegArgumentProcessor pass = AuthoringCommandFactory.BuildWebMProfile(request, lut);
-                Run(pass, request, "one pass", 1, 1, commands, notes);
+                FFmpegVocabulary.CommandLine pass = FFmpegVocabulary.BuildWebMProfile(request, lut);
+                FFmpegVocabulary.Run(tools, pass, request, "one pass", 1, 1, commands, notes);
             }
             else if (request.Flavour == VideoAuthoringFlavour.Master)
             {
@@ -297,14 +306,14 @@ public static class CbvAuthor
                 temporaryFiles.Add(ivf);
                 int passCount = request.Audio.Include ? 2 : 1;
 
-                FFMpegArgumentProcessor videoPass = AuthoringCommandFactory.BuildBespokeVideo(request, lut, ivf);
-                Run(videoPass, request, "video pass", 1, passCount, commands, notes);
+                FFmpegVocabulary.CommandLine videoPass = FFmpegVocabulary.BuildBespokeVideo(request, lut, ivf);
+                FFmpegVocabulary.Run(tools, videoPass, request, "video pass", 1, passCount, commands, notes);
 
                 if (request.Audio.Include)
                 {
                     temporaryFiles.Add(ogg);
-                    FFMpegArgumentProcessor audioPass = AuthoringCommandFactory.BuildBespokeAudio(request, ogg);
-                    Run(audioPass, request, "audio pass", 2, passCount, commands, notes);
+                    FFmpegVocabulary.CommandLine audioPass = FFmpegVocabulary.BuildBespokeAudio(request, ogg);
+                    FFmpegVocabulary.Run(tools, audioPass, request, "audio pass", 2, passCount, commands, notes);
                 }
 
                 // The mux is managed code over two finished files and takes a fraction of a second, so it is
@@ -373,7 +382,9 @@ public static class CbvAuthor
     /// <returns>True when <c>ffmpeg</c> and <c>ffprobe</c> can both be run.</returns>
     /// <remarks>
     /// This checks the binaries only. The overload that also hands back <c>warnings</c> checks the encoders
-    /// in the build as well.
+    /// in the build as well. The binaries are looked for by the REGISTERED engine's external tools - the desktop
+    /// ffmpeg engine looks in <c>GlobalFFOptions.Current.BinaryFolder</c> first, then on the PATH - so this is false,
+    /// with the reason, when no engine is registered or the registered one has no external tools (Android's).
     /// </remarks>
     public static bool TryVerifyTools(out string problem) => AuthoringTools.TryVerify(out problem);
 
@@ -399,8 +410,8 @@ public static class CbvAuthor
 
     /// <summary>Throws unless the one tool authoring needs is installed.</summary>
     /// <exception cref="VideoAuthoringException">
-    /// <c>ffmpeg</c> or <c>ffprobe</c> could not be run; the message names both and says where they were
-    /// looked for.
+    /// <c>ffmpeg</c> or <c>ffprobe</c> could not be found by the registered engine, or no engine with external
+    /// tools is registered; the message says which, and where the binaries were looked for.
     /// </exception>
     /// <remarks>
     /// This checks the binaries only. The overload that also hands back <c>warnings</c> checks the encoders
@@ -417,135 +428,10 @@ public static class CbvAuthor
     /// when the default AV1 encoder, SVT-AV1 (<c>libsvtav1</c>), is absent. Empty when every encoder is there.
     /// </param>
     /// <exception cref="VideoAuthoringException">
-    /// <c>ffmpeg</c> or <c>ffprobe</c> could not be run; the message names both and says where they were
-    /// looked for. A missing ENCODER never throws: it is a warning.
+    /// <c>ffmpeg</c> or <c>ffprobe</c> could not be found by the registered engine, or no engine with external
+    /// tools is registered; the message says which. A missing ENCODER never throws: it is a warning.
     /// </exception>
     public static void VerifyTools(out IReadOnlyList<string> warnings) => AuthoringTools.Verify(out warnings);
-
-    /// <summary>
-    /// The message a failed FFmpeg pass is reported with: which pass failed, an explanation when FFmpeg did
-    /// not have an encoder the pass asked for, and the command line.
-    /// </summary>
-    /// <param name="label">The pass - "one pass", "video pass" or "audio pass".</param>
-    /// <param name="arguments">The arguments the pass ran with.</param>
-    /// <param name="fallbackOn">Whether the AV1 encoder fallback was on for the pass, by request or globally.</param>
-    /// <param name="failure">What the pass threw.</param>
-    /// <returns>
-    /// "The video pass failed. The command was: ffmpeg ..." - with, between the two sentences, the explanation
-    /// of a missing encoder when <paramref name="failure" /> or anything inside it is an
-    /// <see cref="FFMpegEncoderNotFoundException" />.
-    /// </returns>
-    internal static string DescribePassFailure(string label, string arguments, bool fallbackOn, Exception failure)
-    {
-        string explanation = ExplainMissingEncoder(FindMissingEncoder(failure), fallbackOn);
-
-        return "The " + label + " failed. "
-            + (explanation.Length == 0 ? string.Empty : explanation + " ")
-            + "The command was: ffmpeg " + arguments;
-    }
-
-    private static void Run(
-        FFMpegArgumentProcessor processor,
-        VideoAuthoringRequest request,
-        string label,
-        int passNumber,
-        int passCount,
-        List<AuthoringCommand> commands,
-        List<string> notes)
-    {
-        if (request.ProgressCallback != null && request.SourceDuration > TimeSpan.Zero)
-        {
-            int lastReported = -1;
-
-            processor.NotifyOnProgress(
-                percent =>
-                {
-                    int whole = (int)percent;
-                    if (whole <= lastReported) return;
-                    lastReported = whole;
-                    request.ProgressCallback(new AuthoringProgress(label, passNumber, passCount, whole));
-                },
-                request.SourceDuration);
-        }
-
-        // The default timeout of zero KILLS the child outright instead of asking it to quit tidily first.
-        // That is deliberate: FFmpeg's graceful "q" quit hangs on the machine this library is developed on,
-        // and the half-written file is being thrown away anyway, so there is nothing a tidy finish protects.
-        processor.CancellableThrough(request.CancellationToken);
-
-        // The request can turn the AV1 encoder fallback ON for its own passes. It never turns it OFF: a process
-        // that switched it on through GlobalFFOptions keeps it, because this only adds to the run's options.
-        if (request.AllowAv1EncoderFallback)
-        {
-            processor.Configure(options => options.AllowAv1EncoderFallback = true);
-        }
-
-        try
-        {
-            processor.ProcessSynchronously();
-        }
-        catch (Exception ex)
-        {
-            // A cancelled pass comes back looking like any other failed process, because that is what a
-            // killed process is. The token is the authority on which it was.
-            request.CancellationToken.ThrowIfCancellationRequested();
-
-            throw new VideoAuthoringException(
-                DescribePassFailure(label, processor.Arguments, IsAv1EncoderFallbackOn(request), ex), ex);
-        }
-
-        // And a pass that was killed cleanly enough to report success is still a cancelled pass.
-        request.CancellationToken.ThrowIfCancellationRequested();
-
-        // Recorded AFTER the pass, from the processor itself. When the AV1 encoder fallback rewrote the line
-        // before FFmpeg started, this is the line that really ran - not the one the request rendered.
-        commands.Add(new AuthoringCommand(label, processor.Arguments));
-
-        foreach (string note in processor.Av1EncoderFallbackNotes)
-        {
-            notes.Add(label + ": " + note);
-        }
-    }
-
-    private static bool IsAv1EncoderFallbackOn(VideoAuthoringRequest request) =>
-        request.AllowAv1EncoderFallback || GlobalFFOptions.Current.AllowAv1EncoderFallback;
-
-    private static FFMpegEncoderNotFoundException FindMissingEncoder(Exception failure)
-    {
-        for (Exception current = failure; current != null; current = current.InnerException)
-        {
-            if (current is FFMpegEncoderNotFoundException missing) return missing;
-        }
-
-        return null;
-    }
-
-    // What the video-processing wrapper's own failure message has always begun with. Anything IN FRONT of it
-    // in an FFMpegEncoderNotFoundException is the wrapper's explanation of the missing encoder.
-    private const string HistoricalFFMpegFailureText = "ffmpeg exited with non-zero exit-code";
-
-    private static string ExplainMissingEncoder(FFMpegEncoderNotFoundException missing, bool fallbackOn)
-    {
-        if (missing == null) return string.Empty;
-
-        if (!string.Equals(missing.EncoderName, AuthoringEncoderNames.LibSvtAv1, StringComparison.Ordinal))
-        {
-            return "The ffmpeg being used has no '" + missing.EncoderName + "' encoder. Install an ffmpeg build "
-                + "that includes it, or ask the request for an encoder this build has.";
-        }
-
-        if (!fallbackOn) return AuthoringTools.MissingSvtAv1 + " " + AuthoringTools.SvtAv1Remedies;
-
-        // The fallback was on and still could not help - in practice because this build has no libaom-av1
-        // either. The wrapper's own explanation names the reason, and it is everything before the text its
-        // failure message has always carried.
-        int historical = missing.Message.IndexOf(HistoricalFFMpegFailureText, StringComparison.Ordinal);
-        string wrapperExplanation = historical > 0 ? missing.Message.Substring(0, historical).Trim() : string.Empty;
-
-        return wrapperExplanation.Length > 0
-            ? wrapperExplanation
-            : AuthoringTools.MissingSvtAv1 + " " + AuthoringTools.FallbackCouldNotHelp;
-    }
 
     private static CbvAuthoringRequest BuildMuxRequest(VideoAuthoringRequest request, string ivfPath, string oggPath)
     {
@@ -667,14 +553,18 @@ public static class CbvAuthor
         public string PixelFormat;
     }
 
-    private static SourceTextSurvey SurveySourceText(VideoAuthoringRequest request, IList<string> notes)
+    private static SourceTextSurvey SurveySourceText(IVideoProcessor engine, VideoAuthoringRequest request, IList<string> notes)
     {
         SourceTextSurvey survey = new SourceTextSurvey();
 
-        IMediaAnalysis analysis;
+        MediaInfo media;
         try
         {
-            analysis = FFProbe.Analyse(request.SourcePath);
+            media = engine.Analyse(request.SourcePath, request.CancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception exception)
         {
@@ -687,18 +577,29 @@ public static class CbvAuthor
         }
 
         survey.Probed = true;
-        survey.ChapterCount = analysis.Chapters != null ? analysis.Chapters.Count : 0;
-        survey.PixelFormat = analysis.PrimaryVideoStream?.PixelFormat;
+        survey.PixelFormat = media.PrimaryVideo?.PixelFormatName;
 
-        if (analysis.SubtitleStreams != null)
+        foreach (SubtitleStreamInfo stream in media.SubtitleStreams)
         {
-            foreach (SubtitleStream stream in analysis.SubtitleStreams)
-            {
-                string description = "#" + stream.Index.ToString(CultureInfo.InvariantCulture) + " "
-                    + (string.IsNullOrEmpty(stream.CodecName) ? "unknown" : stream.CodecName);
-                if (!string.IsNullOrEmpty(stream.Language)) description += " (" + stream.Language + ")";
-                survey.SubtitleStreams.Add(description);
-            }
+            string description = "#" + stream.Index.ToString(CultureInfo.InvariantCulture) + " "
+                + (string.IsNullOrEmpty(stream.CodecName) ? "unknown" : stream.CodecName);
+            if (!string.IsNullOrEmpty(stream.Language)) description += " (" + stream.Language + ")";
+            survey.SubtitleStreams.Add(description);
+        }
+
+        // Chapters are read by an engine with external tools - the ffmpeg engine, through ffprobe. Any other
+        // (Android's MediaExtractor has no chapter API) reports none whatever the file holds, so its empty list
+        // is not taken for an answer: the run says what was checked and what was not.
+        if (InProcessAuthoring.IsFFmpegEngine(engine))
+        {
+            survey.ChapterCount = media.Chapters.Count;
+        }
+        else
+        {
+            notes.Add(
+                "the source was checked for subtitle streams of its own through the '" + engine.Name + "' engine, "
+                + "but not for chapters: that engine does not read chapters. If it carries any, they were not "
+                + "carried - chapters come only from ChaptersPath.");
         }
 
         return survey;
@@ -804,7 +705,7 @@ public static class CbvAuthor
         }
 
         string audioEncoder = EncodesSound(request)
-            ? AuthoringCommandFactory.AudioEncoderNameFor(request.Audio.Codec, request.Flavour)
+            ? FFmpegVocabulary.AudioEncoderNameFor(request.Audio.Codec, request.Flavour)
             : null;
 
         bool opus = string.Equals(audioEncoder, AuthoringEncoderNames.LibOpus, StringComparison.Ordinal);
@@ -1118,8 +1019,16 @@ public static class CbvAuthor
         if (prepare)
         {
             temporaryFiles.Add(prepared);
-            FFMpegArgumentProcessor preparePass = AuthoringCommandFactory.BuildPreparePass(request, lut, prepared, false);
-            Run(preparePass, request, InProcessAuthoring.PreparePassLabel, pass++, passCount, commands, notes);
+            FFmpegVocabulary.CommandLine preparePass = FFmpegVocabulary.BuildPreparePass(request, lut, prepared, false);
+            FFmpegVocabulary.Run(
+                AuthoringTools.Require(engine),
+                preparePass,
+                request,
+                InProcessAuthoring.PreparePassLabel,
+                pass++,
+                passCount,
+                commands,
+                notes);
 
             input = prepared;
             pictureStream = AnalyseSource(engine, prepared, cancellationToken).PrimaryVideo ?? stream;
@@ -1334,8 +1243,16 @@ public static class CbvAuthor
         if (prepare)
         {
             temporaryFiles.Add(prepared);
-            FFMpegArgumentProcessor preparePass = AuthoringCommandFactory.BuildPreparePass(request, lut, prepared, false);
-            Run(preparePass, request, InProcessAuthoring.PreparePassLabel, pass++, passCount, commands, notes);
+            FFmpegVocabulary.CommandLine preparePass = FFmpegVocabulary.BuildPreparePass(request, lut, prepared, false);
+            FFmpegVocabulary.Run(
+                AuthoringTools.Require(engine),
+                preparePass,
+                request,
+                InProcessAuthoring.PreparePassLabel,
+                pass++,
+                passCount,
+                commands,
+                notes);
 
             input = prepared;
             pictureStream = AnalyseSource(engine, prepared, cancellationToken).PrimaryVideo ?? stream;
@@ -1412,7 +1329,7 @@ public static class CbvAuthor
             string prepared = PreparedPathFor(request, temporaryFolder);
             commands.Add(new AuthoringCommand(
                 InProcessAuthoring.PreparePassLabel,
-                AuthoringCommandFactory.BuildPreparePass(request, lut, prepared, alpha).Arguments));
+                FFmpegVocabulary.BuildPreparePass(request, lut, prepared, alpha).Render()));
             return prepared;
         }
 
@@ -1524,9 +1441,16 @@ public static class CbvAuthor
         if (prepare)
         {
             temporaryFiles.Add(prepared);
-            FFMpegArgumentProcessor preparePass =
-                AuthoringCommandFactory.BuildPreparePass(request, lut, prepared, alpha);
-            Run(preparePass, request, InProcessAuthoring.PreparePassLabel, pass++, passCount, commands, notes);
+            FFmpegVocabulary.CommandLine preparePass = FFmpegVocabulary.BuildPreparePass(request, lut, prepared, alpha);
+            FFmpegVocabulary.Run(
+                AuthoringTools.Require(engine),
+                preparePass,
+                request,
+                InProcessAuthoring.PreparePassLabel,
+                pass++,
+                passCount,
+                commands,
+                notes);
 
             input = prepared;
             pictureStream = AnalyseSource(engine, prepared, cancellationToken).PrimaryVideo ?? stream;
@@ -1688,15 +1612,6 @@ public static class CbvAuthor
         }
     }
 
-    private static SourceTextSurvey SkipSourceTextSurvey(IVideoProcessor engine, IList<string> notes)
-    {
-        notes.Add(
-            "the source was not checked for subtitle streams and chapters of its own: that check needs ffprobe, and "
-            + "this run decoded through the '" + engine.Name + "' engine. If it carries any, they were not carried - "
-            + "captions come only from Captions and chapters only from ChaptersPath.");
-        return new SourceTextSurvey();
-    }
-
     private static bool ResolveAlpha(
         VideoAuthoringRequest request,
         IVideoProcessor engine,
@@ -1706,7 +1621,7 @@ public static class CbvAuthor
     {
         bool engineDeliversAlpha = engine.Supports(VideoProcessorCapabilities.AlphaFrameSource);
 
-        // The engine's own description first; the ffprobe pixel format, when there is one, can only add to it.
+        // The engine's own description first; the survey's pixel format, when there is one, can only add to it.
         bool sourceHasAlpha = stream.HasAlpha || (survey.Probed && PixelFormatHasAlpha(survey.PixelFormat));
         string pixelFormat = !string.IsNullOrEmpty(stream.PixelFormatName) ? stream.PixelFormatName : survey.PixelFormat;
 

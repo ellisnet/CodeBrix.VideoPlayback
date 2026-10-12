@@ -46,7 +46,10 @@ package precisely so that the rule holds everywhere else: an application that
 draws frames itself, or on a platform Skia does not reach, takes the core alone.
 
 The third WRITES what the first reads. It drives the ffmpeg installed on the
-authoring machine, through CodeBrix.VideoProcessing, and produces ".cbv" files in
+authoring machine - composing the command lines itself (Internal/FFmpegVocabulary.cs)
+and running them through the REGISTERED engine's external-tools facet in
+CodeBrix.VideoProcessing.Core, the only video-processing package it references -
+and produces ".cbv" files in
 both flavours - the WebM-profile one in a single ffmpeg pass, the bespoke one in
 two passes plus the core's own muxer. The master flavour (".cbvmaster"), and the
 bespoke and WebM-profile flavours when they are asked for (or have to fall back
@@ -152,8 +155,10 @@ HARD RULES FOR THIS REPOSITORY
    empty:
        grep -rn 'SkiaSharp\|\bSK[A-Z]' src/CodeBrix.VideoPlayback \
            --include=*.cs --include=*.csproj
-1b. THE AUTHORING LIBRARY REFERENCES THE CORE, CodeBrix.VideoProcessing,
-   CodeBrix.VideoProcessing.Core and four ENCODER packages -
+1b. THE AUTHORING LIBRARY REFERENCES THE CORE, CodeBrix.VideoProcessing.Core
+   (NOT the ffmpeg package CodeBrix.VideoProcessing - see THE EXTERNAL-TOOLS
+   FACET, AND THE ONE FILE THAT SPEAKS FFMPEG), CodeBrix.Imaging (the MP4
+   export's image backdrop) and four ENCODER packages -
    CodeBrix.VideoEncoding.Av1, CodeBrix.Audio.FlacWriter,
    CodeBrix.Audio.Vorbis and CodeBrix.Audio.Opus (for its ENCODER only: the
    in-process WebM-profile flavour's sound; nothing in the library ever calls
@@ -1643,6 +1648,81 @@ so the file is judged once.
   an Ogg file the muxer reads.
 
 
+THE EXTERNAL-TOOLS FACET, AND THE ONE FILE THAT SPEAKS FFMPEG
+=============================================================
+Authoring depends on CodeBrix.VideoProcessing.Core and on no other member of that
+family. It still drives ffmpeg - the WebM-profile and bespoke command lines, the
+optional prepare pass of the in-process paths - but it does so through Core's
+EXTERNAL-TOOLS FACET (namespace CodeBrix.VideoProcessing.Core.Tools):
+
+  * THE ENGINE IS THE REGISTERED ONE, AND ONLY THAT ONE.
+    InProcessAuthoring.ResolveEngine returns the test seam's engine
+    (EngineOverride) or VideoProcessors.TryGetCurrent - and throws
+    VideoAuthoringException(InProcessAuthoring.NoEngineRegistered) otherwise.
+    Every entry point resolves it first: CbvAuthor.Write and RenderCommands in
+    every flavour, the tool check, VideoExporter.Run / DryRun. There used to be
+    a fallback to CodeBrixVideoProcessing.Processor; it went with the package
+    reference. NothingRegisteredOverride is the second test seam: it makes the
+    flow behave as if the registry were empty, because the registry cannot take
+    an engine back out and the test assembly registers the ffmpeg engine in an
+    assembly fixture (FFmpegEngineRegistration.cs).
+
+  * "IS THIS THE FFMPEG ENGINE" IS A CAPABILITY, NOT A TYPE TEST.
+    InProcessAuthoring.IsFFmpegEngine = engine.TryGetExternalTools(out _) (the
+    engine reports VideoProcessorCapabilities.ExternalTools AND implements
+    IExternalToolHost with tools). It decides the dry run's path, the prepare
+    pass versus the managed shaping, and whether the survey's chapter count is
+    trusted. "Can the ffmpeg path run" adds the tool check:
+    tools.Locate("ffmpeg").Found && tools.Locate("ffprobe").Found
+    (AuthoringTools.TryVerify(engine, ...)), asked only by a real run - the
+    dry-run / fallback rule and its notes are word for word what they were.
+
+  * Internal/FFmpegVocabulary.cs IS THE ONLY FILE THAT KNOWS FFMPEG'S COMMAND LINE.
+    It replaced Internal/AuthoringCommandFactory.cs (renamed and widened). It
+    composes every line with ExternalToolArguments - paths with AddPath (one pair
+    of double quotes, Core's rule R3), every other token verbatim (R1), the
+    -metadata values escaped by Authoring itself exactly as the ported builder
+    did - in the builder's ORDER (input options, -i "path", -map_metadata after
+    the chapter input; then the output's options; then "path" -y), so every
+    line is BYTE-IDENTICAL to what FFMpegArguments rendered: the corpus manifest
+    and CorpusCommandEquivalenceTests are the fence, plus the full-line pins in
+    CbvAuthorTests. It also owns: Run (tools.Run with OnStandardErrorLine
+    parsing "time=HH:MM:SS.ss" into whole, monotonic AuthoringProgress percents
+    against SourceDuration and 100 at the end, KillGracePeriod = Zero, a
+    non-zero exit -> VideoAuthoringException with DescribePassFailure's wording
+    + the exit code + the last ErrorTailLines lines of the error stream, an
+    "Unknown encoder" line feeding the explanation); the libsvtav1 ->
+    libaom-av1 rewrite (the port's Av1EncoderFallback reproduced on the output
+    tokens: codec swapped, numeric -preset -> -cpu-used capped at 8,
+    -svtav1-params dropped, -b:v 0 after -crf unless a video bit rate is set),
+    applied only when request.AllowAv1EncoderFallback is on and the build's
+    encoder list (ffmpeg -hide_banner -encoders, parsed with the port's regex)
+    lacks libsvtav1 but has libaom-av1; the recorded command = the line that
+    ran. A path Core refuses (a double quote in it, or a trailing backslash) is
+    a VideoAuthoringException naming the path, at composition.
+
+  * TOOL LOCATION IS THE ENGINE'S. Authoring never reads GlobalFFOptions; the
+    ffmpeg engine does (BinaryFolder, live), so the tool-check message still
+    tells callers to use GlobalFFOptions.Configure(o => o.BinaryFolder = ...)
+    and quotes the engine's ExternalTool.LookedIn. The package's GLOBAL
+    AllowAv1EncoderFallback no longer reaches Authoring (documented on the
+    request and in the AGENT-README).
+
+  * THE SOURCE SURVEY IS engine.Analyse. MediaInfo.SubtitleStreams and .Chapters
+    (and PrimaryVideo.PixelFormatName for the alpha decision) replace the old
+    FFProbe.Analyse call, on every engine. An engine without external tools
+    (Android's MediaExtractor) reports subtitle streams but never chapters, so
+    its empty chapter list is not trusted: the run notes that chapters were not
+    checked.
+
+  * TESTS WITHOUT FFMPEG. SyntheticEngine takes an optional FakeExternalTools
+    (found / not found, LookedIn, the encoder listing, scripted error-stream
+    lines and exit code, every run recorded); FFmpegVocabularyTests and
+    AuthoringToolsTests use it for the decision, the progress parse, the
+    fallback rewrite, the recorded line, the failure message, the tool-check
+    wording and the nothing-registered refusals.
+
+
 BENCHMARKS
 ==========
 Measured 2026-08-28 on a 12th Gen Intel Core i7-12850HX (24 threads), LMDE 7,
@@ -1702,8 +1782,9 @@ actually have.
     CodeBrix-Mode2/   six BESPOKE .cbv files, AV1 + Vorbis, index-first
 
 THE RULE. EVERY FILE HERE IS BUILT THROUGH THE AUTHORING LIBRARY - the generator
-asks the library for each command line and CodeBrix.VideoProcessing runs the
-host's ffmpeg - and MANIFEST.txt records the line that really produced each file.
+asks the library for each command line and the registered ffmpeg engine
+(CodeBrix.VideoProcessing, registered by the tool at start-up) runs the host's
+ffmpeg through its external-tools facet - and MANIFEST.txt records the line that really produced each file.
 A FOLDER IS RE-ENCODED WHEN THE COMMANDS THAT MAKE IT CHANGE, AND LEFT ALONE WHEN
 THEY DO NOT. As things stand:
 
@@ -1821,9 +1902,9 @@ DELIBERATE DIVERGENCES WORTH KNOWING
 - CANCELLING AN AUTHORING RUN KILLS FFMPEG OUTRIGHT rather than sending it the
   graceful "q" quit first. That is not laziness: ffmpeg's graceful quit HANGS on
   this host, which is why every runtime-cancellation test in
-  CodeBrix.VideoProcessing's own suite is skipped there. CbvAuthor therefore uses
-  CancellableThrough(token) with its DEFAULT timeout of 0, which kills at once,
-  and deletes the part-written output. If a future ffmpeg fixes the graceful
+  CodeBrix.VideoProcessing's own suite is skipped there. FFmpegVocabulary.Run
+  therefore runs every pass with ExternalToolCommand.KillGracePeriod = Zero, which
+  kills the process tree at once, and CbvAuthor deletes the part-written output. If a future ffmpeg fixes the graceful
   quit, a timeout above zero would be the polite change - but nothing is lost by
   killing a process whose output is being thrown away.
 - THE CONTAINER WRITERS (Containers/Ivf/IvfWriter.cs, Containers/Ogg/
@@ -1877,7 +1958,8 @@ NOTES
   demultiplexer can no longer be stopped by one track's full queue. Both are
   described under PER-TRACK EXHAUSTION above and both are fenced by tests.
 - THE AUTHORING LIBRARY AND A SOURCE'S OWN TEXT (measured 2026-09-02, ffmpeg
-  7.1.5). Three ffmpeg facts shape AuthoringCommandFactory.BuildWebMProfile and
+  7.1.5). Three ffmpeg facts shape FFmpegVocabulary.BuildWebMProfile (then
+  AuthoringCommandFactory.BuildWebMProfile) and
   are asserted by CbvAuthorTests + AuthoringEndToEndTests: (1) ffmpeg copies
   chapters from the FIRST input that has any, so a chapter file given as a later
   input LOST to a source's own chapters until `-map_chapters <index>` named it;
@@ -1924,4 +2006,20 @@ NOTES
       stop a request that uses libaom or the fallback.
   None of it changes a rendered command line, so the corpus manifest and
   CorpusCommandEquivalenceTests are untouched.
+- AUTHORING DEPENDS ON CodeBrix.VideoProcessing.Core ONLY (2026-10-12, ruling 29;
+  VideoProcessing 1.0.285.792). The PackageReference to the ffmpeg package was
+  removed from the Authoring csproj; the build proves nothing in
+  src/CodeBrix.VideoPlayback.Authoring names FFMpegArguments, FFMpegArgumentProcessor,
+  GlobalFFOptions, FFProbe, FFMpeg, FFMpegHelper, FFProbeHelper,
+  FFmpegVideoProcessor or CodeBrixVideoProcessing (the last two appear only in
+  messages and docs). What replaced each piece is described under THE
+  EXTERNAL-TOOLS FACET, AND THE ONE FILE THAT SPEAKS FFMPEG. Supersedes items (1)
+  to (3) of the SVT-AV1 note above: the failure explanation now comes from
+  ffmpeg's "Unknown encoder '...'" line on the error stream (no
+  FFMpegEncoderNotFoundException), the fallback is applied by Authoring itself
+  and only by the request's switch (the package's global switch no longer
+  reaches Authoring), and the recorded command is the line FFmpegVocabulary.Run
+  rendered after its own rewrite. The corpus manifest and
+  CorpusCommandEquivalenceTests did not change: every line renders
+  byte-identically.
 ================================================================================

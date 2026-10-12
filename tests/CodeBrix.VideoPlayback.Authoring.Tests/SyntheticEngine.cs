@@ -1,10 +1,12 @@
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using CodeBrix.VideoProcessing.Core;
 using CodeBrix.VideoProcessing.Core.Frames;
 using CodeBrix.VideoProcessing.Core.Media;
 using CodeBrix.VideoProcessing.Core.Output;
+using CodeBrix.VideoProcessing.Core.Tools;
 
 namespace CodeBrix.VideoPlayback.Authoring.Tests;
 
@@ -14,11 +16,19 @@ namespace CodeBrix.VideoPlayback.Authoring.Tests;
 /// without FFmpeg, the way they run on Android.
 /// </summary>
 /// <remarks>
+/// <para>
 /// It implements the frame and sample sources and the analysis only; everything else throws. It is never
 /// registered process-wide (the registry cannot take an engine back out) - a test hands it to the library
 /// through <c>InProcessAuthoring.EngineOverride</c> for its own flow only.
+/// </para>
+/// <para>
+/// Given a <see cref="FakeExternalTools" />, it also reports <see cref="VideoProcessorCapabilities.ExternalTools" />
+/// and hands those tools out as its external-tools facet - so the library's ffmpeg path (the decision, the
+/// progress parse, the AV1 fallback rewrite, the tool-check messages, the recorded command line) can be tested
+/// with no ffmpeg anywhere.
+/// </para>
 /// </remarks>
-internal sealed class SyntheticEngine : IVideoProcessor
+internal sealed class SyntheticEngine : IVideoProcessor, IExternalToolHost
 {
     /// <summary>The sound's sample rate.</summary>
     public const int SoundSampleRate = 48000;
@@ -28,18 +38,39 @@ internal sealed class SyntheticEngine : IVideoProcessor
     /// <param name="name">What it calls itself.</param>
     /// <param name="capabilities">What it says it can do; alpha and 10-bit frames by default.</param>
     /// <param name="hasSound">Whether the clip has a sound stream.</param>
+    /// <param name="tools">
+    /// Fake external tools to report and hand out (adding <see cref="VideoProcessorCapabilities.ExternalTools" />),
+    /// or null - the default - for an engine without them, like Android's.
+    /// </param>
     public SyntheticEngine(
         SyntheticClip clip,
         string name = "synthetic",
         VideoProcessorCapabilities capabilities =
             VideoProcessorCapabilities.AlphaFrameSource | VideoProcessorCapabilities.HighBitDepthFrameSource,
-        bool hasSound = true)
+        bool hasSound = true,
+        FakeExternalTools tools = null)
     {
         Clip = clip;
         Name = name;
-        Capabilities = capabilities;
+        Capabilities = tools != null ? capabilities | VideoProcessorCapabilities.ExternalTools : capabilities;
         HasSound = hasSound;
+        FakeTools = tools;
     }
+
+    /// <summary>The fake tools, or null.</summary>
+    public FakeExternalTools FakeTools { get; }
+
+    /// <inheritdoc />
+    public IExternalTools Tools => FakeTools;
+
+    /// <summary>The subtitle streams <see cref="Analyse" /> reports; none by default.</summary>
+    public IReadOnlyList<SubtitleStreamInfo> SubtitleStreams { get; set; } = Array.Empty<SubtitleStreamInfo>();
+
+    /// <summary>The chapters <see cref="Analyse" /> reports; none by default.</summary>
+    public IReadOnlyList<ChapterInfo> Chapters { get; set; } = Array.Empty<ChapterInfo>();
+
+    /// <summary>How many times <see cref="Analyse" /> was called.</summary>
+    public int Analyses { get; private set; }
 
     /// <summary>The clip served.</summary>
     public SyntheticClip Clip { get; }
@@ -65,6 +96,7 @@ internal sealed class SyntheticEngine : IVideoProcessor
     /// <inheritdoc />
     public MediaInfo Analyse(string path, CancellationToken cancellationToken = default)
     {
+        Analyses++;
         VideoStreamInfo video = new VideoStreamInfo
         {
             Index = 0,
@@ -105,6 +137,8 @@ internal sealed class SyntheticEngine : IVideoProcessor
             Duration = Clip.Duration,
             VideoStreams = new[] { video },
             AudioStreams = audio,
+            SubtitleStreams = SubtitleStreams,
+            Chapters = Chapters,
         };
     }
 

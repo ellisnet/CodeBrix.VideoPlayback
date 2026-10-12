@@ -3,6 +3,45 @@ AGENT-README: CodeBrix.VideoPlayback.Authoring
 A Guide for AI Coding Agents - CONSUMING the CodeBrix.VideoPlayback.Authoring.MitLicenseForever NuGet package
 ================================================================================
 
+REGISTER AN ENGINE (READ THIS FIRST)
+====================================
+Authoring works through the video-processing engine the APPLICATION registered,
+and through nothing else. Register one, once, at start-up, before the first
+call into this package:
+
+    // Desktop (Linux, Windows, macOS) - the ffmpeg engine.
+    //   <PackageReference Include="CodeBrix.VideoProcessing.MitLicenseForever" ... />
+    using CodeBrix.VideoProcessing;
+    CodeBrixVideoProcessing.Register();
+
+    // Android - the MediaCodec engine.
+    //   <PackageReference Include="CodeBrix.VideoProcessing.Android.MitLicenseForever" ... />
+    using CodeBrix.VideoProcessing.Android;
+    CodeBrixVideoProcessingAndroid.Register();
+
+WHAT REFUSES WITHOUT ONE: everything that authors or exports - CbvAuthor.Write
+and CbvAuthor.RenderCommands (the dry run too) in every flavour, the ffmpeg
+command-line ones included, and VideoExporter.Run / DryRun. Each throws a
+VideoAuthoringException:
+
+    Authoring decodes through the registered video-processing engine and none
+    is registered. Call CodeBrixVideoProcessing.Register() (the ffmpeg engine,
+    desktop) or CodeBrixVideoProcessingAndroid.Register() (Android) once at
+    start-up.
+
+CbvAuthor.TryVerifyTools answers false with the same sentence. There is no
+fallback: this package does not reference the ffmpeg package and never picks an
+engine for the process.
+
+WHY. The ffmpeg command lines of the WebM-profile and bespoke flavours (and the
+optional prepare pass) are composed here but RUN through the registered
+engine's external tools (CodeBrix.VideoProcessing.Core.Tools - the ffmpeg
+engine reports VideoProcessorCapabilities.ExternalTools and locates and starts
+ffmpeg for us); the in-process passes, the source survey and the MP4 export
+decode through the same engine. An engine without external tools - Android's -
+simply takes the in-process paths.
+
+
 OVERVIEW
 ========
 CodeBrix.VideoPlayback.Authoring WRITES the files CodeBrix.VideoPlayback plays.
@@ -81,7 +120,8 @@ WHAT IT ACTUALLY DOES, AND WHY THE SHAPE IS WHAT IT IS
     a step that needed a second tool would be a step designed wrong. The
     master flavour needs even less: ffmpeg only as the desktop engine that
     decodes its source (and for its optional prepare pass), and nothing at all
-    on an engine of its own.
+    on an engine of its own. Either way ffmpeg is located and started by the
+    REGISTERED engine (see REGISTER AN ENGINE), never by this package.
 
   * A DRY RUN THAT TOUCHES NOTHING. RenderCommands returns the exact command
     lines a request would execute, without running them, without reading the
@@ -101,9 +141,12 @@ WHAT IT ACTUALLY DOES, AND WHY THE SHAPE IS WHAT IT IS
     per-language chapter titles and the hearing-impaired caption flag. See THE
     TWO ASYMMETRIES. (Written in process, that flavour keeps both.)
 
-Package references: the playback core; CodeBrix.VideoProcessing (the ffmpeg
-command lines, and the desktop engine); CodeBrix.VideoProcessing.Core (the
-engine-neutral contract the in-process passes decode through); and the four
+Package references: the playback core; CodeBrix.VideoProcessing.Core (the
+engine-neutral contract everything goes through: the in-process passes decode
+through it, and the ffmpeg command lines run through its external-tools facet)
+- and NOT the ffmpeg package: a desktop application references
+CodeBrix.VideoProcessing itself and registers it, an Android application
+references CodeBrix.VideoProcessing.Android instead; and the four
 ENCODER packages the in-process passes write with - CodeBrix.VideoEncoding.Av1
 (picture and alpha plane), CodeBrix.Audio.FlacWriter (the master flavour's
 lossless sound), CodeBrix.Audio.Vorbis (the bespoke flavour's sound when it is
@@ -124,23 +167,32 @@ Or in a project file:
     <PackageReference Include="CodeBrix.VideoPlayback.Authoring.MitLicenseForever" Version="*" />
 
 That pulls in CodeBrix.VideoPlayback (and, through it, CodeBrix.Audio.Core),
-CodeBrix.VideoProcessing, CodeBrix.VideoProcessing.Core, and the AV1, FLAC,
-Vorbis and Opus encoder packages (which carry their own encoders for every
-supported platform - nothing to install for them). Then install FFMPEG on the
-machine that will run the authoring, built with the encoders you intend to name:
+CodeBrix.VideoProcessing.Core, and the AV1, FLAC, Vorbis and Opus encoder
+packages (which carry their own encoders for every supported platform - nothing
+to install for them). It does NOT pull in an engine: add the one for your
+platform and register it (see REGISTER AN ENGINE) -
+
+    dotnet add package CodeBrix.VideoProcessing.MitLicenseForever          (desktop)
+    dotnet add package CodeBrix.VideoProcessing.Android.MitLicenseForever  (Android)
+
+Then, on the desktop, install FFMPEG on the machine that will run the authoring,
+built with the encoders you intend to name:
 
     sudo apt install ffmpeg          (a Debian-based machine)
     ffmpeg -encoders | grep -E 'libsvtav1|libaom-av1|libopus|libvorbis'
 
 The library never downloads or installs anything. If ffmpeg is somewhere other
-than the PATH, point the video-processing wrapper at it once at start-up:
+than the PATH, point the ffmpeg ENGINE at it once at start-up - the engine reads
+this setting when it locates ffmpeg for authoring; this package does not:
 
     using CodeBrix.VideoProcessing;
     GlobalFFOptions.Configure(o => o.BinaryFolder = "/opt/ffmpeg/bin");
+    CodeBrixVideoProcessing.Register();
 
 CbvAuthor.TryVerifyTools(out string problem) answers "is it there?" without
-throwing, and the message it hands back names both binaries and every place they
-were looked for.
+throwing, and the message it hands back names both binaries and every place the
+engine looked for them (its own account - for the ffmpeg engine "in
+'<folder>/x64', then in '<folder>', and then on the PATH", or "on the PATH").
 
 CbvAuthor.TryVerifyTools(out string problem, out IReadOnlyList<string> warnings)
 also lists the encoders this library can ask for that the build LACKS - above all
@@ -184,7 +236,8 @@ CbvAuthor (static) - the whole front door
     IReadOnlyList<AuthoringCommand> RenderCommands(VideoAuthoringRequest request)
         The dry run. Validates the request, resolves the colour-grade chain to
         the one file ffmpeg would look up, and renders the command lines. Reads
-        nothing, writes nothing, needs no ffmpeg. One command for a WebM-profile
+        nothing, writes nothing, needs no ffmpeg - but does need a registered
+        engine, whose kind decides which path it renders. One command for a WebM-profile
         file, two for a bespoke one (one when its audio is left out). A master
         file lists its in-process passes as settings lines, preceded by the
         ffmpeg prepare pass when the request needs one - see THE MASTER FLAVOUR;
@@ -203,8 +256,10 @@ CbvAuthor (static) - the whole front door
 
     bool TryVerifyTools(out string problem)
     void VerifyTools()
-        Is ffmpeg installed? The message names ffmpeg AND ffprobe and says where
-        they were looked for - the PATH, or the configured binary folder.
+        Is ffmpeg installed? Asked of the REGISTERED engine's external tools. The
+        message names ffmpeg AND ffprobe and says where the engine looked for
+        them; with no engine registered, or an engine without external tools
+        (Android's), it says that instead.
 
     bool TryVerifyTools(out string problem, out IReadOnlyList<string> warnings)
     void VerifyTools(out IReadOnlyList<string> warnings)
@@ -220,10 +275,11 @@ CbvAuthor (static) - the whole front door
   names the piece involved.
 
   A FAILED FFMPEG PASS reads "The video pass failed. The command was: ffmpeg ...",
-  with the pass's own FFmpeg failure as the InnerException. When FFmpeg did not
-  have an encoder the pass asked for - the inner exception is then
-  CodeBrix.VideoProcessing's FFMpegEncoderNotFoundException - an explanation sits
-  between those two sentences. For libsvtav1 it says the SVT-AV1 library is not
+  followed by a line with ffmpeg's exit code and then the last lines ffmpeg wrote
+  to its error stream (there is no InnerException for a non-zero exit). When
+  FFmpeg said it did not have an encoder the pass asked for ("Unknown encoder
+  '...'" on its error stream) an explanation sits between the first two
+  sentences. For libsvtav1 it says the SVT-AV1 library is not
   present or could not be found, and names AllowAv1EncoderFallback, so a caller
   that logs only Message still sees the cause and the cure.
 
@@ -326,10 +382,11 @@ VideoAuthoringRequest - one file's worth of decisions
       present on this machine, or the ffmpeg being used could not find it. To
       author AV1 without installing anything, opt in to the libaom-av1
       fallback: set AllowAv1EncoderFallback = true on the
-      VideoAuthoringRequest, or for every run with GlobalFFOptions.Configure(o
-      => o.AllowAv1EncoderFallback = true). Or ask for libaom-av1 outright with
-      Video.Encoder = AuthoringVideoEncoder.LibAomAv1, or install an ffmpeg
-      build that includes libsvtav1. The command was: ffmpeg ...
+      VideoAuthoringRequest. Or ask for libaom-av1 outright with Video.Encoder
+      = AuthoringVideoEncoder.LibAomAv1, or install an ffmpeg build that
+      includes libsvtav1. The command was: ffmpeg ...
+      ffmpeg exited with code 1. The end of what it wrote to its error stream:
+      ...
 
   Setting AllowAv1EncoderFallback = true lets the pass that asked for libsvtav1
   be rewritten for libaom-av1 just before ffmpeg starts - but only when the build
@@ -342,12 +399,13 @@ VideoAuthoringRequest - one file's worth of decisions
                         saying what was changed
       RenderCommands    is a dry run, cannot know what the build has, and goes
                         on rendering the line the request asked for
-  The process-wide switch in CodeBrix.VideoProcessing,
-  GlobalFFOptions.Configure(o => o.AllowAv1EncoderFallback = true), works too; a
-  request leaving its own switch false does not turn that off. If the fallback
-  is on and still cannot help - the build has no libaom-av1 either - the failure
-  message says so instead. libaom is far slower than SVT-AV1 and the same rate
-  factor does not give identical quality, so neither switch is on by default.
+  The request's switch is the ONLY one: the ffmpeg package's process-wide
+  GlobalFFOptions.AllowAv1EncoderFallback does NOT apply to authoring (this
+  package composes its own lines, runs them through the engine's tools and does
+  the rewrite itself). If the fallback is on and still cannot help - the build
+  has no libaom-av1 either - the failure message says so instead. libaom is far
+  slower than SVT-AV1 and the same rate factor does not give identical quality,
+  so the switch is off by default.
 
 
 AuthoringVideoSettings - the picture
@@ -700,9 +758,9 @@ THE MASTER FLAVOUR (.cbvmaster, "CodeBrix Video Mode3")
 =======================================================
 A master file is the bespoke container at format version 1. It is written IN
 PROCESS: the source is DECODED through the video-processing engine the
-application registered (VideoProcessors in CodeBrix.VideoProcessing.Core - the
-desktop ffmpeg engine when it registered none; the library never registers one
-itself), and ENCODED by the AV1 and FLAC encoder packages this library
+application registered (VideoProcessors in CodeBrix.VideoProcessing.Core - with
+none registered the run is refused, see REGISTER AN ENGINE; the library never
+registers one itself), and ENCODED by the AV1 and FLAC encoder packages this library
 references. Up to four passes, then the same managed muxer:
 
   0. THE PREPARE PASS - ffmpeg, and only when it is needed. The engine delivers
@@ -821,13 +879,14 @@ WHETHER IT CARRIES ALPHA - Video.Alpha:
   An engine that cannot deliver alpha at all leaves Auto opaque (with a note)
   and refuses Include on a source that has alpha.
 
-WHAT IT NEEDS. An engine. On the desktop with no engine registered that is the
-ffmpeg engine, which needs ffmpeg and ffprobe - and nothing else: no particular
-encoder in the ffmpeg build, because nothing is encoded by ffmpeg. On an engine
-of its own (Android's), nothing to install at all. The AV1 and FLAC encoders
-travel inside their packages. With the ffmpeg engine the source is also probed
-for subtitle streams and chapters of its own, as in the other flavours; on
-another engine that check is skipped and the result says so.
+WHAT IT NEEDS. A registered engine. On the desktop that is the ffmpeg engine,
+which needs ffmpeg and ffprobe - and nothing else: no particular encoder in the
+ffmpeg build, because nothing is encoded by ffmpeg. On an engine of its own
+(Android's), nothing to install at all. The AV1 and FLAC encoders travel inside
+their packages. The source is also surveyed for subtitle streams and chapters
+of its own through the engine's Analyse, as in the other flavours; an engine
+without external tools (Android's) reports subtitle streams but reads no
+chapters, and the result says chapters were not checked.
 
 WHAT PLAYING IT NEEDS. The AV1 decoder package as usual - the alpha plane is an
 ordinary monochrome AV1 stream - and, for the sound, a CodeBrix.Audio.Core whose
@@ -860,11 +919,12 @@ THE BESPOKE FLAVOUR IN PROCESS (Video.Encoder = AuthoringVideoEncoder.Av1Package
   even exactly as in the master flavour, with the same note.
   THE RULE:
     Av1Package               ALWAYS in process.
-    LibSvtAv1 / LibAomAv1    ffmpeg command lines when the ffmpeg engine is the
-                             one in use and ffmpeg can be run; otherwise - a
-                             non-ffmpeg engine registered (Android), or no
-                             ffmpeg - IN PROCESS, with a note in result.Notes
-                             saying what was asked for and what ran.
+    LibSvtAv1 / LibAomAv1    ffmpeg command lines when the registered engine
+                             has external tools (the ffmpeg engine) and they
+                             find ffmpeg and ffprobe; otherwise - an engine
+                             without them registered (Android), or no ffmpeg -
+                             IN PROCESS, with a note in result.Notes saying
+                             what was asked for and what ran.
   THE TRADE-OFF: the in-process AV1 encoder is the same reference encoder
   ffmpeg names libaom-av1, which is slower than libsvtav1 on a desktop, and
   the same rate factor does not give identical quality. The scale is the
@@ -886,8 +946,10 @@ THE BESPOKE FLAVOUR IN PROCESS (Video.Encoder = AuthoringVideoEncoder.Av1Package
   source's first video and first audio stream). Set on an in-process run - a
   master run included - each earns a note in result.Notes rather than being
   ignored silently.
-  A dry run decides the path from the registered engine alone (it runs
-  nothing); only a real run can find that ffmpeg is missing, and says so in its
+  A dry run decides the path from the registered engine alone - whether it
+  reports external tools (it runs nothing and looks for nothing); only a real
+  run asks the engine to locate ffmpeg and ffprobe, so only it can find that
+  ffmpeg is missing, and says so in its
   notes and commands. The WebM-profile flavour follows the same rule - see the
   next section.
 
@@ -955,8 +1017,8 @@ THE WEBM-PROFILE FLAVOUR IN PROCESS (Mode1 without ffmpeg)
     * Audio.Language and Audio.Name, and Video.TrackName, are written onto
       their tracks.
     * Captions are WebVTT only, as on the ffmpeg pass.
-  WHAT IT NEEDS: an engine (on the desktop with none registered, the ffmpeg
-  engine - ffmpeg and ffprobe, no particular encoder). The AV1 and Opus encoders
+  WHAT IT NEEDS: a registered engine (on the desktop the ffmpeg engine -
+  ffmpeg and ffprobe, no particular encoder). The AV1 and Opus encoders
   travel inside their packages; the muxer is managed code.
   WHAT PLAYING IT NEEDS: exactly what any Mode1 file needs - the AV1 decoder
   package and CodeBrix.Audio.Opus with CodeBrixAudioOpus.Register().
@@ -972,12 +1034,20 @@ from ChaptersPath, and from nowhere else. Both flavours agree on this
 (measured).
 
 The run says so rather than letting you find out from the finished file. Write
-probes the source once with ffprobe, and when it finds text of the source's own
-the result's Notes carry one line per kind:
+surveys the source once through the registered engine (engine.Analyse - the
+ffmpeg engine asks ffprobe), and when it finds text of the source's own the
+result's Notes carry one line per kind:
 
     the source's own subtitle stream(s) #2 subrip (eng) were NOT carried: ...
     the source's own 2 chapter(s) were NOT carried: ...
     the source's own 2 chapter(s) were REPLACED by the 3 chapter(s) in '...'
+
+On an engine without external tools (Android's) chapters are not read, so a
+fourth line may appear instead of the chapter ones:
+
+    the source was checked for subtitle streams of its own through the
+    '<engine>' engine, but not for chapters: that engine does not read
+    chapters. ...
 
 TO BRING THEM ALONG, extract them first and hand them in as inputs:
 
@@ -1050,8 +1120,9 @@ WHERE THE PIECES COME FROM
     runs on a headless machine or in a background service with no sound
     hardware at all. A backdrop video's sound is read through the
     video-processing engine, which needs no device either.
-  * Writer: the registered video-processing engine, else the desktop ffmpeg
-    engine - the same choice the master flavour of CbvAuthor makes.
+  * Writer: the registered video-processing engine - the same choice the
+    master flavour of CbvAuthor makes. With none registered the export is
+    refused (see REGISTER AN ENGINE).
 
 THE BACKDROP (a master file WITH an alpha-plane track - nothing else composites)
     ExportBackdrop.FromColour(0xRRGGBB)            default: 0x808080, 50% grey

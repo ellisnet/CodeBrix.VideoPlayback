@@ -4,6 +4,7 @@ using CodeBrix.VideoPlayback.Authoring.Internal;
 using CodeBrix.VideoProcessing;
 using CodeBrix.VideoProcessing.Core;
 using CodeBrix.VideoProcessing.Core.Frames;
+using CodeBrix.VideoProcessing.Core.Tools;
 
 namespace CodeBrix.VideoPlayback.Authoring.Tests;
 
@@ -125,7 +126,13 @@ public static class ShapedFrames
     {
         ResolvedLutChain lut = LutChainResolver.Resolve(request.Video.Luts, request.OutputPath, work.Path, true, null);
         string prepared = work.File("prepared-" + Guid.NewGuid().ToString("N") + ".mkv");
-        AuthoringCommandFactory.BuildPreparePass(request, lut, prepared, alpha).ProcessSynchronously();
+        FFmpegVocabulary.CommandLine line = FFmpegVocabulary.BuildPreparePass(request, lut, prepared, alpha);
+        ExternalToolResult ran = CodeBrixVideoProcessing.Processor.Tools.Run(
+            new ExternalToolCommand(FFmpegVocabulary.FFmpegToolName, line.ToArguments()));
+        if (!ran.Succeeded)
+        {
+            throw new InvalidOperationException("The prepare pass failed: " + ran.RenderedCommand + "\n" + ran.StandardError);
+        }
 
         VideoSourceOptions options = new VideoSourceOptions
         {

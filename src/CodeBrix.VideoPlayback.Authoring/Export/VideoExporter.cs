@@ -22,8 +22,10 @@ namespace CodeBrix.VideoPlayback.Authoring.Export;
 /// <c>CodeBrixAudioOpus.Register()</c>). A missing decoder is refused with a message naming what to register.
 /// </para>
 /// <para>
-/// THE WRITER is the video-processing engine the application registered, or - when it registered none - the
-/// desktop ffmpeg engine, exactly as the master flavour of <see cref="CbvAuthor" /> chooses it.
+/// THE WRITER is the video-processing engine the application registered, exactly as the master flavour of
+/// <see cref="CbvAuthor" /> chooses it. With none registered the export refuses with a
+/// <see cref="VideoAuthoringException" /> naming <c>CodeBrixVideoProcessing.Register()</c> (desktop) and
+/// <c>CodeBrixVideoProcessingAndroid.Register()</c> (Android).
 /// </para>
 /// <para>
 /// A MASTER FILE WITH ALPHA is composited over its <see cref="VideoExportRequest.Backdrop" /> - 50% grey by default -
@@ -44,12 +46,16 @@ public static class VideoExporter
     /// <exception cref="ArgumentNullException"><paramref name="request" /> is null.</exception>
     /// <exception cref="VideoAuthoringException">
     /// The request cannot be honoured: a missing file, an output that is not <c>.mp4</c>, HEVC on an engine without
-    /// it, a codec with no registered decoder, an engine that cannot run.
+    /// it, a codec with no registered decoder, an engine that cannot run, no video-processing engine registered.
     /// </exception>
     /// <exception cref="OperationCanceledException">
     /// <c>request.CancellationToken</c> was cancelled; the partly written output has been deleted.
     /// </exception>
-    public static VideoExportResult Run(VideoExportRequest request) => Run(request, InProcessAuthoring.ResolveEngine());
+    public static VideoExportResult Run(VideoExportRequest request)
+    {
+        if (request == null) throw new ArgumentNullException(nameof(request));
+        return Run(request, InProcessAuthoring.ResolveEngine());
+    }
 
     /// <summary>
     /// Describes what <see cref="Run(VideoExportRequest)" /> would do - one line per step - reading only the source's
@@ -61,8 +67,14 @@ public static class VideoExporter
     /// <c>no composite</c>), <c>audio</c>, <c>write</c>, then any <c>note</c> lines.
     /// </returns>
     /// <exception cref="ArgumentNullException"><paramref name="request" /> is null.</exception>
-    /// <exception cref="VideoAuthoringException">The request cannot be honoured as it stands.</exception>
-    public static string DryRun(VideoExportRequest request) => DryRun(request, InProcessAuthoring.ResolveEngine());
+    /// <exception cref="VideoAuthoringException">
+    /// The request cannot be honoured as it stands, or no video-processing engine is registered.
+    /// </exception>
+    public static string DryRun(VideoExportRequest request)
+    {
+        if (request == null) throw new ArgumentNullException(nameof(request));
+        return DryRun(request, InProcessAuthoring.ResolveEngine());
+    }
 
     /// <summary>Exports with a given engine - the seam the tests use.</summary>
     /// <param name="request">The request.</param>

@@ -20,8 +20,8 @@
   <ItemGroup>
     <!-- The registered video-processing engine the in-process authoring decodes through and the MP4 export writes
          with (MediaCodec / MediaMuxer; it carries no natives). -->
-    <PackageReference Include="CodeBrix.VideoProcessing.Android.MitLicenseForever" Version="1.0.285.663" />
-    <PackageReference Include="CodeBrix.VideoProcessing.Core.MitLicenseForever" Version="1.0.285.663" />
+    <PackageReference Include="CodeBrix.VideoProcessing.Android.MitLicenseForever" Version="1.0.285.792" />
+    <PackageReference Include="CodeBrix.VideoProcessing.Core.MitLicenseForever" Version="1.0.285.792" />
     <!-- The AV1 decoder the export and the playback steps decode with (its Android natives ride in the package). -->
     <PackageReference Include="CodeBrix.VideoPlayback.Dav1d.BsdLicenseForever" Version="1.0.271.1206" />
     <!-- Opus: the Mode1 file's sound, decoded by the export. -->

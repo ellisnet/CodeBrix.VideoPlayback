@@ -91,6 +91,11 @@ public static class Program
             }
         }
 
+        // The authoring library works through the REGISTERED video-processing engine - its ffmpeg command lines run
+        // through that engine's external tools - so the desktop ffmpeg engine is registered once, here, before
+        // anything is rendered or written.
+        CodeBrixVideoProcessing.Register();
+
         string repositoryRoot = FindRepositoryRoot();
 
         if (masterFixtures)

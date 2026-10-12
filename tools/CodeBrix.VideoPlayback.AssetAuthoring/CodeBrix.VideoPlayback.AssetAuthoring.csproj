@@ -17,12 +17,14 @@
     has to: the CodeBrix-Mode2 files are written by the core's own bespoke muxer, and the streamable-profile
     rules the tool judges every finished file with are the core's too.
 
-    The video-processing wrapper stays a DIRECT reference because this tool uses it directly as well -
-    FFProbe.Analyse reads the two originals and reads every FFmpeg-muxed output back, which is what makes the
-    corpus judged by an implementation other than the one that wrote it.
+    The video-processing wrapper is a DIRECT reference because this tool uses it directly - the authoring
+    library itself depends on CodeBrix.VideoProcessing.Core only. Program.Main registers the desktop ffmpeg
+    engine (CodeBrixVideoProcessing.Register()), which the authoring library runs its command lines through;
+    and FFProbe.Analyse reads the two originals and reads every FFmpeg-muxed output back, which is what makes
+    the corpus judged by an implementation other than the one that wrote it.
   -->
   <ItemGroup>
-    <PackageReference Include="CodeBrix.VideoProcessing.MitLicenseForever" Version="1.0.285.663" />
+    <PackageReference Include="CodeBrix.VideoProcessing.MitLicenseForever" Version="1.0.285.792" />
   </ItemGroup>
 
   <ItemGroup>

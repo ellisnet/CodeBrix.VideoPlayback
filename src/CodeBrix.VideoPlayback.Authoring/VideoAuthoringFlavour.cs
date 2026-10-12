@@ -53,8 +53,8 @@ public enum VideoAuthoringFlavour
     /// </para>
     /// <para>
     /// This flavour encodes IN PROCESS rather than through FFmpeg command lines: the source is decoded through
-    /// the registered video-processing engine - any engine, Android's included; the desktop ffmpeg engine when
-    /// none is registered - and the picture, the alpha plane and the sound are encoded by in-process AV1 and
+    /// the registered video-processing engine - any engine, Android's included; with none registered, authoring
+    /// refuses - and the picture, the alpha plane and the sound are encoded by in-process AV1 and
     /// FLAC encoders. The alpha plane's key frames are forced onto the picture's, and the run checks that the two
     /// came out in lock step before muxing. Fully transparent pixels take the colour of the nearest visible one
     /// (<see cref="Encoding.AuthoringVideoSettings.FillTransparentPixels" />). Scaling, a frame rate, a colour
