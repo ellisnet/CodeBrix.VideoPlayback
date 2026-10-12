@@ -10,11 +10,17 @@ namespace CodeBrix.VideoPlayback.Authoring.Encoding;
 /// </summary>
 /// <remarks>
 /// <para>
-/// The pixel format is NOT a setting. Every file this library authors is 8-bit 4:2:0
-/// (<see cref="PixelFormat" />), which is what the streamable profile recommends and what every decoder and
-/// every display path handles without a conversion nobody asked for. The chain pins it twice - once as the
-/// last filter in the chain and once as the encoder's own <c>-pix_fmt</c> - so neither a source in some
-/// other format nor a filter that hands on RGB can change it.
+/// The pixel format is NOT a setting. Every file this library authors is 4:2:0 - 8-bit
+/// (<see cref="PixelFormat" />) by default, which is what the streamable profile recommends and what every
+/// decoder and every display path handles without a conversion nobody asked for. The chain pins it twice -
+/// once as the last filter in the chain and once as the encoder's own <c>-pix_fmt</c> - so neither a source in
+/// some other format nor a filter that hands on RGB can change it. A MASTER file may be 10-bit instead
+/// (<see cref="BitDepth" />); the WebM-profile and bespoke files are 8-bit by decision.
+/// </para>
+/// <para>
+/// On an engine other than ffmpeg - Android's, or a frame-buffer device's - the same steps run IN PROCESS, in
+/// the same order, through the core's managed scaler, rotator, frame-rate resampler and LUT grader
+/// (<c>CodeBrix.VideoPlayback.Processing</c>); see <see cref="ScalerFlags" /> for how the flags are read there.
 /// </para>
 /// <para>THE ORDER OF THE ONE FILTER CHAIN, and why it is that order:</para>
 /// <list type="number">
@@ -38,14 +44,21 @@ namespace CodeBrix.VideoPlayback.Authoring.Encoding;
 /// </remarks>
 public sealed class AuthoringVideoSettings
 {
-    /// <summary>The one pixel format this library authors: 8-bit 4:2:0.</summary>
+    /// <summary>The pixel format this library authors by default: 8-bit 4:2:0.</summary>
     public const string PixelFormat = "yuv420p";
+
+    /// <summary>The pixel format of a 10-bit master's prepared picture: 10-bit 4:2:0, little-endian.</summary>
+    internal const string PixelFormat10 = "yuv420p10le";
+
+    /// <summary>The bit depth every flavour authors at unless a master asks for more.</summary>
+    public const int DefaultBitDepth = 8;
 
     private int speedPreset = 6;
     private int constantRateFactor = 30;
     private AuthoringFrameSize frameSize = AuthoringFrameSize.Source;
     private string scalerFlags = "lanczos";
     private int? alphaConstantRateFactor;
+    private int bitDepth = DefaultBitDepth;
 
     /// <summary>
     /// Which AV1 encoder to ask FFmpeg for. SVT-AV1 by default. The master flavour does not use it: it encodes
@@ -109,6 +122,12 @@ public sealed class AuthoringVideoSettings
     /// The resampler the scale filter is asked for. Lanczos by default, because the plain scale filter's own
     /// default is bicubic and a downscale of real video is exactly where the difference shows.
     /// </summary>
+    /// <remarks>
+    /// IN PROCESS - on an engine other than ffmpeg - the first <c>lanczos</c> or <c>bilinear</c> token picks the
+    /// managed scaler's Lanczos-3 or bilinear kernel; any other token (<c>accurate_rnd</c>, <c>bicubic</c>, ...)
+    /// steers FFmpeg's scaler only, and the result says it was ignored. Flags that name neither resampler get the
+    /// managed default: Lanczos when either side shrinks, bilinear otherwise.
+    /// </remarks>
     /// <exception cref="ArgumentException">The value is null or blank.</exception>
     public string ScalerFlags
     {
@@ -195,7 +214,10 @@ public sealed class AuthoringVideoSettings
     /// </remarks>
     public string ComposedLutPath { get; set; }
 
-    /// <summary>A name for the video track, or null. Carried by the bespoke and master flavours only.</summary>
+    /// <summary>
+    /// A name for the video track, or null. Carried by every flavour: the bespoke and master muxer, the in-process
+    /// Matroska muxer, and the WebM-profile FFmpeg pass (<c>-metadata:s:v:0 title=</c>, only when set).
+    /// </summary>
     public string TrackName { get; set; }
 
     /// <summary>
@@ -242,6 +264,46 @@ public sealed class AuthoringVideoSettings
             }
 
             alphaConstantRateFactor = value;
+        }
+    }
+
+    /// <summary>
+    /// The bit depth of the picture - and of the alpha plane - in a MASTER (Mode3) file: 8, the default, or 10.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 10 bits is a master-file setting only: the WebM-profile (Mode1) and bespoke (Mode2) files are 8-bit by
+    /// decision, and a request for 10 there is refused with a message saying so. Twelve bits is refused here.
+    /// </para>
+    /// <para>
+    /// A 10-bit master needs an engine that can hand over 10-bit frames
+    /// (<c>VideoProcessorCapabilities.HighBitDepthFrameSource</c> - the desktop ffmpeg engine can); on one that
+    /// cannot, the run is refused naming the engine. The picture is encoded as 10-bit 4:2:0 AV1 and the alpha
+    /// plane as 10-bit monochrome AV1 (fully opaque is 1023); the depth travels in the AV1 sequence header, the
+    /// container is unchanged, and the playback session hands the frames on as 10-bit. The ffmpeg prepare pass
+    /// writes <c>yuv420p10le</c> (<c>yuva420p10le</c> with alpha) when it runs. The sound is unchanged.
+    /// </para>
+    /// <para>
+    /// An 8-bit source authored at 10 bits is widened, not improved; the result says so.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="ArgumentOutOfRangeException">The value is neither 8 nor 10.</exception>
+    public int BitDepth
+    {
+        get => bitDepth;
+        set
+        {
+            if (value != 8 && value != 10)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(value),
+                    value,
+                    value == 12
+                        ? "Twelve-bit files are not authored: a master is 8 or 10 bits."
+                        : "A master is authored at 8 or 10 bits.");
+            }
+
+            bitDepth = value;
         }
     }
 

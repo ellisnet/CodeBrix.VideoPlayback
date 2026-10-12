@@ -613,6 +613,96 @@ public class MasterAuthoringTests
 
     #endregion
 
+    #region Silent
+
+    [Fact]
+    public void A_silent_master_dry_run_lists_silent_where_the_audio_pass_would_be()
+    {
+        //Arrange
+        VideoAuthoringRequest request = DryRequest();
+        request.Audio.Silent = true;
+
+        //Act
+        IReadOnlyList<AuthoringCommand> commands = CbvAuthor.RenderCommands(request);
+
+        //Assert
+        commands.Count.Should().Be(3);
+        commands[2].Label.Should().Be("audio pass");
+        commands[2].Arguments.Should().StartWith("silent");
+        commands[2].RunsFFmpeg.Should().BeFalse();
+    }
+
+    [Fact]
+    public void A_silent_master_is_not_held_to_the_flac_codec_rule()
+    {
+        //Arrange - the codec names a sound that is never encoded, so it is not judged
+        VideoAuthoringRequest request = DryRequest();
+        request.Audio.Silent = true;
+        request.Audio.Codec = AuthoringAudioCodec.LibOpus;
+
+        //Act
+        IReadOnlyList<AuthoringCommand> commands = CbvAuthor.RenderCommands(request);
+
+        //Assert
+        commands[2].Arguments.Should().StartWith("silent");
+    }
+
+    [Theory]
+    [InlineData(VideoAuthoringFlavour.Bespoke, "bespoke (Mode2)")]
+    [InlineData(VideoAuthoringFlavour.WebMProfile, "WebM-profile (Mode1)")]
+    public void Silent_on_a_flavour_other_than_master_is_refused_up_front(VideoAuthoringFlavour flavour, string named)
+    {
+        //Arrange
+        VideoAuthoringRequest request = DryRequest();
+        request.Flavour = flavour;
+        request.OutputPath = "/nowhere/clip.cbv";
+        request.Audio.Silent = true;
+
+        //Act
+        Action render = () => CbvAuthor.RenderCommands(request);
+        Action write = () => CbvAuthor.Write(request);
+
+        //Assert
+        render.Should().Throw<VideoAuthoringException>().WithMessage("*Silent is a master-file flag*" + named + "*");
+        write.Should().Throw<VideoAuthoringException>().WithMessage("*Silent is a master-file flag*");
+    }
+
+    [Fact]
+    public void A_silent_master_has_no_audio_track_carries_the_flag_and_plays_silent()
+    {
+        //Arrange
+        SkipWithoutMasterTools();
+        using WorkFolder work = new WorkFolder("master-silent");
+        string source = SyntheticAlphaSource.WriteClip(work.File("source.mkv"));
+        VideoAuthoringRequest request = MasterRequest(source, work.File("clip.cbvmaster"), work);
+        request.Video.Alpha = AuthoringAlphaMode.Exclude;
+        request.Audio.Silent = true;
+        request.Title = "Silent master";
+
+        //Act
+        VideoAuthoringResult result = CbvAuthor.Write(request);
+        using CbvReader reader = new CbvReader(new FileMediaSource(result.OutputPath));
+        using VideoPlaybackSession session = NewSession();
+        session.Open(result.OutputPath);
+
+        //Assert
+        result.Commands.Count.Should().Be(2);
+        result.Commands[1].Label.Should().Be("audio pass");
+        result.Commands[1].Arguments.Should().StartWith("silent");
+        result.Mux.AudioTrackId.Should().Be(0);
+        result.Mux.FormatVersion.Should().Be(CbvFormat.MasterVersion);
+        reader.IsSilent.Should().BeTrue();
+        reader.Version.Should().Be(CbvFormat.MasterVersion);
+        reader.Tracks.Count.Should().Be(1);
+        reader.Tracks[0].Kind.Should().Be(MediaTrackKind.Video);
+        session.IsSilent.Should().BeTrue();
+        session.AudioTrack.Should().BeNull();
+        string.Join("\n", result.Notes).Should().Contain(
+            "Title has no field in the bespoke container: the master (Mode3) file");
+    }
+
+    #endregion
+
     #region Playing
 
     [Fact]

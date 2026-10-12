@@ -22,4 +22,12 @@ public enum CbvHeaderFlags
     /// play the file forwards without seeking about.
     /// </summary>
     ChunksInPresentationOrder = 2,
+
+    /// <summary>
+    /// The file is SILENT BY INTENT: it carries no audio track because its author said it has no sound, not
+    /// because the sound was left out. A version-1 feature (<see cref="CbvFormat.MasterVersion" />): a file with
+    /// this flag is stamped version 1 and carries no audio track. A file with no audio track and no flag is
+    /// silent by absence; consumers treat the two alike.
+    /// </summary>
+    Silent = 4,
 }

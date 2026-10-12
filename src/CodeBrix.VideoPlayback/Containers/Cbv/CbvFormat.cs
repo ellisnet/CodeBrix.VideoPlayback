@@ -27,15 +27,17 @@ public static class CbvFormat
     /// </summary>
     /// <remarks>
     /// The muxer stamps each file with the LOWEST version that describes it: this one for a file that uses
-    /// nothing newer, <see cref="MasterVersion" /> for one that carries an alpha-plane track or FLAC audio. So
+    /// nothing newer, <see cref="MasterVersion" /> for one that carries an alpha-plane track or FLAC audio or is
+    /// flagged <see cref="CbvHeaderFlags.Silent" />. So
     /// a Mode2 file is byte-for-byte what it always was and still plays on an older player, and a reader
     /// older than a file's version refuses the file with a message saying a newer writer produced it.
     /// </remarks>
     public const ushort Version = 0;
 
     /// <summary>
-    /// Version 1: version 0 plus an optional alpha-plane video track (<see cref="CbvTrackFlags.AlphaPlane" />)
-    /// and FLAC audio - the "master" (<c>.cbvmaster</c>, Mode3) flavour.
+    /// Version 1: version 0 plus an optional alpha-plane video track (<see cref="CbvTrackFlags.AlphaPlane" />),
+    /// FLAC audio and the <see cref="CbvHeaderFlags.Silent" /> header flag - the "master" (<c>.cbvmaster</c>,
+    /// Mode3) flavour.
     /// </summary>
     public const ushort MasterVersion = 1;
 

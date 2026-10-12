@@ -1,0 +1,89 @@
+PROVENANCE - samples/VideoAuthoringAndroidProof/Assets
+=====================================================
+
+Every file here is SYNTHETIC: no camera footage, no recording, no third-party
+content. Pictures come from ffmpeg's built-in lavfi pattern generators
+(testsrc / testsrc2 / smptehdbars), sound from its built-in "sine" generator,
+and the lookup table from a short script. Licence: none needed - generated for
+this repository and dedicated to the public domain (CC0-1.0) by its author.
+Made on the development laptop (Debian ffmpeg 7.1) on 2026-10-12. The app
+bundles them as Android assets and copies them into its files dir at start.
+
+clip-h264-aac.mp4
+    COPIED unchanged from CodeBrix.VideoProcessing's tests/Assets (its
+    PROVENANCE.txt is the authority; reproduced here). 4 s, 320x240, 30 fps
+    (120 frames), H.264 High 4:2:0 8-bit, a keyframe every 30 frames; AAC-LC
+    stereo 48 kHz 96 kbit/s; moov before mdat; no metadata tags.
+
+    ffmpeg -f lavfi -i testsrc2=size=320x240:rate=30:duration=4 \
+           -f lavfi -i sine=frequency=440:sample_rate=48000:duration=4 \
+           -c:v libx264 -profile:v high -pix_fmt yuv420p -g 30 -keyint_min 30 \
+           -sc_threshold 0 -bf 2 -crf 23 \
+           -c:a aac -b:a 96k -ac 2 \
+           -map_metadata -1 -fflags +bitexact -flags:v +bitexact \
+           -flags:a +bitexact -movflags +faststart clip-h264-aac.mp4
+
+clip-rotated90.mp4
+    clip-h264-aac.mp4 with a display-matrix rotation added (streams copied, no
+    re-encode). ffprobe reports "rotation=90" (anticlockwise); the Android
+    engine reports it as 270 degrees clockwise. The source of step 06's
+    AutoRotate shaping.
+
+    ffmpeg -display_rotation 90 -i clip-h264-aac.mp4 -map 0 -c copy \
+           -map_metadata -1 -movflags +faststart clip-rotated90.mp4
+
+backdrop.png
+    One 320x180 frame of SMPTE HD colour bars - the IMAGE backdrop of step 09.
+
+    ffmpeg -f lavfi -i "smptehdbars=size=320x180" -frames:v 1 \
+           -map_metadata -1 -fflags +bitexact -flags +bitexact backdrop.png
+
+backdrop-3s.mp4
+    The VIDEO backdrop of steps 09 and 10: 3 s, 320x180, 12 fps, H.264 High,
+    AAC-LC stereo 48 kHz carrying a 660 Hz tone (so a Silent master's export
+    takes an audibly different sound). Deliberately LONGER than
+    alpha-master.cbvmaster (1 s), so that export's tail is backdrop only.
+
+    ffmpeg -f lavfi -i "testsrc=size=320x180:rate=12:duration=3" \
+           -f lavfi -i "sine=frequency=660:sample_rate=48000:duration=3" \
+           -c:v libx264 -profile:v high -pix_fmt yuv420p -g 12 -crf 28 \
+           -c:a aac -b:a 96k -ac 2 \
+           -map_metadata -1 -fflags +bitexact -flags:v +bitexact \
+           -flags:a +bitexact -movflags +faststart backdrop-3s.mp4
+
+twist.cube
+    A 5x5x5 "identity with a twist" 3-D lookup table (title
+    "VAProof identity-with-twist"): out = (min(1, 0.9 R + 0.1), G, 0.85 B) -
+    reds lifted a little, blues pulled down, green untouched. Written by this
+    Python 3 snippet (red varies fastest, as .cube requires):
+
+    n = 5
+    lines = ['TITLE "VAProof identity-with-twist"', 'LUT_3D_SIZE 5',
+             'DOMAIN_MIN 0.0 0.0 0.0', 'DOMAIN_MAX 1.0 1.0 1.0']
+    for b in range(n):
+        for g in range(n):
+            for r in range(n):
+                R, G, B = r / (n - 1), g / (n - 1), b / (n - 1)
+                lines.append('%.6f %.6f %.6f' % (min(1.0, R * 0.9 + 0.1), G, B * 0.85))
+    open('twist.cube', 'w').write('\n'.join(lines) + '\n')
+
+alpha-master.cbvmaster
+    COPIED unchanged from this repository's tests/assets/av1-alpha-flac.cbvmaster
+    (tests/assets/ASSETS.txt, "MASTER (MODE3) FIXTURES", is the authority),
+    SHA-256 037eed6e5f090078249a8e1575bb083ee1eabebcf57b6320c4c36f8da72251db.
+    A Mode3 master WITH an alpha plane, authored on the HOST by
+    CodeBrix.VideoPlayback.Authoring's own Master flavour:
+
+    dotnet run --project tools/CodeBrix.VideoPlayback.AssetAuthoring \
+               -c Release -- --master-fixtures
+
+    from a lossless synthetic source (lavfi testsrc2=size=128x72:rate=12:
+    duration=1, format=yuva420p, alpha = a horizontal gradient 255*X/(W-1);
+    sound sine 440 Hz 48 kHz stereo; FFV1 + PCM in Matroska). 3 tracks: AV1
+    128x72 I420 8-bit, an AV1 Gray 8-bit alpha plane, FLAC 48 kHz stereo
+    16-bit; 12 frames, 1 s.
+    WHY IT IS MADE ON THE HOST: authoring a master WITH alpha needs a source
+    the engine can decode WITH its alpha channel (AlphaFrameSource). The
+    Android engine cannot (MediaCodec delivers no alpha, and decodes no VP9
+    alpha either), so alpha masters are authored where an alpha-capable source
+    exists and only EXPORTED on the device.

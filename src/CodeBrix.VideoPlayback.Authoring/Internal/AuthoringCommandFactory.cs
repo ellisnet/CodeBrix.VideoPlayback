@@ -97,8 +97,14 @@ internal static class AuthoringCommandFactory
 
             if (!hasChapters && !request.CopySourceMetadata) output.WithoutMetadata();
 
+            // Each of these is emitted ONLY when the request sets it, so a request without them renders exactly
+            // the line it always did (the command-line corpus pins that). An explicit title wins over the chapter
+            // file's file-level title= that -map_metadata brings in.
+            if (!string.IsNullOrEmpty(request.Title)) output.WithMetadata("title", request.Title);
+
             ApplyVideo(output, request, lut);
             ApplyAudio(output, request);
+            ApplyTrackMetadata(output, request);
             ApplyCaptions(output, request);
 
             // The extension never decides the container: a WebM-profile .cbv file is a WebM file inside, so
@@ -172,6 +178,11 @@ internal static class AuthoringCommandFactory
     /// opaque one) and <c>yuv420p</c> otherwise, with no sound - the sound pass reads the source itself.
     /// </para>
     /// <para>
+    /// A 10-bit master (<see cref="AuthoringVideoSettings.BitDepth" /> = 10) is prepared as <c>yuv420p10le</c>, or
+    /// <c>yuva420p10le</c> with alpha, so the in-process passes read 10-bit frames from it; at 8 bits - the
+    /// default, and the only depth the command-line corpus uses - the line is unchanged.
+    /// </para>
+    /// <para>
     /// A frame rate given for <see cref="AuthoringFrameRateMode.Encoder" /> is applied on this pass's output,
     /// the place FFmpeg's encoder-side rate conversion has always lived; the intermediate is constant-rate either
     /// way.
@@ -199,7 +210,7 @@ internal static class AuthoringCommandFactory
                     output.WithFramerate(video.FrameRate);
                 }
 
-                string pixelFormat = alpha ? MasterAlphaPixelFormat : AuthoringVideoSettings.PixelFormat;
+                string pixelFormat = PreparedPixelFormatFor(video, alpha);
 
                 output.WithVideoFilters(filters =>
                 {
@@ -227,6 +238,19 @@ internal static class AuthoringCommandFactory
 
     /// <summary>The pixel format of a prepared intermediate that carries alpha.</summary>
     internal const string MasterAlphaPixelFormat = "yuva420p";
+
+    /// <summary>The pixel format of a 10-bit master's prepared intermediate that carries alpha.</summary>
+    internal const string MasterAlphaPixelFormat10 = "yuva420p10le";
+
+    /// <summary>The pixel format the prepare pass writes for a request.</summary>
+    /// <param name="video">The video settings.</param>
+    /// <param name="alpha">Whether the intermediate keeps an alpha channel.</param>
+    /// <returns><c>yuv420p</c> / <c>yuva420p</c>, or their 10-bit little-endian forms at 10 bits.</returns>
+    internal static string PreparedPixelFormatFor(AuthoringVideoSettings video, bool alpha)
+    {
+        if (video.BitDepth > 8) return alpha ? MasterAlphaPixelFormat10 : AuthoringVideoSettings.PixelFormat10;
+        return alpha ? MasterAlphaPixelFormat : AuthoringVideoSettings.PixelFormat;
+    }
 
     /// <summary>The muxer name a container choice hands to <c>-f</c>.</summary>
     /// <param name="container">The container.</param>
@@ -352,6 +376,28 @@ internal static class AuthoringCommandFactory
 
         output.WithAudioSamplingRate(audio.SampleRateHz);
         output.WithCustomArgument("-ac " + audio.Channels.ToString(CultureInfo.InvariantCulture));
+    }
+
+    // The WebM-profile pass's picture and sound track metadata - the same three settings the bespoke muxer and the
+    // in-process Matroska muxer write. Each only when set; the sound's only when there is sound.
+    private static void ApplyTrackMetadata(FFMpegArgumentOptions output, VideoAuthoringRequest request)
+    {
+        if (!string.IsNullOrEmpty(request.Video.TrackName))
+        {
+            output.WithStreamMetadata(Channel.Video, 0, "title", request.Video.TrackName);
+        }
+
+        if (!request.Audio.Include) return;
+
+        if (!string.IsNullOrEmpty(request.Audio.Language))
+        {
+            output.WithStreamMetadata(Channel.Audio, 0, "language", request.Audio.Language);
+        }
+
+        if (!string.IsNullOrEmpty(request.Audio.Name))
+        {
+            output.WithStreamMetadata(Channel.Audio, 0, "title", request.Audio.Name);
+        }
     }
 
     private static void ApplyCaptions(FFMpegArgumentOptions output, VideoAuthoringRequest request)

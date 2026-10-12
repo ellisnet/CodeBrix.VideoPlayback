@@ -58,9 +58,10 @@ public enum VideoAuthoringFlavour
     /// FLAC encoders. The alpha plane's key frames are forced onto the picture's, and the run checks that the two
     /// came out in lock step before muxing. Fully transparent pixels take the colour of the nearest visible one
     /// (<see cref="Encoding.AuthoringVideoSettings.FillTransparentPixels" />). Scaling, a frame rate, a colour
-    /// grade and turning a rotated source upright need an FFmpeg prepare pass, so they need the ffmpeg engine;
-    /// on any other engine such a request is refused. Playing the sound needs a CodeBrix.Audio.Core whose shared
-    /// output serves the <c>flac</c> packet codec.
+    /// grade and turning a rotated source upright run as an FFmpeg prepare pass on the ffmpeg engine and in
+    /// process, through the playback core's managed processing primitives, on any other. The picture may be
+    /// 10-bit (<see cref="Encoding.AuthoringVideoSettings.BitDepth" />). Playing the sound needs a
+    /// CodeBrix.Audio.Core whose shared output serves the <c>flac</c> packet codec.
     /// </para>
     /// </remarks>
     Master = 2,

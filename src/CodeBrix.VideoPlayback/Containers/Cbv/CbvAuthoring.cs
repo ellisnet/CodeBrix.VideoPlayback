@@ -56,6 +56,15 @@ public static class CbvAuthoring
                 nameof(request));
         }
 
+        if (request.Silent && (!string.IsNullOrWhiteSpace(request.AudioOggPath) || request.PacketAudio != null))
+        {
+            throw new ArgumentException(
+                "The request is flagged Silent and also supplies audio ("
+                + (request.PacketAudio != null ? "PacketAudio" : "AudioOggPath '" + request.AudioOggPath + "'")
+                + "); a silent file carries no sound. Clear Silent or drop the audio input.",
+                nameof(request));
+        }
+
         if (!string.IsNullOrWhiteSpace(request.AlphaIvfPath) && string.IsNullOrWhiteSpace(request.VideoIvfPath))
         {
             throw new ArgumentException(
@@ -74,6 +83,7 @@ public static class CbvAuthoring
         }
 
         using CbvMuxer muxer = CbvMuxer.Create(request.OutputPath);
+        muxer.Silent = request.Silent;
 
         int videoTrackId = 0;
         int alphaTrackId = 0;

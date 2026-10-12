@@ -497,4 +497,28 @@ WPF heads and needs -p:Platform=x64), running each head, the render-path
 drop-down (GpuAuto / GpuNoFallback / Cpu), the LUT panel and the "bake the
 current chain to .cube" button, and the scripted smoke verification.
 
+
+samples/VideoAuthoringAndroidProof
+==================================
+The Android device proof for the authoring library: a one-screen .NET Android
+app (its own VideoAuthoringAndroidProof.slnx - it is NOT in the main solution,
+because it needs the Android workload) that registers the Android
+video-processing engine, the Dav1d decoder and Opus, then, with no ffmpeg
+anywhere, authors Mode1 (WebM + Opus), Mode2 (CBVF + Vorbis) and Mode3 masters
+(8-bit, 10-bit, Silent, with an opaque alpha plane) in process from a bundled
+H.264/AAC clip; runs the managed shaping (rotate, scale, fps, grade) on a
+rotated clip; exports to MP4 (H.264, and HEVC when the engine offers it),
+compositing a host-authored alpha master over a colour, a PNG and a longer
+backdrop MP4, and a Silent master over the backdrop MP4 so the MP4 takes the
+backdrop's sound; plays every authored file headless with VideoPlaybackSession;
+and checks cancellation and a refusal. One PASS / PASSED-WITH-NOTE / FAIL line
+per step goes to logcat (tag VAProof) and to vaproof-log.txt in the app-specific
+external files folder, where the outputs are written so adb can pull them.
+
+It references src/CodeBrix.VideoPlayback.Authoring and src/CodeBrix.VideoPlayback
+as PROJECTS, because it proves unpublished features of this tree; at the next
+publish those switch to the published packages. Everything else comes from
+nuget.org. Its README.md covers building, installing and pulling the results;
+Assets/PROVENANCE.txt lists every synthetic input and the command that made it.
+
 ================================================================================

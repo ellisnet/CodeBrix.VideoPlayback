@@ -92,7 +92,10 @@ public sealed class AuthoringAudioSettings
         }
     }
 
-    /// <summary>A BCP 47 language tag for the audio track, or null.</summary>
+    /// <summary>
+    /// A BCP 47 language tag for the audio track, or null. Written by every flavour; the WebM-profile FFmpeg pass
+    /// emits it as <c>-metadata:s:a:0 language=</c>, only when set.
+    /// </summary>
     public string Language { get; set; }
 
     /// <summary>
@@ -113,6 +116,22 @@ public sealed class AuthoringAudioSettings
         }
     }
 
-    /// <summary>A name for the audio track, or null.</summary>
+    /// <summary>
+    /// A name for the audio track, or null. Written by every flavour; the WebM-profile FFmpeg pass emits it as
+    /// <c>-metadata:s:a:0 title=</c>, only when set.
+    /// </summary>
     public string Name { get; set; }
+
+    /// <summary>
+    /// True to say the master file is SILENT BY INTENT. False by default.
+    /// </summary>
+    /// <remarks>
+    /// A master-file flag only (<c>VideoAuthoringFlavour.Master</c>): no audio pass runs, whatever
+    /// <see cref="Include" /> says, no audio track is written, and the file carries the bespoke container's
+    /// Silent header flag (format version 1). On the WebM-profile or bespoke flavour it is refused before
+    /// anything runs. A file authored with <see cref="Include" /> = false and this left false has no sound
+    /// either - silent by absence - and players treat the two alike; the flag records that the silence was
+    /// meant.
+    /// </remarks>
+    public bool Silent { get; set; }
 }

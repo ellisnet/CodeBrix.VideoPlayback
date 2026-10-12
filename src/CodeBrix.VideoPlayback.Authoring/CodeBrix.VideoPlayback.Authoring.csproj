@@ -78,17 +78,22 @@
     the bespoke flavour's sound when that flavour is encoded in process (and Vorbis in a Matroska document),
     and CodeBrix.Audio.Opus - for its ENCODER only - the WebM-profile flavour's Opus sound when that flavour is
     encoded in process. The core (below) supplies the bespoke muxer, the managed WebM / Matroska muxer, the
-    caption and chapter readers, the LUT composer and the streamable-profile rules. NEVER a decoder, never
+    caption and chapter readers, the LUT composer and the streamable-profile rules. CodeBrix.Imaging decodes
+    an export's image backdrop (JPG/PNG) to RGBA - the one reference that READS, for the MP4 export; that
+    export decodes video and sound only through what the application registered (plus the Vorbis and FLAC
+    packet codecs CodeBrix.Audio.Core always carries), without opening an audio device. NEVER a decoder
+    package, never
     SkiaSharp, never the .Skia presenter, never an Android-only package, and never a Register() call into a
     playback registry: authoring writes files, it does not play them or draw them.
   -->
   <ItemGroup>
-    <PackageReference Include="CodeBrix.VideoProcessing.MitLicenseForever" Version="1.0.284.20" />
-    <PackageReference Include="CodeBrix.VideoProcessing.Core.MitLicenseForever" Version="1.0.284.20" />
+    <PackageReference Include="CodeBrix.VideoProcessing.MitLicenseForever" Version="1.0.285.663" />
+    <PackageReference Include="CodeBrix.VideoProcessing.Core.MitLicenseForever" Version="1.0.285.663" />
     <PackageReference Include="CodeBrix.VideoEncoding.Av1.BsdLicenseForever" Version="1.0.284.321" />
     <PackageReference Include="CodeBrix.Audio.FlacWriter.BsdLicenseForever" Version="1.0.284.304" />
     <PackageReference Include="CodeBrix.Audio.Vorbis.BsdLicenseForever" Version="1.0.283.1118" />
-    <PackageReference Include="CodeBrix.Audio.Opus.BsdLicenseForever" Version="1.0.283.1405" />
+    <PackageReference Include="CodeBrix.Audio.Opus.BsdLicenseForever" Version="1.0.284.1151" />
+    <PackageReference Include="CodeBrix.Imaging.ApacheLicenseForever" Version="1.0.285.619" />
   </ItemGroup>
 
   <!--

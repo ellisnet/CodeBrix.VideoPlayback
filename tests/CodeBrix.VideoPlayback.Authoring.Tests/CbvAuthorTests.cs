@@ -1085,6 +1085,105 @@ public class CbvAuthorTests
         line.Should().Contain("-map 0:v:0 -map 0:a:0 -map_chapters -1 -map_metadata -1");
     }
 
+    [Fact]
+    public void RenderCommands_writes_no_title_and_no_track_metadata_when_none_is_set()
+    {
+        //Arrange
+        VideoAuthoringRequest request = NewRequest(VideoAuthoringFlavour.WebMProfile);
+
+        //Act
+        string line = CbvAuthor.RenderCommands(request)[0].Arguments;
+
+        //Assert
+        line.Should().NotContain("-metadata ");
+        line.Should().NotContain("-metadata:s:");
+    }
+
+    [Fact]
+    public void RenderCommands_writes_the_title_when_one_is_set()
+    {
+        //Arrange
+        VideoAuthoringRequest request = NewRequest(VideoAuthoringFlavour.WebMProfile);
+        request.Title = "A clip";
+
+        //Act
+        string line = CbvAuthor.RenderCommands(request)[0].Arguments;
+
+        //Assert
+        line.Should().Contain("-metadata title=\"A clip\"");
+        CountOccurrences(line, "-metadata title=").Should().Be(1);
+    }
+
+    [Fact]
+    public void RenderCommands_writes_the_sound_language_and_name_and_the_picture_name_when_set()
+    {
+        //Arrange
+        VideoAuthoringRequest request = NewRequest(VideoAuthoringFlavour.WebMProfile);
+        request.Audio.Language = "en-GB";
+        request.Audio.Name = "Stereo mix";
+        request.Video.TrackName = "Main picture";
+
+        //Act
+        string line = CbvAuthor.RenderCommands(request)[0].Arguments;
+
+        //Assert
+        line.Should().Contain("-metadata:s:a:0 language=\"en-GB\"");
+        line.Should().Contain("-metadata:s:a:0 title=\"Stereo mix\"");
+        line.Should().Contain("-metadata:s:v:0 title=\"Main picture\"");
+    }
+
+    [Fact]
+    public void RenderCommands_writes_only_the_track_metadata_that_is_set()
+    {
+        //Arrange
+        VideoAuthoringRequest request = NewRequest(VideoAuthoringFlavour.WebMProfile);
+        request.Audio.Language = "fr";
+
+        //Act
+        string line = CbvAuthor.RenderCommands(request)[0].Arguments;
+
+        //Assert
+        line.Should().Contain("-metadata:s:a:0 language=\"fr\"");
+        line.Should().NotContain("-metadata:s:a:0 title=");
+        line.Should().NotContain("-metadata:s:v:0");
+    }
+
+    [Fact]
+    public void RenderCommands_writes_no_sound_metadata_when_the_sound_is_left_out()
+    {
+        //Arrange
+        VideoAuthoringRequest request = NewRequest(VideoAuthoringFlavour.WebMProfile);
+        request.Audio.Include = false;
+        request.Audio.Language = "en";
+        request.Audio.Name = "Stereo mix";
+
+        //Act
+        string line = CbvAuthor.RenderCommands(request)[0].Arguments;
+
+        //Assert
+        line.Should().NotContain("-metadata:s:a:0");
+    }
+
+    [Fact]
+    public void RenderCommands_leaves_the_bespoke_passes_untouched_by_title_and_track_metadata()
+    {
+        //Arrange
+        VideoAuthoringRequest plain = NewRequest(VideoAuthoringFlavour.Bespoke);
+        VideoAuthoringRequest named = NewRequest(VideoAuthoringFlavour.Bespoke);
+        named.Title = "A clip";
+        named.Audio.Language = "en";
+        named.Audio.Name = "Stereo mix";
+        named.Video.TrackName = "Main picture";
+
+        //Act
+        IReadOnlyList<AuthoringCommand> before = CbvAuthor.RenderCommands(plain);
+        IReadOnlyList<AuthoringCommand> after = CbvAuthor.RenderCommands(named);
+
+        //Assert
+        after.Count.Should().Be(before.Count);
+        for (int i = 0; i < before.Count; i++) after[i].Arguments.Should().Be(before[i].Arguments);
+    }
+
     private static VideoAuthoringRequest NewRequest(VideoAuthoringFlavour flavour) =>
         new VideoAuthoringRequest
         {

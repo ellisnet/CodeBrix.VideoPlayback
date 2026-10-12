@@ -1,0 +1,10 @@
+<Solution>
+  <!-- VideoAuthoringAndroidProof.slnx
+       The Android device proof for CodeBrix.VideoPlayback.Authoring, kept out of the repository's main
+       CodeBrix.VideoPlayback.slnx on purpose: it needs the Android workload, which the library gate does not. -->
+  <Folder Name="/Solution Items/">
+    <File Path="README.md" />
+    <File Path="Assets/PROVENANCE.txt" />
+  </Folder>
+  <Project Path="VideoAuthoringAndroidProof.csproj" />
+</Solution>

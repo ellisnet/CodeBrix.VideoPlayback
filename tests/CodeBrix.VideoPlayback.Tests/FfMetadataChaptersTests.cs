@@ -119,6 +119,46 @@ public class FfMetadataChaptersTests
     }
 
     [Fact]
+    public void Chapters_listed_out_of_order_are_sorted_by_start_and_renumbered()
+    {
+        //Arrange
+        string text = ";FFMETADATA1\n"
+            + "[CHAPTER]\nTIMEBASE=1/1000\nSTART=2000\nEND=3000\ntitle=Third\n"
+            + "[CHAPTER]\nTIMEBASE=1/1000\nSTART=0\nEND=1000\ntitle=First\n"
+            + "[CHAPTER]\nTIMEBASE=1/1000\nSTART=1000\nEND=2000\ntitle=Second\n";
+
+        //Act
+        IReadOnlyList<Chapter> chapters = FfMetadataChapters.Parse(text);
+
+        //Assert
+        chapters.Count.Should().Be(3);
+        chapters[0].Title.Should().Be("First");
+        chapters[1].Title.Should().Be("Second");
+        chapters[2].Title.Should().Be("Third");
+        for (int i = 0; i < chapters.Count; i++) chapters[i].Index.Should().Be(i);
+    }
+
+    [Fact]
+    public void Chapters_that_start_together_keep_the_files_order()
+    {
+        //Arrange
+        string text = ";FFMETADATA1\n"
+            + "[CHAPTER]\nTIMEBASE=1/1000\nSTART=500\nEND=900\ntitle=Later\n"
+            + "[CHAPTER]\nTIMEBASE=1/1000\nSTART=0\nEND=500\ntitle=A\n"
+            + "[CHAPTER]\nTIMEBASE=1/1000\nSTART=0\nEND=400\ntitle=B\n"
+            + "[CHAPTER]\nTIMEBASE=1/1000\nSTART=0\nEND=300\ntitle=C\n";
+
+        //Act
+        IReadOnlyList<Chapter> chapters = FfMetadataChapters.Parse(text);
+
+        //Assert
+        chapters[0].Title.Should().Be("A");
+        chapters[1].Title.Should().Be("B");
+        chapters[2].Title.Should().Be("C");
+        chapters[3].Title.Should().Be("Later");
+    }
+
+    [Fact]
     public void Text_that_is_not_a_chapter_file_produces_no_chapters()
     {
         //Arrange

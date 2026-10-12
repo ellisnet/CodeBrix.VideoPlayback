@@ -13,7 +13,7 @@ namespace CodeBrix.VideoPlayback.Authoring.Tests;
 
 /// <summary>
 /// The pieces of the in-process passes that need no source to test: which engine counts as what, which settings
-/// need the prepare pass, how a rate factor maps onto the encoder, how lock step is judged, and what a FLAC
+/// shape the picture (the prepare pass, or the in-process shaping on another engine), how a rate factor maps onto the encoder, how lock step is judged, and what a FLAC
 /// stream header must look like to be stored.
 /// </summary>
 public class InProcessAuthoringTests
@@ -45,21 +45,6 @@ public class InProcessAuthoringTests
 
         //Assert
         needs.Should().Equal("FrameSize", "FrameRate/FrameRateMode", "Luts");
-    }
-
-    [Fact]
-    public void An_engine_without_a_prepare_pass_refuses_by_naming_the_settings_and_the_engine()
-    {
-        //Arrange
-        IVideoProcessor engine = new NamedOnlyEngine("phone");
-
-        //Act
-        VideoAuthoringException refusal = InProcessAuthoring.RefusePreparePass(engine, new[] { "FrameSize", "AutoRotate" });
-
-        //Assert
-        refusal.Message.Should().Contain("FrameSize, AutoRotate");
-        refusal.Message.Should().Contain("'phone' engine");
-        refusal.Message.Should().Contain("encodes the source exactly as it is decoded");
     }
 
     [Fact]

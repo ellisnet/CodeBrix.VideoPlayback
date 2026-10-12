@@ -52,9 +52,9 @@ MAINTAINER AND EXTRAS
   EXTRAS-README.txt
       The headless tools (cbvinfo, cbvdecode, cbvmux, lutbake), the sample-video
       corpus generator that drives the authoring library, the consumer-shape
-      sample, the SimpleCbxVideoPlayer application sample under samples/, the
-      golden test-asset corpus and the scripts and tools that regenerate both
-      corpora.
+      sample, the SimpleCbxVideoPlayer application sample and the
+      VideoAuthoringAndroidProof device proof under samples/, the golden
+      test-asset corpus and the scripts and tools that regenerate both corpora.
 
 FORMAT SPECIFICATIONS
 ---------------------
@@ -92,4 +92,8 @@ ALSO WORTH READING, IN PLACE
   samples/SimpleCbxVideoPlayer/README.md
       The eight-head application sample: the two solutions, running each head,
       the render-path drop-down, the LUT panel and the smoke verification.
+  samples/VideoAuthoringAndroidProof/README.md
+      The Android device proof: authoring all three modes, the MP4 export and
+      headless playback on a phone, how to build, install and pull the results,
+      and why it references the authoring library from source.
 ================================================================================

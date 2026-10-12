@@ -35,7 +35,10 @@ public static class FfMetadataChapters
 {
     /// <summary>Reads a chapter file.</summary>
     /// <param name="path">The path of the metadata file.</param>
-    /// <returns>The chapters it declares, in ascending order of start time.</returns>
+    /// <returns>
+    /// The chapters it declares, SORTED into ascending order of start time and renumbered from 0 - see
+    /// <see cref="Parse" />.
+    /// </returns>
     /// <exception cref="ArgumentException"><paramref name="path" /> is null or blank.</exception>
     /// <exception cref="FileNotFoundException">There is no file at that path.</exception>
     public static IReadOnlyList<Chapter> ReadFile(string path)
@@ -49,6 +52,12 @@ public static class FfMetadataChapters
     /// <summary>Parses chapter metadata text.</summary>
     /// <param name="text">The whole contents of a metadata file.</param>
     /// <returns>The chapters it declares, in ascending order of start time.</returns>
+    /// <remarks>
+    /// The chapters are SORTED by start time, whatever order the file lists them in, and each one's
+    /// <see cref="Chapter.Index" /> is its position AFTER the sort - so a file whose <c>[CHAPTER]</c> sections are
+    /// out of order reads back in time order, with no notice. Chapters that start at the same moment keep the
+    /// order the file gave them. A writer that needs the file's own order has to keep it itself.
+    /// </remarks>
     public static IReadOnlyList<Chapter> Parse(string text)
     {
         List<Chapter> chapters = new List<Chapter>();
@@ -137,12 +146,20 @@ public static class FfMetadataChapters
         }
 
         Flush();
-        chapters.Sort((a, b) => a.Start.CompareTo(b.Start));
+        // A STABLE sort by start time: List.Sort is not stable, so the file order breaks ties explicitly and two
+        // chapters starting together always come back in the order the file gave them.
+        List<int> order = new List<int>(chapters.Count);
+        for (int i = 0; i < chapters.Count; i++) order.Add(i);
+        order.Sort((a, b) =>
+        {
+            int byStart = chapters[a].Start.CompareTo(chapters[b].Start);
+            return byStart != 0 ? byStart : a.CompareTo(b);
+        });
 
         List<Chapter> ordered = new List<Chapter>(chapters.Count);
-        for (int i = 0; i < chapters.Count; i++)
+        for (int i = 0; i < order.Count; i++)
         {
-            Chapter chapter = chapters[i];
+            Chapter chapter = chapters[order[i]];
             ordered.Add(new Chapter(i, chapter.Start, chapter.End, chapter.IsHidden, chapter.Titles));
         }
 

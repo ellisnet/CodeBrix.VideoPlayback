@@ -164,6 +164,7 @@ KEY NAMESPACES / USINGS
     using CodeBrix.VideoPlayback.Authoring.Effects;   // AuthoringLutInput
     using CodeBrix.VideoPlayback.Authoring.Presets;   // the device-class table
     using CodeBrix.VideoPlayback.Authoring.Commands;  // AuthoringCommand, AuthoringProgress
+    using CodeBrix.VideoPlayback.Authoring.Export;    // VideoExporter, VideoExportRequest, ExportBackdrop
 
 And, from the playback library, for the types this one borrows rather than
 duplicates:
@@ -236,6 +237,7 @@ VideoAuthoringRequest - one file's worth of decisions
     AuthoringAudioSettings Audio             the sound (see below)
     IList<AuthoringCaptionInput> Captions    the text tracks
     string ChaptersPath                      an ffmetadata file, or null
+    string Title                             the file's title, or null (unset)
 
     AuthoringContainerFormat Container       WebM (default) | Matroska
     bool CuesToFront                         true by default
@@ -249,6 +251,20 @@ VideoAuthoringRequest - one file's worth of decisions
     TimeSpan SourceDuration                  needed for progress
     Action<AuthoringProgress> ProgressCallback
     CancellationToken CancellationToken      None by default
+
+  Title IS THE FILE'S TITLE, AND ONLY THE WEBM-PROFILE FLAVOUR HAS ONE. On the
+  ffmpeg pass it is "-metadata title=<Title>", in process the Matroska Info
+  Title; either way it wins over the chapter file's file-level "title=" line,
+  which is the title otherwise. It is emitted ONLY when set, so a request
+  without it renders the same line as ever. The bespoke and master containers
+  carry chapter titles but no file title (the format was not changed for it):
+  Title is not written there, and the result carries a note saying so.
+
+  THE WEBM-PROFILE FFMPEG PASS NAMES ITS TRACKS TOO. Audio.Language,
+  Audio.Name and Video.TrackName become "-metadata:s:a:0 language=",
+  "-metadata:s:a:0 title=" and "-metadata:s:v:0 title=" - each ONLY when set
+  (the sound's only when there is sound) - exactly what the bespoke muxer and
+  the in-process Matroska muxer already wrote.
 
   CancellationToken STOPS A RUN IN PROGRESS. Write watches it between stages and
   through every ffmpeg pass, so a cancel lands within moments instead of at the
@@ -349,21 +365,27 @@ AuthoringVideoSettings - the picture
     bool AutoRotate                          true by default
     IList<AuthoringLutInput> Luts            the colour grade, in order
     string ComposedLutPath                   keep the effective table here
-    string TrackName                         bespoke and master flavours, and
-                                             the WebM-profile one in process
+    string TrackName                         every flavour (the WebM-profile
+                                             ffmpeg pass: -metadata:s:v:0 title=)
     AuthoringAlphaMode Alpha                 Auto (default) | Include | Exclude;
                                              master flavour only
     bool FillTransparentPixels               true by default; master flavour
                                              with alpha only
     int? AlphaConstantRateFactor             null = six below ConstantRateFactor
+    int BitDepth                             8 (default) or 10; 10 is master
+                                             only, 12 is refused
 
     const string PixelFormat = "yuv420p"     NOT a setting - see below
+    const int DefaultBitDepth = 8
 
-  THE PIXEL FORMAT IS PINNED. Every file this library authors is 8-bit 4:2:0,
-  which is what the streamable profile recommends and what every decoder and
-  every display path handles without a conversion nobody asked for. The chain
-  pins it twice - as the last filter and as the encoder's -pix_fmt - so neither
-  an unusual source nor a filter that hands on RGB can change it.
+  THE PIXEL FORMAT IS PINNED. Every file this library authors is 4:2:0, 8-bit
+  by default, which is what the streamable profile recommends and what every
+  decoder and every display path handles without a conversion nobody asked for.
+  The chain pins it twice - as the last filter and as the encoder's -pix_fmt -
+  so neither an unusual source nor a filter that hands on RGB can change it. A
+  MASTER may be 10-bit instead (BitDepth = 10, see TEN-BIT MASTERS); the
+  WebM-profile and bespoke files are 8-bit by decision, and BitDepth = 10 on
+  either is refused before anything runs.
 
   THE SPEED PRESET means -preset for SVT-AV1 (0 slowest and best, 13 fastest and
   worst) and -cpu-used for libaom (0..8). libaom also needs -b:v 0 for the rate
@@ -384,7 +406,11 @@ AuthoringVideoSettings - the picture
   constant-frame-rate and therefore makes a keyframe interval in FRAMES mean a
   fixed number of seconds) or in the filter chain (fps=N, which drops frames
   BEFORE the grade runs, so a lookup is never computed for a frame that is about
-  to be thrown away).
+  to be thrown away). THE TWO PATHS DIFFER HERE: with ffmpeg, FrameRateMode =
+  Encoder really is the encoder's -r (the published command lines are
+  unchanged); on an engine without ffmpeg the in-process shaping follows the
+  fps filter's frame choice in BOTH modes (Encoder earns a note), so when the
+  rate is LOWERED the two can keep different frames.
 
   AUTOROTATE is an INPUT option, and the library puts it where ffmpeg will honour
   it - before the -i it belongs to. With it on, a portrait phone recording comes
@@ -400,6 +426,39 @@ AuthoringVideoSettings - the picture
                      chain did
     ffmpeg keeps only the last -vf it is given, so there is exactly one, always.
 
+  ON AN ENGINE WITHOUT FFMPEG (Android's, a frame-buffer device's) the in-process
+  flavours run the SAME steps IN PROCESS, in the same order - rotate (ffmpeg
+  turns the picture while decoding, ahead of every filter), scale, fps, grade -
+  through the playback core's managed primitives (CodeBrix.VideoPlayback.
+  Processing: FrameRotator, FrameScaler, FrameRateResampler, PlanarLutGrader).
+  How each setting is read there:
+        FrameSize      the same three shapes; LongSide / ShortSide round the
+                       free side to the nearest pair exactly as ffmpeg's -2
+        ScalerFlags    the first "lanczos" (Lanczos-3) or "bilinear" token
+                       picks the kernel; every other token steers ffmpeg only
+                       and earns a note; flags naming neither get the managed
+                       default (Lanczos when a side shrinks, else bilinear)
+        FrameRate      the decimal becomes the fraction ffmpeg makes of it
+                       (29.97 -> 2997/100); frames are dropped and duplicated
+                       exactly as ffmpeg's fps filter does, in BOTH
+                       FrameRateModes (Encoder earns a note: ffmpeg's -r keeps
+                       other frames when it lowers the rate)
+        Luts           the same chain, composed by the same composer, read as a
+                       3-D table and applied tetrahedrally in YUV with the
+                       matrix the engine reports (untagged = BT.601, as ffmpeg's
+                       scaler assumes); a BT.2020 picture is refused
+        AutoRotate     the engine's clockwise rotation, turned exactly; a
+                       4:2:0 picture with an odd side cannot be turned a quarter
+                       and is refused with the reason (AutoRotate = false
+                       authors it as stored)
+  The alpha plane gets the same turn, scale and frame-rate conversion - never
+  the grade - so the colour and alpha passes stay in lock step. Measured against
+  the ffmpeg prepare pass on the same pixels: rotation and frame selection
+  exact, timestamps exact, scaling within a few levels at hard edges (mean well
+  under one), grading within a few levels of luma (wider in 10-bit chroma, where
+  ffmpeg's own conversion round lut3d is the coarser one). The ffmpeg engine
+  keeps its prepare pass as the default.
+
 
 AuthoringAudioSettings - the sound
 -----------------------------------
@@ -412,6 +471,7 @@ AuthoringAudioSettings - the sound
     string Language                          a well-formed BCP 47 tag, or null
     string Name                              a menu name, or null
     int FlacBitDepth                         16 (default) or 24; master only
+    bool Silent                              false by default; master only
 
   IN PROCESS, THE WEBM-PROFILE FLAVOUR'S SOUND IS OPUS AT 48000 Hz, MONO OR
   STEREO. BitrateKilobitsPerSecond means what -b:a means to libopus: the target
@@ -421,6 +481,16 @@ AuthoringAudioSettings - the sound
   is refused there. Vorbis in a WebM document is refused in process - Mode1 is
   WebM with Opus - and allowed in a Matroska document (Container = Matroska),
   with the bespoke flavour's Vorbis rules.
+
+  SILENT IS A MASTER-FILE FLAG. Audio.Silent = true says the master file is
+  silent BY INTENT: no audio pass runs (whatever Include says, and the codec is
+  not judged), no audio track is written, and the file carries the bespoke
+  container's Silent header flag (format version 1) - CbvReader.IsSilent and
+  VideoPlaybackSession.IsSilent read it back. The dry run lists
+  "audio pass: silent - ..." where the FLAC pass would be. On the WebM-profile
+  or bespoke flavour it is refused before anything runs; there, a file without
+  sound is Include = false. A file with no audio track and no flag is silent by
+  absence, and players treat the two alike.
 
   DEFAULT RESOLVES PER FLAVOUR: Opus for a WebM-profile file, which is what the
   wider world expects of a WebM, Vorbis for a bespoke one, which is the
@@ -647,12 +717,13 @@ references. Up to four passes, then the same managed muxer:
          Video.AutoRotate      (true, and the source carries a rotation)
      and never otherwise: a request that needs none of them reads the source
      directly. The intermediate is large; it lives in TemporaryFolder and is
-     deleted like every other intermediate. THE PREPARE PASS EXISTS ONLY WITH
-     THE FFMPEG ENGINE: on any other engine such a request is REFUSED up front
-     with one message naming the settings, because there the master flavour
-     encodes the source exactly as it is decoded (set AutoRotate = false to
-     author a rotated source as stored).
-  1. THE VIDEO PASS - the picture as 8-bit 4:2:0 AV1 into an IVF: good-quality
+     deleted like every other intermediate. The prepare pass needs the ffmpeg
+     engine; ON ANY OTHER ENGINE the same settings are served IN PROCESS
+     instead - no intermediate, the shaping wrapped round the video and alpha
+     passes' own decodes (see ON AN ENGINE WITHOUT FFMPEG, above). At
+     BitDepth = 10 the intermediate is yuva420p10le / yuv420p10le.
+  1. THE VIDEO PASS - the picture as 4:2:0 AV1 (8-bit, or 10-bit with
+     Video.BitDepth = 10) into an IVF: good-quality
      usage, cq-level = Video.ConstantRateFactor (the same 0..63 number ffmpeg's
      -crf hands libaom), cpu-used = Video.SpeedPreset capped at 8, at most
      KeyframeIntervalFrames between key frames, colour tags from the source.
@@ -662,10 +733,11 @@ references. Up to four passes, then the same managed muxer:
      dimensions: an odd last column and/or row is CROPPED away (never
      resampled) - in the alpha pass too, so both planes stay the same size - and
      result.Notes says exactly what was cropped. (A picture 1 pixel wide or high
-     is refused.) Set FrameSize on the ffmpeg engine to choose the size instead.
+     is refused.) Set FrameSize to choose the size instead.
   2. THE ALPHA PASS - only when the file carries alpha. The source is decoded a
      SECOND time and its alpha channel encoded as a MONOCHROME, FULL-range AV1
-     stream at AlphaConstantRateFactor (by default six below the picture's: an
+     stream (at the picture's bit depth; fully opaque is 255, or 1023 at 10
+     bits) at AlphaConstantRateFactor (by default six below the picture's: an
      error in an edge shows more in the alpha than in the colour), in realtime
      usage with no key frame of the encoder's own and a key frame FORCED on
      exactly the frames that are key frames in the picture. The frame counts
@@ -680,11 +752,19 @@ references. Up to four passes, then the same managed muxer:
 
 THE DRY RUN of a master request lists one AuthoringCommand per pass. The
 prepare pass, when the request's own settings need it, is a real ffmpeg command
-(RunsFFmpeg = true). The in-process passes have RunsFFmpeg = false and an
-Arguments string that is a SETTINGS LINE, always in this shape:
-    video  av1 i420 8-bit <size> good-quality cq-level <crf> cpu-used <n>
+(RunsFFmpeg = true) on the ffmpeg engine; on any other engine it is one
+"prepare pass" line per in-process step instead, RunsFFmpeg = false, in the
+order they run:
+    rotate <90|180|270>                       (real runs only - the source decides)
+    scale <WxH|long-side-N|short-side-N> <lanczos3|bilinear|default-filter>
+    fps <num>/<den> drop/dup
+    grade "<chain>" [<N>-node ]tetrahedral    (the node count once the table is read)
+and the video pass then reads the source itself. The in-process passes have
+RunsFFmpeg = false and an Arguments string that is a SETTINGS LINE, always in
+this shape:
+    video  av1 i420 <8|10>-bit <size> good-quality cq-level <crf> cpu-used <n>
            keyint <frames|auto>[ fill-transparent-pixels] <- <input> -> <ivf>
-    alpha  av1 gray 8-bit <size> full-range realtime cq-level <crf>
+    alpha  av1 gray <8|10>-bit <size> full-range realtime cq-level <crf>
            cpu-used <n> key-frames-of-video-pass
            <- <input|fully-opaque-plane> -> <ivf>
 <size> in a dry run is "size WxH" when Video.FrameSize is Exact and otherwise
@@ -700,6 +780,22 @@ pass, no fill), a rotated source (a prepare pass the dry run could not see),
 and Include on a source without alpha (the alpha pass reads nothing). Progress
 for the in-process passes is reported from frames and samples counted, with or
 without SourceDuration.
+
+TEN-BIT MASTERS - Video.BitDepth = 10:
+  Master only; the WebM-profile and bespoke flavours refuse it by name. The
+  engine must deliver 10-bit frames (VideoProcessorCapabilities.
+  HighBitDepthFrameSource - the desktop ffmpeg engine does); on one that does
+  not, the run - and the dry run - is refused naming the engine. The picture is
+  10-bit 4:2:0 AV1 and the alpha plane 10-bit monochrome AV1; the depth rides in
+  the AV1 sequence header and the container format is unchanged, so CbvReader
+  reports BitDepth 10 on both tracks and a playing session hands the frames on
+  at 10 bits (two bytes a sample). The fill, the crop, the in-process shaping
+  and the opaque plane all work at 10 bits; the sound is unchanged. An 8-bit
+  source is WIDENED (the result says so) - nothing is gained but size. The
+  picture is widened by a shift (value << 2), so studio levels stay studio
+  levels; the ALPHA is widened by BIT REPLICATION (value << 2 | value >> 6),
+  so 8-bit 255 - fully opaque - becomes 1023 and stays fully opaque, and 0
+  stays 0.
 
 THE TRANSPARENT-PIXEL FILL - Video.FillTransparentPixels (true by default):
   Alpha is stored straight, not premultiplied, so the colour under a fully
@@ -741,13 +837,16 @@ presents premultiplied BGRA with real opacity.
 THE EXTENSION is ".cbvmaster" by convention; any other name earns a note, and
 the file plays either way because readers sniff the content.
 
-AN RGB SOURCE ON THE FFMPEG ENGINE. The ffmpeg engine describes the picture it
-delivers from an RGB source (PNG or other RGBA codecs in a .mov, for example)
-with the source's RGB colour matrix, although what it delivers is 4:2:0 YUV.
-That cannot be tagged correctly, so the run - any in-process run, master or
-bespoke - is refused with a message saying so. Convert such a source to YUV
-first:
-    ffmpeg -i in.mov -c:v ffv1 -pix_fmt yuva420p -c:a copy in.mkv
+AN RGB SOURCE ON THE FFMPEG ENGINE authors in process like any other: no
+conversion first, no prepare pass. An RGB source (PNG, qtrle or FFV1 RGB/RGBA in
+a .mov or .mkv, for example) is delivered by the engine as 4:2:0 YUV converted
+with the BT.709 matrix, and the engine reports the matrix of what it delivers -
+BT.709 - so the file is tagged BT.709 and plays back in the source's colours.
+An RGBA source keeps its alpha: Video.Alpha Auto or Include writes the alpha
+plane as for any alpha source. Every in-process run (master, bespoke, WebM
+profile) still checks the engine's word: an engine that reports the RGB
+(identity) matrix for the 4:2:0 samples it delivers is refused with a message
+naming the engine, because no correct tag exists for that.
 
 
 THE BESPOKE FLAVOUR IN PROCESS (Video.Encoder = AuthoringVideoEncoder.Av1Package)
@@ -771,8 +870,9 @@ THE BESPOKE FLAVOUR IN PROCESS (Video.Encoder = AuthoringVideoEncoder.Av1Package
   the same rate factor does not give identical quality. The scale is the
   same - ConstantRateFactor is the encoder's cq-level - and the speed is
   cpu-used = SpeedPreset capped at 8. The same prepare-pass rule applies
-  (FrameSize, FrameRate, Luts, AutoRotate on a rotated source need the ffmpeg
-  engine, and are refused on any other). Vorbis settings mean what they mean to
+  (FrameSize, FrameRate, Luts, AutoRotate on a rotated source: the ffmpeg
+  prepare pass on the ffmpeg engine, served in process on any other). Vorbis
+  settings mean what they mean to
   libvorbis: VorbisQuality q is Vorbis quality q / 10, otherwise
   BitrateKilobitsPerSecond is the nominal bit rate, and the same bit-rate bands
   are refused up front. The dry run lists the passes as settings lines:
@@ -780,6 +880,12 @@ THE BESPOKE FLAVOUR IN PROCESS (Video.Encoder = AuthoringVideoEncoder.Av1Package
            keyint <frames|auto> <- <input> -> <ivf>
     audio  vorbis <quality q|N kbit/s> <rate> Hz <n> channel(s)
            <- <source> -> <ogg>
+  TWO SETTINGS SHAPE ONLY THE FFMPEG COMMAND LINE: CopySourceMetadata (the
+  bespoke container has no file-level metadata to copy into) and
+  SelectStreamsExplicitly = false (the in-process path always reads the
+  source's first video and first audio stream). Set on an in-process run - a
+  master run included - each earns a note in result.Notes rather than being
+  ignored silently.
   A dry run decides the path from the registered engine alone (it runs
   nothing); only a real run can find that ffmpeg is missing, and says so in its
   notes and commands. The WebM-profile flavour follows the same rule - see the
@@ -801,16 +907,17 @@ THE WEBM-PROFILE FLAVOUR IN PROCESS (Mode1 without ffmpeg)
                              PROCESS, with a note in result.Notes saying what
                              was asked for and what ran.
   THE PASSES - [prepare] -> video -> [audio] -> mux:
-    prepare  ffmpeg, only for FrameSize, FrameRate, Luts or AutoRotate on a
-             rotated source, and only on the ffmpeg engine - the same rule, the
-             same refusal on any other engine, as the master flavour.
+    prepare  only for FrameSize, FrameRate, Luts or AutoRotate on a rotated
+             source: ffmpeg on the ffmpeg engine, in process on any other - the
+             same rule as the master flavour.
     video    the bespoke in-process video pass: 8-bit 4:2:0 AV1, cq-level =
              ConstantRateFactor, cpu-used = SpeedPreset capped at 8, at most
              KeyframeIntervalFrames between key frames; an odd last column or
              row is cropped, with the same note.
     audio    the source's first sound stream decoded at 48000 Hz in
              Audio.Channels and encoded as Opus at BitrateKilobitsPerSecond
-             (see AuthoringAudioSettings). Handed to the muxer as packets: the
+             (see AuthoringAudioSettings) by the Opus package's packet encoder,
+             in memory - no temporary file. Handed to the muxer as packets: the
              OpusHead as the track's codec-private data, the first packet at
              zero, the encoder's pre-skip as the track's CodecDelay, the
              padding at the end as the last block's DiscardPadding. In a
@@ -837,8 +944,9 @@ THE WEBM-PROFILE FLAVOUR IN PROCESS (Mode1 without ffmpeg)
     * Every chapter title's translation is KEPT, and the hearing-impaired flag
       survives (the codec identifier D_WEBVTT/CAPTIONS and the flag element),
       so neither of THE TWO ASYMMETRIES applies and no note is added for them.
-    * The file's title is the chapter file's own file-level "title=" line, as
-      the ffmpeg pass's -map_metadata makes it; nothing else of the source's
+    * The file's title is Title when set, else the chapter file's own
+      file-level "title=" line, as the ffmpeg pass's -map_metadata makes it;
+      nothing else of the source's
       metadata is copied. CopySourceMetadata has no in-process meaning, and
       the result says so when it is set.
     * The source's FIRST video and FIRST audio stream are read, which is what
@@ -884,6 +992,107 @@ carried at all. A chapter file ALWAYS wins over the source's chapters: the
 WebM-profile line carries `-map_chapters <chapter file>` when there is one and
 `-map_chapters -1` when there is not, so RenderCommands and Write always render
 the same line.
+
+
+EXPORTING CODEBRIX VIDEO TO MP4
+===============================
+VideoExporter writes a CodeBrix video file - a .cbv (Mode2), a .cbvmaster (Mode3)
+or a WebM-profile .webm / .mkv (Mode1) - out as a standard MP4 that any player,
+phone or editor plays: H.264 by default, HEVC on request, AAC sound.
+
+    using CodeBrix.VideoPlayback.Authoring.Export;
+
+    CodeBrixVideoPlaybackDav1d.Register();     // AV1 - the application's decoder
+    CodeBrixAudioOpus.Register();              // only for Opus (Mode1) sound
+
+    VideoExportResult result = VideoExporter.Run(new VideoExportRequest
+    {
+        SourcePath = "intro.cbvmaster",
+        OutputPath = "intro.mp4",
+        Backdrop = ExportBackdrop.FromImage("stage.jpg"),   // default: 50% grey
+    });
+    // result.FramesWritten, Duration, Width, Height, FrameRate, CodecUsed,
+    // AudioSource (Ours | Backdrop | None), EngineName, Notes
+
+    string plan = VideoExporter.DryRun(request);   // reads the header only, writes nothing
+
+VideoExportRequest
+    SourcePath, OutputPath (must end in .mp4 - MP4 is the only container)
+    Codec            VideoExportCodec.H264 (default) | Hevc - HEVC only on an
+                     engine reporting VideoProcessorCapabilities.HevcOutput;
+                     any other engine refuses it, naming itself
+    Quality          CodeBrix.VideoProcessing.Core.Output.VideoQuality
+                     (EngineDefault by default; ConstantQuality(0..51);
+                     TargetBitrate(kbps))
+    KeyframeIntervalFrames  0 = engine default
+    FastStart        true (default): the MP4 index before the data
+    Title            null = the source's own title (a Matroska file's), if any
+    IncludeAudio     true (default); AudioBitrateKilobitsPerSecond 128
+    Backdrop         ExportBackdrop (Mode3 with alpha only - see below)
+    ProgressCallback Action<AuthoringProgress>, one pass labelled "export"
+    CancellationToken  a cancelled export deletes its partial output
+
+WHERE THE PIECES COME FROM
+  * Decoders: what the APPLICATION registered, exactly as VideoPlaybackSession
+    uses it - VideoDecoders for the picture and the alpha plane; for the sound,
+    the packet codec factories the shared audio output holds (the built-in
+    Vorbis and FLAC factories plus everything registered with
+    SharedAudioOutput.RegisterPacketCodecFactory, CodeBrix.Audio.Opus's among
+    them), highest priority first. This package references no decoder
+    package: Vorbis and FLAC come with CodeBrix.Audio.Core, which the core
+    already depends on, and everything else is the application's to register. A
+    missing one is refused with the session's own advice ("reference
+    CodeBrix.VideoPlayback.Dav1d and call CodeBrixVideoPlaybackDav1d.Register()",
+    "...CodeBrixAudioOpus.Register()").
+  * NO AUDIO DEVICE IS NEEDED. The sound's decoder is made by asking those
+    factories DIRECTLY - never through SharedAudioOutput.CreatePacketDecoder,
+    which starts the shared output and opens the audio device - so an export
+    runs on a headless machine or in a background service with no sound
+    hardware at all. A backdrop video's sound is read through the
+    video-processing engine, which needs no device either.
+  * Writer: the registered video-processing engine, else the desktop ffmpeg
+    engine - the same choice the master flavour of CbvAuthor makes.
+
+THE BACKDROP (a master file WITH an alpha-plane track - nothing else composites)
+    ExportBackdrop.FromColour(0xRRGGBB)            default: 0x808080, 50% grey
+    ExportBackdrop.FromImage(path)                 JPG/PNG/... via CodeBrix.Imaging
+    ExportBackdrop.FromImageRgba(w, h, rgbaBytes)  your own decoder's pixels
+    ExportBackdrop.FromVideo(path)                 decoded through the same engine
+  * Straight-alpha "over"; the output is always the SOURCE's size. An image or
+    video of another size is scaled to it with the core's FrameScaler (default
+    filter) - once for an image, frame by frame for a video.
+  * A BACKDROP HAS NO TRANSPARENCY OF ITS OWN IN THE RESULT. An image's or a
+    video's own transparency is flattened over 50% grey first, and the
+    composite is made over that - an MP4 has no alpha to carry it in.
+  * Video backdrop: each output frame takes the backdrop frame shown at or
+    before its time (no resampling). Output length = the LONGER of the two.
+    When ours ends first the backdrop plays on alone; when the backdrop ends
+    first ours is composited over 50% grey - never over Backdrop.Colour.
+  * Any other source (Mode1, Mode2, a master without alpha): the backdrop is
+    ignored, with the note "the source has no alpha plane; backdrop ignored"
+    (only when a non-default backdrop was given).
+
+THE SOUND
+  * Ours - decoded, pre-skip and end trim honoured - unless the master is
+    flagged Silent OR has no audio track at all: then a backdrop VIDEO's sound
+    (a colour or image backdrop has none, so the MP4 has no audio track).
+    Silence fills the rest of the picture after the chosen sound ends.
+  * SOUND LONGER THAN THE PICTURE IS CUT at the picture's end, and the result's
+    Notes say so - the MP4 is never longer than its picture.
+  * The AAC track takes the decoded rate when AAC allows it (8-96 kHz);
+    otherwise it is resampled to 48 kHz (linear, with a note). 1-8 channels.
+
+WHAT THE PICTURE BECOMES
+  * 8-bit always: a 10-bit or 12-bit source is reduced to 8 bits, and the
+    result's Notes say so - by rounding on the I420 path, by the converter's
+    ordered dither on the RGBA path.
+  * The source's nominal frame rate (the track's frame duration, else its first
+    timestamps); frames on other timing are dropped or repeated with the core's
+    FrameRateResampler (note).
+  * Odd sizes are cropped to even (note). Opaque I420 sources go straight to the
+    writer as I420; an alpha master goes as composited RGBA (needs the engine's
+    RgbaInput - both shipped engines have it).
+  * Captions and chapters are NOT carried into the MP4 (note).
 
 
 THE TWO ASYMMETRIES
@@ -1132,6 +1341,19 @@ COMMON PITFALLS TO AVOID
     ChaptersPath. The result's Notes name what the source had and say how to
     carry it - see WHAT IS TAKEN FROM THE SOURCE.
 
+  * DO NOT FORGET THE DECODERS WHEN EXPORTING TO MP4. The export decodes with
+    what the APPLICATION registered - CodeBrixVideoPlaybackDav1d.Register() for
+    AV1, and CodeBrixAudioOpus.Register() for Mode1's Opus sound - this package
+    never references a decoder package. Or set IncludeAudio = false for the picture
+    alone. Decoding the sound needs NO audio device: the export asks the codec
+    factories directly and never starts the shared audio output.
+
+  * DO NOT EXPECT A COLOUR BACKDROP AFTER A VIDEO BACKDROP ENDS. The tail behind
+    ours is 50% grey by rule.
+
+  * DO NOT ASK AN EXPORT FOR .mov / .m4v / .webm. MP4 only; anything else is
+    refused.
+
   * DO NOT ASSUME A REQUEST OBJECT IS REUSABLE ACROSS THREADS. It is a plain
     settings object with no locking. Build one per file.
 
@@ -1157,10 +1379,16 @@ COMMON PITFALLS TO AVOID
     trusts the engine's description of the source; set Include when you know
     better.
 
-  * DO NOT ASK A NON-FFMPEG ENGINE TO RESHAPE A MASTER. FrameSize, FrameRate,
-    Luts and AutoRotate on a rotated source need the ffmpeg prepare pass; on any
-    other engine the request is refused. Prepare the source beforehand, or
-    author on the desktop.
+  * DO NOT EXPECT THE IN-PROCESS SHAPING TO BE BIT-IDENTICAL TO FFMPEG'S. On an
+    engine without ffmpeg, FrameSize, FrameRate, Luts and AutoRotate are served
+    in process: rotation and frame selection are exact, but scaled and graded
+    samples can differ by a few levels at hard edges. And FrameRateMode =
+    Encoder means the fps filter's frames in process, where ffmpeg's -r keeps
+    other frames when it lowers the rate.
+
+  * DO NOT ASK FOR 10 BITS OUTSIDE A MASTER. Video.BitDepth = 10 is refused for
+    the WebM-profile and bespoke flavours, and on an engine without
+    HighBitDepthFrameSource.
 
   * DO NOT ASK FOR OPUS IN A BESPOKE FILE. It is refused outright, and not
     because of a switch: a bespoke ".cbv" has to play with the core package and a
@@ -1218,7 +1446,8 @@ COMMON PITFALLS TO AVOID
 
 WHAT THIS PACKAGE DOES NOT DO
 =============================
-  * IT DOES NOT DECODE OR PLAY ANYTHING. It has no decoder and no presenter, and
+  * IT DOES NOT PLAY ANYTHING. It has no decoder of its own and no presenter -
+    the MP4 export decodes only through what the application registered - and
     it never opens an audio device.
 
   * IT DOES NOT EDIT. No trimming, no joining, no overlays, no transitions. It
@@ -1274,6 +1503,7 @@ Author a master .cbvmaster            request.Flavour = VideoAuthoringFlavour.Ma
 Force alpha in, or leave it out       Video.Alpha = AuthoringAlphaMode.Include / Exclude
 Raise the alpha plane's quality       Video.AlphaConstantRateFactor = 20
 24-bit lossless sound                 Audio.FlacBitDepth = 24
+A master that is silent by intent     Audio.Silent = true (master only)
 Keep the colour under transparency    Video.FillTransparentPixels = false
 See the command without running it    CbvAuthor.RenderCommands(request)
 Check ffmpeg is installed             CbvAuthor.TryVerifyTools(out string problem)
@@ -1307,4 +1537,11 @@ Stop a run in progress                request.CancellationToken = source.Token
 See what could not be kept            result.Notes
 See the profile report                result.Profile
 Judge somebody else's file            StreamableProfile.EvaluateFile(path)
+Export a .cbv/.cbvmaster/.webm to MP4 VideoExporter.Run(new VideoExportRequest
+                                        { SourcePath, OutputPath = "x.mp4" })
+See what an export would do           VideoExporter.DryRun(request)
+HEVC instead of H.264                 request.Codec = VideoExportCodec.Hevc (engine HevcOutput)
+Composite a master over a picture     request.Backdrop = ExportBackdrop.FromImage("bg.png")
+Composite a master over a video       request.Backdrop = ExportBackdrop.FromVideo("bg.mp4")
+Export the picture only               request.IncludeAudio = false
 ================================================================================

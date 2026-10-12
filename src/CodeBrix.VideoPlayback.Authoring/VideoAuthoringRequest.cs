@@ -70,6 +70,19 @@ public sealed class VideoAuthoringRequest
     public string ChaptersPath { get; set; }
 
     /// <summary>
+    /// The media's title, or null (the default) to leave it unset.
+    /// </summary>
+    /// <remarks>
+    /// The WebM-profile flavour writes it as the file's title: on the FFmpeg path as <c>-metadata title=</c>
+    /// (emitted ONLY when this is set, so a request without it renders exactly the line it always did), in
+    /// process as the Matroska <c>Info</c> element's <c>Title</c>. Either way it wins over the chapter file's
+    /// file-level <c>title=</c> line, which is the title otherwise. The bespoke and master containers have no
+    /// file-title field - only chapter titles - so there it is not written, and the result carries a note
+    /// saying so.
+    /// </remarks>
+    public string Title { get; set; }
+
+    /// <summary>
     /// Which Matroska-family muxer the WebM-profile pass uses. WebM by default. Ignored by the bespoke
     /// flavour.
     /// </summary>

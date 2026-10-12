@@ -27,8 +27,12 @@ This repository produces THREE NuGet packages:
   CodeBrix.VideoPlayback.Authoring.MitLicenseForever
       License:       MIT
       Consumer doc:  src/CodeBrix.VideoPlayback.Authoring/AGENT-README.txt
-      Dependencies:  CodeBrix.VideoPlayback.MitLicenseForever (same version) and
-                     CodeBrix.VideoProcessing.MitLicenseForever, and nothing else
+      Dependencies:  CodeBrix.VideoPlayback.MitLicenseForever (same version),
+                     CodeBrix.VideoProcessing.Core and CodeBrix.VideoProcessing
+                     (the engine contract and the ffmpeg engine), the encoder
+                     packages CodeBrix.VideoEncoding.Av1, CodeBrix.Audio.FlacWriter,
+                     CodeBrix.Audio.Vorbis and CodeBrix.Audio.Opus, and
+                     CodeBrix.Imaging (backdrop images for export) - and nothing else
 
 The first is the Skia-free core of a video-playback family: containers, a
 playback session, a frame-buffer pool, a frame presenter, a CPU colour converter
@@ -54,6 +58,59 @@ no place in a shipped application, and nothing an application needs to PLAY vide
 depends on it. It is published here rather than in the video-processing
 repository because the muxer and the container knowledge live here (plan decision
 21: no .cbv creation code in CodeBrix.VideoProcessing).
+
+THE MP4 EXPORT (Authoring, namespace ...Authoring.Export). VideoExporter reads a
+.cbv / .cbvmaster / Mode1 WebM with the core's container readers and decodes it
+with what the application REGISTERED - VideoDecoders for the picture and alpha
+plane, the same call VideoPlaybackSession makes, its "no decoder" wording
+included - so Authoring still references no decoder package.
+  Audio decoding is DEVICE-FREE (Export/ExportDecoding.cs). The obvious call,
+  SharedAudioOutput.CreatePacketDecoder, STARTS THE SHARED OUTPUT AND OPENS THE
+  AUDIO DEVICE by CodeBrix.Audio.Core's design (its registry lives on the running
+  engine) - and an export must run where there is no sound device at all: a
+  headless build agent, a background service, a board with no audio. So the
+  export mirrors the engine's own lookup instead: candidates = the built-in
+  public VorbisPacketCodecFactory and FlacPacketCodecFactory (CodeBrix.Audio.Codecs,
+  made directly) + SharedAudioOutput.RegisteredPacketCodecFactories (reading it
+  starts nothing; CodeBrixAudioOpus.Register() puts the Opus factory there);
+  filtered by SupportedCodecIds case-insensitively, ordered by Priority
+  descending (stable, so equals keep that order), the first non-null
+  CreateDecoder wins; none -> VideoAuthoringException naming the Register() call.
+  ExportAudioLookupTests covers the rule with fake factories;
+  ExportWithoutAudioDeviceTests (a non-parallel collection, because it calls
+  SharedAudioOutput.Shutdown() first - MasterAuthoringTests plays a session with
+  sound) exports a Vorbis and a FLAC source and asserts IsRunning stays false.
+  A backdrop video's sound goes through the engine (engine.OpenAudio) - no device
+  either.
+  The test project registers Dav1d process-wide but NOT Opus, because
+  AuthoringPlaybackTests assert the Opus package is not registered in that
+  process. The Opus export test therefore offers OpusPacketCodecFactory to the
+  SAME lookup for its own flow only, through an internal AsyncLocal seam
+  (ExportDecoding.FlowPacketCodecFactories, appended after the registered
+  factories); the shared registry cannot unregister, so a process-wide
+  registration would leak into every other test.
+  The MP4 is written by InProcessAuthoring.ResolveEngine()'s engine through the
+  Core writer contract (IStandardVideoWriter; the writer stamps frame N at
+  FrameRate.TimestampOf(N), so timing is fitted first with FrameRateResampler -
+  drop/duplicate).
+  Composite: picture -> opaque BGRA through VideoFrameConverter.ToBgra32 (the
+  frame's matrix/range, deep samples dithered), then straight-alpha "over" the
+  backdrop (premultiplied pictures add to the uncovered share), handed to the
+  writer as RGBA (engine RgbaInput). A backdrop's own transparency is flattened
+  over 50% grey first (ExportPixels.FlattenOverGrey) - an MP4 has no alpha.
+  Opaque I420 sources skip all that: copied (10/12-bit rounded to 8, with a
+  note) and written as I420 tagged with the frame's resolved matrix and range.
+  Length rule (Jeremy's): output = max(ours, backdrop video); backdrop alone after
+  ours ends; ours over 50% GREY (not the colour setting) after the backdrop ends.
+  Audio rule: ours unless the master is Silent or has no audio track (ruling
+  28a), then the backdrop VIDEO's sound via engine.OpenAudio; silence after the
+  chosen sound; sound longer than the picture is cut at the picture's end (with
+  a note); no audio track when there is none. Ours is held back by one packet's
+  worth so a Matroska end trim (known only on the last block) can be applied.
+  Dependency: CodeBrix.Imaging.ApacheLicenseForever (our own package, ruling 25)
+  decodes an image backdrop to RGBA; ExportBackdrop.FromImageRgba lets a caller
+  with its own decoder skip it. No THIRD-PARTY-NOTICES entry: it is a CodeBrix
+  package and carries its own notices.
 
 All THREE projects carry the SAME date-stamped version block, so one pack run
 stamps them with one version and the dependency the presenter and the authoring
@@ -1121,6 +1178,104 @@ declares -0.5..1.5 (honoured) and found/smol-cube/shaper_3d.cube is a combined
 shaper-plus-table with two INPUT_RANGE keywords and values up to 13.5 (accepted).
 
 
+THE MANAGED FRAME-PROCESSING PRIMITIVES, AND HOW FAR THEY ARE FROM FFMPEG
+=========================================================================
+src/CodeBrix.VideoPlayback/Processing/ holds four primitives - scaler, rotator,
+frame-rate resampler, LUT grader - for engines without FFmpeg. The desktop
+authoring path keeps its FFmpeg prepare pass by default; these exist so the
+same operations can run in-process where FFmpeg is not available. They live in
+the CORE package (never Skia) and are PLANE-LEVEL on purpose: the core must not
+reference CodeBrix.VideoProcessing.Core, so frames are described by
+ReadOnlyPlanarFrame / PlanarFrame - ref structs of spans plus geometry - and a
+consumer wraps its own frame type around them at the call site. Sample
+conventions match VideoProcessing.Core's VideoFrameData: 10/12-bit = u16
+little-endian, value in the low bits, strides in bytes, 4:2:0 chroma rounded up.
+
+Scaler. Separable, two passes, integer arithmetic. ScalingAxis precomputes, per
+output sample, a fixed number of (clamped source index, 14-bit weight) taps;
+weights are quantised with the rounding error carried from tap to tap, so they
+sum to exactly 1 << 14, and an axis that does not change size is one tap of
+weight one (exact). The kernels are widened by the factor when shrinking -
+FFmpeg's construction - and the geometry is centre-aligned, which is FFmpeg's
+for luma and for unspecified chroma siting. The horizontal pass keeps 7
+fractional bits and caps the intermediate just under one level above the
+ceiling (FFmpeg caps its 15-bit intermediate the same way; without it a Lanczos
+overshoot at a hard edge carried into the vertical pass and cost up to 22 levels
+of 1023 against FFmpeg). The vertical pass rounds half up and clamps to
+[0, max]. 16-bit samples accumulate in long. A PlaneScaler instance owns the
+tables for one geometry and no per-call state (the row cache is rented from
+ArrayPool per call), so it is shareable across threads; the static Scale keeps
+the last four geometries per thread. The row cache maps source row r to slot
+r % taps, which is collision-free because one output row's taps always span at
+most `taps` consecutive source rows.
+
+Rotator. An affine index map (output (dx, dy) -> source (x, y)) built from the
+angle, then the flips applied to that map; rows that come out in order are
+whole-row copies, the rest are element moves of 1, 2, 4 or 8 bytes. Flips are
+applied first, then the rotation, which is what FFmpeg's hflip/vflip followed
+by transpose produce - the tests pin all sixteen combinations byte for byte.
+4:2:0 quarter turns refuse odd dimensions (the half-covered chroma edge would
+flip sides); 4:2:2 quarter turns would be 4:4:0 and are NotSupported.
+
+Frame rate. Pure timing, no pixels, mirroring FFmpeg's fps filter with its
+defaults: slot = round(t * rate) with halves away from zero (AV_ROUND_NEAR_INF),
+the first frame's slot is the first output, a frame fills slots up to the next
+frame's slot (so the later of two frames in a slot wins), and the last frame
+fills up to the slot of the stream end (last pts + duration - FFmpeg's EOF
+timestamp). All arithmetic is in Int128 over exact rationals; output n's time is
+computed from n, never accumulated. TimeSpan input is accepted but a tick can
+tip an exact half (29.97 -> 30 frame 500 is the classic), so the (pts, time
+base) overload is the exact one.
+
+LUT grader. Per pixel: YUV code values -> normalised R'G'B' in double (the
+VideoFrameConverter constants: Kr/Kb 0.2126/0.0722 and 0.299/0.114, studio
+16/219/128/224 scaled by 2^(depth-8), full 0..max with the centre at
+2^(depth-1); its fixed-point table is private, so Processing/YuvRgbMatrix.cs
+repeats the constants - keep them identical), Lut3D.Sample (domain honoured,
+tetrahedral by default as FFmpeg's lut3d), back through the same matrix, round
+half up, clamp. Subsampled chroma is upsampled bilinearly (centre-sited 3:1, the
+converter's interstitial blend) for the grade, and what goes back down is the
+BOX AVERAGE of the grade's change (graded - upsampled) added to the original
+sample - so an identity table is exact on in-gamut pictures (pinned by a test
+at 4:4:4, 4:2:0 and 4:2:2, 8/10/12-bit) and the grade does not soften chroma
+detail it does not touch.
+
+Measured bounds against the host FFmpeg (absolute difference in levels of the
+frame's own bit depth; the tests carry the same numbers and bounds just above
+them):
+
+  Scaler, 64x48 synthetic plane, default flags plus the kernel
+    Bilinear  8-bit  down to 37x29 worst 1 mean 0.047 | up to 101x77 worst 1 mean 0.067
+    Lanczos3  8-bit  down          worst 1 mean 0.089 | up           worst 2 mean 0.081
+    Bilinear 10-bit  down          worst 1 mean 0.022 | up           worst 1 mean 0.047
+    Lanczos3 10-bit  down          worst 1 mean 0.053 | up           worst 7 mean 0.083
+    (the 7 is one output column, x = 3, of a two-pixel checker; with FFmpeg's
+    +accurate_rnd the 8-bit means drop to 0.004-0.023)
+    Identity geometry: byte-identical.
+  Frame scaler, whole 4:2:0 frames: luma and chroma both worst 1 (means <= 0.09).
+  Rotator: byte-identical to transpose/hflip/vflip, every angle and flip, 8-bit,
+    10-bit, RGBA, and whole 10-bit 4:2:0 frames.
+  Frame rate: identical output slots (count and position) to fps= for 30->24,
+    24->30, 29.97->30, 30->29.97, 60->30, 15->30 and 25->23.976.
+  LUT grader vs scale -> gbrp -> lut3d (tetrahedral) -> scale (BT.709 studio,
+    accurate_rnd, full chroma; bilinear chroma resampling for 4:2:0):
+    4:4:4  8-bit  luma worst 1 mean 0.36-0.41   chroma worst 1 mean 0.16-0.23
+    4:4:4 10-bit  luma worst 1 mean 0.32        chroma worst 2 mean 0.39
+    4:2:0  8-bit  luma worst 1 mean 0.36        chroma worst 2 mean 0.23
+    4:2:0 10-bit  luma worst 1 mean 0.34        chroma worst 8 mean 0.72
+    The ~0.4 luma mean is FFmpeg's lut3d truncating where the grader rounds; the
+    4:2:0 chroma gap is FFmpeg's bilinear (tent) chroma downsampler against the box average.
+    Identity table: exact (0) on in-gamut pictures.
+
+  Testing note. Every FFmpeg-oracle test class under tests/.../Processing/ is in
+  the "FFmpeg oracle processes" collection (DisableParallelization = true).
+  Spawning several dozen FFmpeg children in parallel with HttpMediaSourceTests'
+  in-process HttpListener servers made HttpListener.Close throw "Address already
+  in use" intermittently (about one Release run in four); serialising the oracle
+  classes removed it (ten clean runs in a row). Keep new oracle classes in that
+  collection.
+
+
 THE STREAMABLE-PROFILE RULES, AND WHY THEY MOVED
 ================================================
 Added 2026-08-29. The eight rules that decide whether a file is a "CodeBrix Video"
@@ -1294,9 +1449,38 @@ FrameSize (not Source), FrameRate (above 0, either mode), a non-empty grade and
 AutoRotate on a source whose engine-reported rotation is not 0 each need ffmpeg:
 one command writes FFV1 (yuva420p with alpha, yuv420p without) in Matroska
 through the bespoke flavour's own filter chain, and the in-process passes read
-that. Nothing else triggers it. With any other engine such a request is refused
-up front (and again after analysis, for the rotation case only the source can
-reveal). The dry run cannot see a rotation; the result's Commands can.
+that. Nothing else triggers it. With any other engine the same settings are
+served IN PROCESS (Internal/ManagedFrameShaping.cs + ShapedVideoFrameSource.cs):
+the shaping is an IVideoFrameSource wrapped round the engine's own decode, in
+the prepare pass's order - rotate (ffmpeg turns while decoding), scale, fps,
+lut3d - and the alpha pass wraps its own decode with the same shaping minus the
+grade, so lock step is kept by determinism, not by sharing frames. The source
+reads one frame ahead (a frame-rate decision needs the next timestamp); output n
+is stamped FrameRate.TimestampOf(n), the engine contract's own stamp, so the
+frames equal what the ffmpeg engine reads back from the prepare pass's
+intermediate. Both FrameRateModes are the fps filter in process: ffmpeg's
+output-side -r was measured keeping OTHER frames than fps= when it halves a rate
+(and padding two at the end), so Encoder mode is the one place the two paths
+pick different frames, and the run's notes say so. The dry run cannot see a
+rotation; the result's Commands can. The managed-versus-ffmpeg bounds are in
+tests/CodeBrix.VideoPlayback.Authoring.Tests/ManagedVersusFFmpegShapingTests.cs,
+measured over SyntheticClip pixels served by a test engine that never registers
+itself (InProcessAuthoring.EngineOverride is the seam).
+
+A TEST-CLIP TRAP WORTH KNOWING. Tagging a rawvideo input's colour with OUTPUT-side
+-colorspace / -color_primaries / -color_trc / -color_range made ffmpeg 7.1
+negotiate a conversion from the untagged input and write a different picture.
+SyntheticClip tags with -vf setparams=... instead, which only labels frames.
+
+TEN-BIT MASTERS. Video.BitDepth = 10 (master only - Validate refuses it on the
+other flavours, RequireBitDepthSupport on an engine without
+HighBitDepthFrameSource). Everything in the in-process passes is byte-width
+aware: CropI420 / CropPlane take BYTES, TransparentPixelFill has a
+bytesPerSample argument, the opaque plane is 1023 little-endian, and an engine
+that hands 8-bit frames to a 10-bit request is widened by WidenTo (picture
+value << 2 so studio levels stay studio levels; alpha bit-replicated so 255
+stays fully opaque at 1023). The prepare pass writes yuv(a)420p10le. Nothing in
+the container changed: the depth rides in the AV1 sequence header.
 
 THE ALPHA PASS USES REALTIME USAGE, AND THAT WAS MEASURED. In the encoder's
 good-quality usage every FORCED key frame comes out followed by a second key
@@ -1358,11 +1542,24 @@ rotation-, rate- or grade-only prepare pass a whole-picture resample to lose one
 row or column would be the worse trade. One rule, applied in one place, on every
 engine. A 1-pixel-wide or -high picture is refused.
 
-AN RGB SOURCE IS REFUSED, NOT GUESSED. The ffmpeg engine reports the SOURCE's
-colour matrix (RGB for a PNG-in-mov) for the 4:2:0 YUV it delivers; the AV1
-encoder refuses an identity matrix for I420, and tagging it anything else would
-be a guess. The run is refused with a message naming the engine; the engine
-should report the matrix of the samples it delivers.
+AN RGB SOURCE IS CONVERTED BY THE ENGINE; THE MATRIX IS A CONTRACT CHECK. The
+engine contract says VideoSourceInfo.ColorMatrix names the matrix of the
+DELIVERED samples. The ffmpeg engine delivers an RGB source (PNG, qtrle, FFV1
+bgra / bgr0 ...) as I420 (+ alpha) through an explicit
+scale=out_color_matrix=bt709 and reports Bt709, so an RGB source authors in
+process with no prepare pass and the AV1 sequence header - hence the file - says
+BT.709. (Older engine builds reported the SOURCE's RGB matrix for that YUV
+delivery, and such sources were refused with advice to convert to YUV first;
+that advice is gone.) InProcessAuthoring.RequireYuvMatrix, called by
+EncodeVideo - the one door every in-process picture pass (master, bespoke,
+WebM profile) goes through - stays as the contract check: an engine reporting
+the RGB (identity) matrix for the I420 samples it delivers misdescribes its
+delivery, the AV1 encoder would refuse the tag and any other tag would be a
+guess, so the run is refused with a message naming the engine and saying it
+must report the matrix of the samples it delivers. The Android engine reports
+Rgb only for RGBA delivery, which the authoring passes never ask for. Fenced by
+RgbSourceInProcessAuthoringTests (real ffmpeg engine, RGBA and RGB sources, the
+colours round-tripped) and the SyntheticEngine contract-guard test there.
 
 BESPOKE (MODE2) CAN BE AUTHORED IN PROCESS TOO. AuthoringVideoEncoder.Av1Package
 always takes the in-process path: the master flavour's colour pass without alpha
@@ -1398,13 +1595,15 @@ so the file is judged once.
 
   OPUS ENCODER: CodeBrix.Audio.Opus, for its encoder only, and nothing in this
   library ever calls CodeBrixAudioOpus.Register() (tests assert it stays
-  unregistered). The package's packet-level encoder (OpusSoundEncoder) is
-  INTERNAL - its constructor takes an internal settings type - so the public
-  OpusFileWriter is used: it writes Ogg Opus into a temporary ".audio.opus" file
-  in TemporaryFolder, which the core's OggAudioStream reads straight back into
-  MatroskaAudioPacket values. Mono and stereo only (channel mapping family 0);
-  more channels are refused in process, where libopus through ffmpeg would code
-  surround.
+  unregistered). The package's public packet encoder (OpusPacketEncoder) is
+  used: samples go in, bare Opus packets come out and become
+  MatroskaAudioPacket values directly - drained after every chunk and after
+  Finish - with no Ogg and no file on disk (there is no temporary ".audio.opus"
+  any more). Its IdentificationHeader is checked against the OpusHead built
+  here from its pre-skip before it becomes the track's codec-private data, and
+  its TrailingTrimSamples becomes the muxer's trailing trim. Mono and stereo
+  only (channel mapping family 0); more channels are refused in process, where
+  libopus through ffmpeg would code surround.
 
   OPUS TIMING: packets are timed on the stream's OWN timeline, exactly as the
   Ogg granule positions count it - the first packet at ZERO, the encoder's
@@ -1416,8 +1615,8 @@ so the file is judged once.
   DiscardPadding. The run refuses a stream whose first packet is not at zero.
   The OpusHead is BUILT here (InProcessAuthoring.BuildOpusHead: version 1, the
   channel count, the encoder's pre-skip, input rate 48000, gain 0, mapping
-  family 0) and must equal, byte for byte, the header the encoder wrote, and its
-  pre-skip must equal what OggAudioStream read; a test pins that the built
+  family 0) and must equal, byte for byte, the encoder's IdentificationHeader;
+  a test pins that the built
   header is byte-identical to the one in the ffmpeg-made opus-audio.ogg fixture.
 
   BITRATE MAPPING: BitrateKilobitsPerSecond * 1000 as the Opus target bit rate

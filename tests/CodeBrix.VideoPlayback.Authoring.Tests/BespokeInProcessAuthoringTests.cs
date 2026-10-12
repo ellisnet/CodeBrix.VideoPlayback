@@ -280,6 +280,42 @@ public class BespokeInProcessAuthoringTests
     }
 
     [Fact]
+    public void Settings_with_no_in_process_meaning_are_named_in_the_notes()
+    {
+        //Arrange
+        SyntheticSource.SkipWithoutFFmpeg();
+        using WorkFolder work = new WorkFolder("bespoke-in-process-notes");
+        VideoAuthoringRequest request = RequestWithText(work);
+        request.CopySourceMetadata = true;
+        request.SelectStreamsExplicitly = false;
+
+        //Act
+        VideoAuthoringResult result = CbvAuthor.Write(request);
+
+        //Assert
+        string notes = string.Join("\n", result.Notes);
+        notes.Should().Contain("CopySourceMetadata has no in-process meaning");
+        notes.Should().Contain("The bespoke container has no file-level metadata");
+        notes.Should().Contain("SelectStreamsExplicitly = false has no in-process meaning");
+        notes.Should().NotContain("has no in-process meaning for Opus");
+    }
+
+    [Fact]
+    public void Settings_left_at_their_defaults_earn_no_in_process_note()
+    {
+        //Arrange
+        SyntheticSource.SkipWithoutFFmpeg();
+        using WorkFolder work = new WorkFolder("bespoke-in-process-no-notes");
+        VideoAuthoringRequest request = RequestWithText(work);
+
+        //Act
+        VideoAuthoringResult result = CbvAuthor.Write(request);
+
+        //Assert
+        string.Join("\n", result.Notes).Should().NotContain("has no in-process meaning");
+    }
+
+    [Fact]
     public void The_sound_lasts_as_long_as_the_source()
     {
         //Arrange

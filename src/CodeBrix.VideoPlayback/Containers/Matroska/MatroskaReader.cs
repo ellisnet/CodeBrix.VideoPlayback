@@ -407,9 +407,18 @@ public sealed class MatroskaReader : IMediaContainerReader
         return TimeSpan.FromTicks(baseTicks + (stepTicks * index));
     }
 
+    // An unlaced block's duration is its BlockDuration when it states one. A SimpleBlock has no BlockDuration
+    // element at all, so for one the track's DefaultDuration is the frame's duration - zero only when the track
+    // states neither.
     private TimeSpan FrameDuration()
     {
-        if (frameCount <= 1) return blockDuration;
+        if (frameCount <= 1)
+        {
+            if (blockDuration > TimeSpan.Zero) return blockDuration;
+
+            long defaultStep = FrameStepTicks();
+            return defaultStep > 0 ? TimeSpan.FromTicks(defaultStep) : TimeSpan.Zero;
+        }
 
         long step = FrameStepTicks();
         return step > 0 ? TimeSpan.FromTicks(step) : TimeSpan.Zero;

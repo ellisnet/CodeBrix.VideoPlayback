@@ -63,7 +63,11 @@ namespace CodeBrix.VideoPlayback.Authoring;
 /// muxer. The two video streams are checked for lock step before they are muxed. Only when the request asks
 /// for something the engine's decoded frames cannot give - a frame size, a frame rate, a colour grade, or a
 /// rotated source turned upright - does an FFmpeg PREPARE pass run first, writing a lossless intermediate the
-/// in-process passes read instead; that pass exists only with the ffmpeg engine.
+/// in-process passes read instead. That pass needs the ffmpeg engine; on any other engine the same steps run
+/// IN PROCESS, in the same order, through the core's managed scaler, rotator, frame-rate resampler and LUT
+/// grader, and the result lists them as "prepare pass" lines that ran no FFmpeg (<c>rotate 90</c>,
+/// <c>scale 1280x720 lanczos3</c>, <c>fps 30/1 drop/dup</c>, <c>grade "..." 33-node tetrahedral</c>). A master
+/// may be 10-bit (<c>Video.BitDepth</c>).
 /// </para>
 /// <para>
 /// WHAT IS TAKEN FROM THE SOURCE. Its picture and its sound - the first video and the first audio stream, or
@@ -92,7 +96,9 @@ public static class CbvAuthor
     /// One command for a WebM-profile file, two for a bespoke one. For a master file, one entry per in-process
     /// pass - video, alpha (unless the request excludes alpha), audio (unless it excludes sound) - whose
     /// <see cref="AuthoringCommand.RunsFFmpeg" /> is false and whose arguments are the pass's settings line,
-    /// preceded by the FFmpeg command of the prepare pass when the request's own settings need one. A rotated
+    /// preceded by the FFmpeg command of the prepare pass when the request's own settings need one - or, on an
+    /// engine other than ffmpeg, by one "prepare pass" line per in-process step (<c>scale ...</c>,
+    /// <c>fps ...</c>, <c>grade ...</c>) whose <see cref="AuthoringCommand.RunsFFmpeg" /> is false. A rotated
     /// source needs one too, and only a real run, which reads the source, can see that. A bespoke or
     /// WebM-profile file encoded in process is listed the same way - video, then audio - and the WebM-profile
     /// one ends with its mux, <c>mux webm ...</c>.
@@ -215,7 +221,7 @@ public static class CbvAuthor
                 throw new VideoAuthoringException(problem);
             }
 
-            RefusePreparePassWithoutFFmpeg(request, masterEngine);
+            InProcessAuthoring.RequireBitDepthSupport(masterEngine, request);
         }
         else
         {
@@ -237,6 +243,7 @@ public static class CbvAuthor
             ? SurveySourceText(request, notes)
             : SkipSourceTextSurvey(masterEngine, notes);
         NoteUncarriedSourceText(request, survey, notes);
+        NoteTitleWithoutField(request, notes);
 
         Directory.CreateDirectory(temporaryFolder);
         string outputFolder = Path.GetDirectoryName(Path.GetFullPath(request.OutputPath));
@@ -581,6 +588,20 @@ public static class CbvAuthor
         }
     }
 
+    // The bespoke container (Mode2 and the Mode3 master) has chapter titles but no file title, and the format is
+    // not changed for it - so a Title asked of either flavour is said to be dropped rather than silently lost.
+    private static void NoteTitleWithoutField(VideoAuthoringRequest request, IList<string> notes)
+    {
+        if (string.IsNullOrEmpty(request.Title) || request.Flavour == VideoAuthoringFlavour.WebMProfile) return;
+
+        notes.Add(
+            "Title has no field in the bespoke container: the " + (request.Flavour == VideoAuthoringFlavour.Master
+                ? "master (Mode3)"
+                : "bespoke (Mode2)")
+            + " file carries chapter titles but no file title, so Title '" + request.Title + "' was NOT written. "
+            + "The WebM-profile flavour writes it.");
+    }
+
     // ffmpeg's Matroska muxer writes ONE untagged ChapterDisplay per chapter, so a chapter file that names a
     // title per language loses all but the untagged one in the WebM-profile flavour. That is a real
     // limitation of the container path and it is reported rather than hidden; the bespoke flavour keeps
@@ -751,12 +772,38 @@ public static class CbvAuthor
             throw new VideoAuthoringException("The request states no output path to write to.");
         }
 
+        // SILENT IS A MASTER-FILE FLAG. Only the master flavour's bespoke container has a header flag to carry it;
+        // a WebM-profile or bespoke (Mode2) file without sound is authored with Audio.Include = false.
+        if (request.Audio.Silent && request.Flavour != VideoAuthoringFlavour.Master)
+        {
+            throw new VideoAuthoringException(
+                "Audio.Silent is a master-file flag: it is carried by the master ('.cbvmaster', Mode3) container's "
+                + "header, and the " + (request.Flavour == VideoAuthoringFlavour.Bespoke
+                    ? "bespoke (Mode2)"
+                    : "WebM-profile (Mode1)")
+                + " flavour has no field for it. Set Audio.Include to false for a file without sound, or author "
+                + "VideoAuthoringFlavour.Master.");
+        }
+
+        // TEN BITS IS A MASTER-FILE SETTING. The WebM-profile (Mode1) and bespoke (Mode2) files are 8-bit 4:2:0 by
+        // decision - the profile every player decodes without a conversion.
+        if (request.Video.BitDepth != AuthoringVideoSettings.DefaultBitDepth && request.Flavour != VideoAuthoringFlavour.Master)
+        {
+            throw new VideoAuthoringException(
+                "Video.BitDepth = " + request.Video.BitDepth.ToString(CultureInfo.InvariantCulture) + " is a master-file "
+                + "setting: the " + (request.Flavour == VideoAuthoringFlavour.Bespoke
+                    ? "bespoke (Mode2) '.cbv'"
+                    : "WebM-profile (Mode1)")
+                + " flavour is 8-bit 4:2:0 by decision, the profile every player decodes without a conversion. Set "
+                + "Video.BitDepth to 8, or author VideoAuthoringFlavour.Master ('.cbvmaster') for a 10-bit file.");
+        }
+
         if (forRunning && !File.Exists(request.SourcePath))
         {
             throw new VideoAuthoringException("There is no source file at '" + request.SourcePath + "'.");
         }
 
-        string audioEncoder = request.Audio.Include
+        string audioEncoder = EncodesSound(request)
             ? AuthoringCommandFactory.AudioEncoderNameFor(request.Audio.Codec, request.Flavour)
             : null;
 
@@ -766,7 +813,7 @@ public static class CbvAuthor
         // THE MASTER FILE'S SOUND IS LOSSLESS. FLAC is its only codec, and FLAC is refused everywhere else:
         // the WebM profile and the bespoke Mode2 file promise Opus or Vorbis to every player, and a FLAC track
         // needs a CodeBrix.Audio.Core with FLAC packet support on the playing machine.
-        if (request.Audio.Include && request.Flavour == VideoAuthoringFlavour.Master && !flac)
+        if (EncodesSound(request) && request.Flavour == VideoAuthoringFlavour.Master && !flac)
         {
             throw new VideoAuthoringException(
                 "The request asks for " + audioEncoder + " audio in a master ('.cbvmaster') file. A master file's "
@@ -774,7 +821,7 @@ public static class CbvAuthor
                 + "AuthoringAudioCodec.Flac, or author VideoAuthoringFlavour.Bespoke for Vorbis.");
         }
 
-        if (request.Audio.Include && request.Flavour != VideoAuthoringFlavour.Master && flac)
+        if (EncodesSound(request) && request.Flavour != VideoAuthoringFlavour.Master && flac)
         {
             throw new VideoAuthoringException(
                 "The request asks for FLAC audio in a " + (request.Flavour == VideoAuthoringFlavour.Bespoke
@@ -802,7 +849,7 @@ public static class CbvAuthor
                 + "the default and is fully supported.");
         }
 
-        if (request.Audio.Include && request.RequireNoExtraPlaybackPackages && opus)
+        if (EncodesSound(request) && request.RequireNoExtraPlaybackPackages && opus)
         {
             throw new VideoAuthoringException(
                 "The request asks for Opus audio and also asks that the finished file need no extra package to "
@@ -816,7 +863,7 @@ public static class CbvAuthor
         // part-way through the encode with FFmpeg's own message. The bands are measured rather than assumed;
         // see VorbisBitrateBands. Above 48 kHz the bit-rate mode mostly does not open at all, which is the
         // third refusal below. The quality path is untouched by every one of them: -q:a has no band.
-        if (request.Audio.Include
+        if (EncodesSound(request)
             && !request.Audio.VorbisQuality.HasValue
             && string.Equals(audioEncoder, AuthoringEncoderNames.LibVorbis, StringComparison.Ordinal)
             && VorbisBitrateBands.TryGetBand(
@@ -924,26 +971,14 @@ public static class CbvAuthor
         string temporaryFolder)
     {
         IVideoProcessor engine = InProcessAuthoring.ResolveEngine();
-        List<string> needs = InProcessAuthoring.SettingsNeedingPreparePass(request, lut.HasGrade);
-        if (needs.Count > 0 && !InProcessAuthoring.IsFFmpegEngine(engine))
-        {
-            throw InProcessAuthoring.RefusePreparePass(engine, needs);
-        }
+        InProcessAuthoring.RequireBitDepthSupport(engine, request);
 
         // Whether an Auto request carries alpha depends on the source, which a dry run does not read - so the
         // alpha pass (and the transparent-pixel fill) is listed unless the request rules it out. A rotated
-        // source adds a prepare pass that only a real run can see.
+        // source adds a prepare pass (or an in-process turn) that only a real run can see.
         bool alpha = request.Video.Alpha != AuthoringAlphaMode.Exclude;
-        string input = request.SourcePath;
         List<AuthoringCommand> commands = new List<AuthoringCommand>(4);
-
-        if (needs.Count > 0)
-        {
-            input = PreparedPathFor(request, temporaryFolder);
-            commands.Add(new AuthoringCommand(
-                InProcessAuthoring.PreparePassLabel,
-                AuthoringCommandFactory.BuildPreparePass(request, lut, input, alpha).Arguments));
-        }
+        string input = AddDryRunPreparation(request, lut, temporaryFolder, alpha, engine, commands);
 
         string ivf = IvfPathFor(request, temporaryFolder);
         commands.Add(new AuthoringCommand(
@@ -965,7 +1000,11 @@ public static class CbvAuthor
                 false));
         }
 
-        if (request.Audio.Include)
+        if (request.Audio.Silent)
+        {
+            commands.Add(new AuthoringCommand(InProcessAuthoring.AudioPassLabel, InProcessAuthoring.SilentAudioPass, false));
+        }
+        else if (request.Audio.Include)
         {
             commands.Add(new AuthoringCommand(
                 InProcessAuthoring.AudioPassLabel,
@@ -1013,23 +1052,9 @@ public static class CbvAuthor
         RefuseInProcessWebMSound(request);
 
         IVideoProcessor engine = InProcessAuthoring.ResolveEngine();
-        List<string> needs = InProcessAuthoring.SettingsNeedingPreparePass(request, lut.HasGrade);
-        if (needs.Count > 0 && !InProcessAuthoring.IsFFmpegEngine(engine))
-        {
-            throw InProcessAuthoring.RefusePreparePass(engine, needs);
-        }
-
-        string input = request.SourcePath;
         string ivf = IvfPathFor(request, temporaryFolder);
         List<AuthoringCommand> commands = new List<AuthoringCommand>(4);
-
-        if (needs.Count > 0)
-        {
-            input = PreparedPathFor(request, temporaryFolder);
-            commands.Add(new AuthoringCommand(
-                InProcessAuthoring.PreparePassLabel,
-                AuthoringCommandFactory.BuildPreparePass(request, lut, input, false).Arguments));
-        }
+        string input = AddDryRunPreparation(request, lut, temporaryFolder, false, engine, commands);
 
         commands.Add(new AuthoringCommand(
             InProcessAuthoring.VideoPassLabel,
@@ -1072,7 +1097,6 @@ public static class CbvAuthor
         CancellationToken cancellationToken = request.CancellationToken;
         string ivf = IvfPathFor(request, temporaryFolder);
         string ogg = OggPathFor(request, temporaryFolder);
-        string opusOgg = OpusPathFor(request, temporaryFolder);
         string prepared = PreparedPathFor(request, temporaryFolder);
         bool opus = request.Audio.Include && InProcessAuthoring.IsOpus(request);
 
@@ -1085,14 +1109,7 @@ public static class CbvAuthor
             throw new VideoAuthoringException("'" + request.SourcePath + "' has no video stream.");
         }
 
-        List<string> needs = InProcessAuthoring.SettingsNeedingPreparePass(request, lut.HasGrade);
-        if (request.Video.AutoRotate && stream.RotationDegrees != 0) needs.Add("AutoRotate");
-        if (needs.Count > 0 && !InProcessAuthoring.IsFFmpegEngine(engine))
-        {
-            throw InProcessAuthoring.RefusePreparePass(engine, needs);
-        }
-
-        bool prepare = needs.Count > 0;
+        ManagedFrameShaping shaping = ChoosePreparation(request, engine, lut, stream, notes, out bool prepare);
         int passCount = (prepare ? 1 : 0) + 1 + (request.Audio.Include ? 1 : 0);
         int pass = 1;
         string input = request.SourcePath;
@@ -1116,7 +1133,8 @@ public static class CbvAuthor
             pass++,
             passCount,
             progress => InProcessAuthoring.EncodeVideo(
-                engine, request, input, false, pictureStream, ivf, progress, cancellationToken));
+                engine, request, input, false, pictureStream, ivf, progress, cancellationToken, shaping));
+        AddShapingCommands(picture, commands);
         commands.Add(new AuthoringCommand(
             InProcessAuthoring.VideoPassLabel,
             InProcessAuthoring.DescribeVideoPass(request, input, ivf, false, InProcessAuthoring.EncodedSize(picture)),
@@ -1140,14 +1158,13 @@ public static class CbvAuthor
             TimeSpan duration = sound.Duration > TimeSpan.Zero ? sound.Duration : media.Duration;
             if (opus)
             {
-                temporaryFiles.Add(opusOgg);
                 packets = RunInProcess(
                     request,
                     InProcessAuthoring.AudioPassLabel,
                     pass,
                     passCount,
                     progress => InProcessAuthoring.EncodeOpus(
-                        engine, request, request.SourcePath, opusOgg, duration, progress, cancellationToken));
+                        engine, request, request.SourcePath, duration, progress, cancellationToken));
                 audioToken = "packets";
                 commands.Add(new AuthoringCommand(
                     InProcessAuthoring.AudioPassLabel,
@@ -1189,6 +1206,7 @@ public static class CbvAuthor
             AudioName = request.Audio.Name,
             AudioLanguage = request.Audio.Language,
             ChaptersPath = string.IsNullOrWhiteSpace(request.ChaptersPath) ? null : request.ChaptersPath,
+            Title = string.IsNullOrEmpty(request.Title) ? null : request.Title,
             CuesToFront = request.CuesToFront,
             EvaluateProfile = request.ValidateProfile,
         };
@@ -1219,7 +1237,8 @@ public static class CbvAuthor
         return result;
     }
 
-    // Two of the request's settings shape the FFmpeg command line only. The in-process path reads the source's
+    // Two of the request's settings shape the FFmpeg command line only - on the in-process WebM-profile (Mode1)
+    // path and the in-process bespoke (Mode2) path alike. The in-process path reads the source's
     // FIRST video and FIRST audio stream - which is what SelectStreamsExplicitly asks of FFmpeg - and copies none
     // of its metadata. Opus also codes at 48000 Hz whatever the request's sample rate says. Each is said rather
     // than silently ignored.
@@ -1229,8 +1248,11 @@ public static class CbvAuthor
         {
             notes.Add(
                 "CopySourceMetadata has no in-process meaning: the source's own metadata (its title, creation time, "
-                + "device strings) was NOT copied. The file's title is the chapter file's 'title=' line when "
-                + "ChaptersPath names one, and there is none otherwise.");
+                + "device strings) was NOT copied. "
+                + (request.Flavour == VideoAuthoringFlavour.WebMProfile
+                    ? "The file's title is Title when set, else the chapter file's 'title=' line when ChaptersPath "
+                        + "names one, and there is none otherwise."
+                    : "The bespoke container has no file-level metadata to copy it into in any case."));
         }
 
         if (!request.SelectStreamsExplicitly)
@@ -1257,22 +1279,8 @@ public static class CbvAuthor
         string temporaryFolder)
     {
         IVideoProcessor engine = InProcessAuthoring.ResolveEngine();
-        List<string> needs = InProcessAuthoring.SettingsNeedingPreparePass(request, lut.HasGrade);
-        if (needs.Count > 0 && !InProcessAuthoring.IsFFmpegEngine(engine))
-        {
-            throw InProcessAuthoring.RefusePreparePass(engine, needs);
-        }
-
-        string input = request.SourcePath;
         List<AuthoringCommand> commands = new List<AuthoringCommand>(3);
-
-        if (needs.Count > 0)
-        {
-            input = PreparedPathFor(request, temporaryFolder);
-            commands.Add(new AuthoringCommand(
-                InProcessAuthoring.PreparePassLabel,
-                AuthoringCommandFactory.BuildPreparePass(request, lut, input, false).Arguments));
-        }
+        string input = AddDryRunPreparation(request, lut, temporaryFolder, false, engine, commands);
 
         commands.Add(new AuthoringCommand(
             InProcessAuthoring.VideoPassLabel,
@@ -1315,14 +1323,9 @@ public static class CbvAuthor
             throw new VideoAuthoringException("'" + request.SourcePath + "' has no video stream.");
         }
 
-        List<string> needs = InProcessAuthoring.SettingsNeedingPreparePass(request, lut.HasGrade);
-        if (request.Video.AutoRotate && stream.RotationDegrees != 0) needs.Add("AutoRotate");
-        if (needs.Count > 0 && !InProcessAuthoring.IsFFmpegEngine(engine))
-        {
-            throw InProcessAuthoring.RefusePreparePass(engine, needs);
-        }
+        NoteSettingsWithoutInProcessMeaning(request, false, notes);
 
-        bool prepare = needs.Count > 0;
+        ManagedFrameShaping shaping = ChoosePreparation(request, engine, lut, stream, notes, out bool prepare);
         int passCount = (prepare ? 1 : 0) + 1 + (request.Audio.Include ? 1 : 0);
         int pass = 1;
         string input = request.SourcePath;
@@ -1346,7 +1349,8 @@ public static class CbvAuthor
             pass++,
             passCount,
             progress => InProcessAuthoring.EncodeVideo(
-                engine, request, input, false, pictureStream, ivf, progress, cancellationToken));
+                engine, request, input, false, pictureStream, ivf, progress, cancellationToken, shaping));
+        AddShapingCommands(picture, commands);
         commands.Add(new AuthoringCommand(
             InProcessAuthoring.VideoPassLabel,
             InProcessAuthoring.DescribeVideoPass(request, input, ivf, false, InProcessAuthoring.EncodedSize(picture)),
@@ -1388,23 +1392,92 @@ public static class CbvAuthor
         return Mux(request, ivf, request.Audio.Include ? ogg : null);
     }
 
-    // Refused up front, before a colour table is composed or anything is read: an engine with no prepare pass
-    // cannot honour a request that needs one. A rotated source is the one case only the source can reveal, so
-    // WriteMaster checks that again once it has analysed it.
-    private static void RefusePreparePassWithoutFFmpeg(VideoAuthoringRequest request, IVideoProcessor engine)
+    // What a dry run lists ahead of the video pass when the request's own settings shape the picture: the ffmpeg
+    // prepare pass's command line on the ffmpeg engine (and the video pass then reads its intermediate), or the
+    // deterministic in-process lines on any other engine (and the video pass reads the source). Returns what the
+    // video pass reads.
+    private static string AddDryRunPreparation(
+        VideoAuthoringRequest request,
+        ResolvedLutChain lut,
+        string temporaryFolder,
+        bool alpha,
+        IVideoProcessor engine,
+        List<AuthoringCommand> commands)
     {
-        if (InProcessAuthoring.IsFFmpegEngine(engine)) return;
-
-        ResolvedLutChain lut = LutChainResolver.Resolve(
-            request.Video.Luts,
-            request.OutputPath,
-            ResolveTemporaryFolder(request),
-            false,
-            null,
-            request.Video.ComposedLutPath);
-
         List<string> needs = InProcessAuthoring.SettingsNeedingPreparePass(request, lut.HasGrade);
-        if (needs.Count > 0) throw InProcessAuthoring.RefusePreparePass(engine, needs);
+        if (needs.Count == 0) return request.SourcePath;
+
+        if (InProcessAuthoring.IsFFmpegEngine(engine))
+        {
+            string prepared = PreparedPathFor(request, temporaryFolder);
+            commands.Add(new AuthoringCommand(
+                InProcessAuthoring.PreparePassLabel,
+                AuthoringCommandFactory.BuildPreparePass(request, lut, prepared, alpha).Arguments));
+            return prepared;
+        }
+
+        foreach (string line in ManagedFrameShaping.Create(request, lut, false).DescribeDryRun())
+        {
+            commands.Add(new AuthoringCommand(InProcessAuthoring.PreparePassLabel, line, false));
+        }
+
+        return request.SourcePath;
+    }
+
+    // Decides how a real run shapes the picture once the source has been analysed: by the ffmpeg prepare pass on
+    // the ffmpeg engine (prepare = true), in process on any other (the shaping returned), or not at all.
+    private static ManagedFrameShaping ChoosePreparation(
+        VideoAuthoringRequest request,
+        IVideoProcessor engine,
+        ResolvedLutChain lut,
+        VideoStreamInfo stream,
+        List<string> notes,
+        out bool prepare)
+    {
+        List<string> needs = InProcessAuthoring.SettingsNeedingPreparePass(request, lut.HasGrade);
+        if (request.Video.AutoRotate && stream.RotationDegrees % 360 != 0) needs.Add("AutoRotate");
+
+        prepare = false;
+        if (needs.Count == 0) return null;
+
+        if (InProcessAuthoring.IsFFmpegEngine(engine))
+        {
+            prepare = true;
+            return null;
+        }
+
+        ManagedFrameShaping shaping = ManagedFrameShaping.Create(request, lut, true);
+        notes.AddRange(shaping.DescribeIgnoredOptions(request));
+        return shaping;
+    }
+
+    // The in-process shaping's lines, listed where the ffmpeg prepare pass's command would be: ahead of the video
+    // pass, in the order the steps ran, none of them an FFmpeg command.
+    private static void AddShapingCommands(VideoPassResult picture, List<AuthoringCommand> commands)
+    {
+        if (picture.Shaping == null) return;
+
+        foreach (string line in picture.Shaping.DescribeRun(picture.Rotation, picture.TurnedWidth, picture.TurnedHeight))
+        {
+            commands.Add(new AuthoringCommand(InProcessAuthoring.PreparePassLabel, line, false));
+        }
+    }
+
+    // A 10-bit master from an 8-bit source is widened, not improved - said rather than left to be found out.
+    private static void NoteWidenedPicture(VideoAuthoringRequest request, VideoPassResult picture, List<string> notes)
+    {
+        if (request.Video.BitDepth <= 8) return;
+
+        int sourceDepth = picture.Info.SourceBitDepth;
+        if (!picture.Widened && (sourceDepth <= 0 || sourceDepth >= request.Video.BitDepth)) return;
+
+        notes.Add(
+            "the source's picture is " + (sourceDepth > 0 ? sourceDepth.ToString(CultureInfo.InvariantCulture) : "8")
+            + "-bit and was WIDENED to " + request.Video.BitDepth.ToString(CultureInfo.InvariantCulture)
+            + " bits for this master" + (picture.Widened
+                ? " here (picture value << 2, alpha value << 2 | value >> 6 so fully opaque stays 1023)"
+                : " by the engine")
+            + "; a 10-bit file of an 8-bit picture holds nothing an 8-bit master would not.");
     }
 
     private static CbvAuthoringResult WriteMaster(
@@ -1440,15 +1513,9 @@ public static class CbvAuthor
 
         bool alpha = ResolveAlpha(request, engine, stream, survey, notes);
 
-        List<string> needs = InProcessAuthoring.SettingsNeedingPreparePass(request, lut.HasGrade);
-        if (request.Video.AutoRotate && stream.RotationDegrees != 0) needs.Add("AutoRotate");
-        if (needs.Count > 0 && !InProcessAuthoring.IsFFmpegEngine(engine))
-        {
-            throw InProcessAuthoring.RefusePreparePass(engine, needs);
-        }
-
-        bool prepare = needs.Count > 0;
-        int passCount = (prepare ? 1 : 0) + 1 + (alpha ? 1 : 0) + (request.Audio.Include ? 1 : 0);
+        NoteSettingsWithoutInProcessMeaning(request, false, notes);
+        ManagedFrameShaping shaping = ChoosePreparation(request, engine, lut, stream, notes, out bool prepare);
+        int passCount = (prepare ? 1 : 0) + 1 + (alpha ? 1 : 0) + (EncodesSound(request) ? 1 : 0);
         int pass = 1;
 
         string input = request.SourcePath;
@@ -1473,13 +1540,15 @@ public static class CbvAuthor
             pass++,
             passCount,
             progress => InProcessAuthoring.EncodeVideo(
-                engine, request, input, alpha, pictureStream, ivf, progress, cancellationToken));
+                engine, request, input, alpha, pictureStream, ivf, progress, cancellationToken, shaping));
+        AddShapingCommands(picture, commands);
         commands.Add(new AuthoringCommand(
             InProcessAuthoring.VideoPassLabel,
             InProcessAuthoring.DescribeVideoPass(
                 request, input, ivf, picture.Filled, InProcessAuthoring.EncodedSize(picture)),
             false));
         NoteCrop(picture, notes);
+        NoteWidenedPicture(request, picture, notes);
 
         if (alpha)
         {
@@ -1508,7 +1577,11 @@ public static class CbvAuthor
         }
 
         CbvPacketAudioInput audio = null;
-        if (request.Audio.Include)
+        if (request.Audio.Silent)
+        {
+            commands.Add(new AuthoringCommand(InProcessAuthoring.AudioPassLabel, InProcessAuthoring.SilentAudioPass, false));
+        }
+        else if (request.Audio.Include)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
@@ -1539,6 +1612,7 @@ public static class CbvAuthor
         CbvAuthoringRequest muxRequest = BuildMuxRequest(request, ivf, null);
         muxRequest.AlphaIvfPath = alpha ? alphaIvf : null;
         muxRequest.PacketAudio = audio;
+        muxRequest.Silent = request.Audio.Silent;
 
         try
         {
@@ -1551,6 +1625,9 @@ public static class CbvAuthor
                 ex);
         }
     }
+
+    // True when the run encodes the source's sound: asked for, and not ruled out by the master flavour's Silent flag.
+    private static bool EncodesSound(VideoAuthoringRequest request) => request.Audio.Include && !request.Audio.Silent;
 
     private static void NoteCrop(VideoPassResult picture, List<string> notes)
     {
@@ -1697,9 +1774,6 @@ public static class CbvAuthor
 
     private static string OggPathFor(VideoAuthoringRequest request, string temporaryFolder) =>
         Path.Combine(temporaryFolder, BaseNameFor(request) + ".audio.ogg");
-
-    private static string OpusPathFor(VideoAuthoringRequest request, string temporaryFolder) =>
-        Path.Combine(temporaryFolder, BaseNameFor(request) + ".audio.opus");
 
     private static string AlphaIvfPathFor(VideoAuthoringRequest request, string temporaryFolder) =>
         Path.Combine(temporaryFolder, BaseNameFor(request) + ".alpha.ivf");

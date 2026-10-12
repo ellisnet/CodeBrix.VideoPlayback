@@ -181,6 +181,12 @@ public class LutShaderInterpolationTests
         //Act & Assert
         HeadlessGraphicsContext.Run(graphics =>
         {
+            // The graphics context is SHARED by every device test in the assembly (one EGL context on one
+            // thread). Start from a known state: finish whatever an earlier test left in flight and empty the
+            // resource cache, so no texture, scratch target or pending upload of another test's is in play.
+            graphics.Flush(true, true);
+            graphics.PurgeUnlockedResources(false);
+
             using PinnedFrameBufferPool pool = new PinnedFrameBufferPool();
             using VideoFrame frame = TestFrames.CreatePattern(
                 pool,
@@ -299,7 +305,7 @@ public class LutShaderInterpolationTests
         }
     }
 
-    private static byte[] RenderWithShader(
+    private static unsafe byte[] RenderWithShader(
         VideoFrame frame,
         SKImage lookupAtlas,
         int lookupSize,
@@ -321,15 +327,30 @@ public class LutShaderInterpolationTests
         {
             renderer.Render(frame, surface, graphics, atlas, lookupSize, interpolation);
 
+            // The renderer submits without waiting; the read below must see the finished draw, so on the device
+            // the work is completed here rather than left to the read-back's own ordering.
+            graphics?.Flush(true, true);
+
+            // The destination is PINNED for the whole read. It used to be handed over through
+            // Marshal.UnsafeAddrOfPinnedArrayElement on an array that was never pinned: a garbage collection
+            // during the read - likeliest on the graphics device, whose read-back waits on the GPU, and under
+            // the allocation load of a full test run - moved the array, the pixels landed at its OLD address,
+            // and the test compared an all-zero buffer ("worst 255"). That was this test's order and load
+            // dependence; the renderer was never at fault.
             byte[] pixels = new byte[frame.Width * frame.Height * 4];
             using SKImage snapshot = surface.Snapshot();
-            snapshot.ReadPixels(
-                new SKImageInfo(frame.Width, frame.Height, SKColorType.Bgra8888, SKAlphaType.Unpremul),
-                System.Runtime.InteropServices.Marshal.UnsafeAddrOfPinnedArrayElement(pixels, 0),
-                frame.Width * 4,
-                0,
-                0);
+            bool read;
+            fixed (byte* destination = pixels)
+            {
+                read = snapshot.ReadPixels(
+                    new SKImageInfo(frame.Width, frame.Height, SKColorType.Bgra8888, SKAlphaType.Unpremul),
+                    (IntPtr)destination,
+                    frame.Width * 4,
+                    0,
+                    0);
+            }
 
+            read.Should().BeTrue("the rendered surface has to be readable back to the host");
             return pixels;
         }
         finally

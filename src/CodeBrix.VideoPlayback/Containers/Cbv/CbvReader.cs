@@ -89,12 +89,20 @@ public sealed class CbvReader : IMediaContainerReader
 
     /// <summary>
     /// The format version the file declares: 0 for everything but a master (Mode3) file, 1 for a file that
-    /// carries an alpha-plane track or FLAC audio. This library reads both.
+    /// carries an alpha-plane track or FLAC audio or is flagged <see cref="CbvHeaderFlags.Silent" />. This
+    /// library reads both.
     /// </summary>
     public ushort Version { get; private set; }
 
     /// <summary>The file's header flags.</summary>
     public CbvHeaderFlags Flags { get; private set; }
+
+    /// <summary>
+    /// True when the file is flagged <see cref="CbvHeaderFlags.Silent" />: silent BY INTENT - its author said
+    /// it has no sound. A file with no audio track and no flag is silent BY ABSENCE, and this is false for it;
+    /// consumers treat the two alike (neither has anything to play). The track list is the same either way.
+    /// </summary>
+    public bool IsSilent => (Flags & CbvHeaderFlags.Silent) != 0;
 
     /// <summary>How many ticks the file counts to the second.</summary>
     public uint Timescale { get; private set; }

@@ -302,17 +302,29 @@ public class WebMInProcessAuthoringTests
     {
         //Arrange
         byte[] built = InProcessAuthoring.BuildOpusHead(2, 312, 48000);
-        byte[] written = InProcessAuthoring.BuildOpusHead(2, 120, 48000);
+        byte[] stated = InProcessAuthoring.BuildOpusHead(2, 120, 48000);
 
         //Act
-        string mismatch = InProcessAuthoring.DescribeOpusHeadProblem(VideoCodecIds.Opus, written, built, 120);
-        string notOpus = InProcessAuthoring.DescribeOpusHeadProblem(VideoCodecIds.Vorbis, built, built, 312);
-        string agrees = InProcessAuthoring.DescribeOpusHeadProblem(VideoCodecIds.Opus, built, built, 312);
+        string mismatch = InProcessAuthoring.DescribeOpusHeadProblem(stated, built);
+        string agrees = InProcessAuthoring.DescribeOpusHeadProblem(built, built);
 
         //Assert
-        mismatch.Should().Contain("the encoder wrote");
-        notOpus.Should().Contain("not Opus");
+        mismatch.Should().Contain("the encoder stated");
         agrees.Should().BeNull();
+    }
+
+    [Fact]
+    public void The_packet_encoders_identification_header_is_the_one_built_here()
+    {
+        //Arrange
+        AuthoringAudioSettings audio = new AuthoringAudioSettings { BitrateKilobitsPerSecond = 96 };
+        using OpusPacketEncoder encoder = new OpusPacketEncoder(2, 48000, InProcessAuthoring.OpusOptionsFor(audio));
+
+        //Act
+        byte[] built = InProcessAuthoring.BuildOpusHead(2, encoder.PreSkip, 48000);
+
+        //Assert
+        InProcessAuthoring.DescribeOpusHeadProblem(encoder.IdentificationHeader.Span, built).Should().BeNull();
     }
 
     [Fact]
@@ -322,7 +334,7 @@ public class WebMInProcessAuthoringTests
         AuthoringAudioSettings audio = new AuthoringAudioSettings { BitrateKilobitsPerSecond = 96 };
 
         //Act
-        OpusFileWriterOptions options = InProcessAuthoring.OpusOptionsFor(audio);
+        OpusEncoderOptions options = InProcessAuthoring.OpusOptionsFor(audio);
 
         //Assert
         options.Bitrate.Should().Be(96000);
@@ -576,6 +588,24 @@ public class WebMInProcessAuthoringTests
         reader.Title.Should().Be(string.Empty);
         reader.Chapters.Count.Should().Be(0);
         result.MatroskaMux.ChapterCount.Should().Be(0);
+    }
+
+    [Fact]
+    public void An_explicit_title_wins_over_the_chapter_files_title()
+    {
+        //Arrange
+        SyntheticSource.SkipWithoutFFmpeg();
+        using WorkFolder work = new WorkFolder("webm-in-process-title");
+        VideoAuthoringRequest request = RequestWithText(work);
+        request.Title = "Explicit title";
+
+        //Act
+        VideoAuthoringResult result = CbvAuthor.Write(request);
+        using MatroskaReader reader = new MatroskaReader(new FileMediaSource(result.OutputPath));
+
+        //Assert
+        reader.Title.Should().Be("Explicit title");
+        string.Join("\n", result.Notes).Should().NotContain("Title has no field");
     }
 
     [Fact]

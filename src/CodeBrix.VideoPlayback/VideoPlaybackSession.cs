@@ -227,6 +227,14 @@ public sealed class VideoPlaybackSession : IDisposable
     public bool HasAlpha => alphaTrack != null;
 
     /// <summary>
+    /// True when the open file is a bespoke file flagged silent BY INTENT (<see cref="CbvReader.IsSilent" />):
+    /// its author said it has no sound. False when nothing is open, for every Matroska / WebM file, and for a
+    /// file that merely has no audio track - silent BY ABSENCE. Consumers treat the two alike: neither has any
+    /// sound to play, and <see cref="AudioTrack" /> is null for both.
+    /// </summary>
+    public bool IsSilent => reader is CbvReader cbv && cbv.IsSilent;
+
+    /// <summary>
     /// How much of the end of the audio track the audio player has been told to discard, for tests and
     /// diagnostics. Zero when there is no audio player or the container states no trim.
     /// </summary>

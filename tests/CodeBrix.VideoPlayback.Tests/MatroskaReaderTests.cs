@@ -943,6 +943,98 @@ public class MatroskaReaderTests
         return packets;
     }
 
+    [Fact]
+    public void An_unlaced_simple_block_takes_the_tracks_default_duration()
+    {
+        //Arrange - a WebM whose picture frames are SimpleBlocks, which have no BlockDuration element at all
+        byte[] file = BuildDefaultDurationWebM(defaultDurationNs: 40_000_000, withBlockGroup: false);
+
+        //Act
+        using MatroskaReader reader = new MatroskaReader(new MemoryMediaSource(file, "simple-blocks.webm"));
+        List<MediaPacket> packets = ReadAll(reader);
+
+        //Assert
+        reader.Tracks.Single().DefaultDuration.Should().Be(TimeSpan.FromMilliseconds(40));
+        packets.Count.Should().Be(3);
+        packets[0].Timestamp.Should().Be(TimeSpan.Zero);
+        packets[2].Timestamp.Should().Be(TimeSpan.FromMilliseconds(80));
+        foreach (MediaPacket packet in packets) packet.Duration.Should().Be(TimeSpan.FromMilliseconds(40));
+    }
+
+    [Fact]
+    public void A_block_groups_own_duration_still_wins_over_the_default_duration()
+    {
+        //Arrange
+        byte[] file = BuildDefaultDurationWebM(defaultDurationNs: 40_000_000, withBlockGroup: true);
+
+        //Act
+        using MatroskaReader reader = new MatroskaReader(new MemoryMediaSource(file, "block-group.webm"));
+        List<MediaPacket> packets = ReadAll(reader);
+
+        //Assert
+        packets.Count.Should().Be(4);
+        packets[3].Duration.Should().Be(TimeSpan.FromMilliseconds(100));
+    }
+
+    [Fact]
+    public void An_unlaced_simple_block_without_any_default_duration_still_reports_zero()
+    {
+        //Arrange
+        byte[] file = BuildDefaultDurationWebM(defaultDurationNs: 0, withBlockGroup: false);
+
+        //Act
+        using MatroskaReader reader = new MatroskaReader(new MemoryMediaSource(file, "no-default.webm"));
+        List<MediaPacket> packets = ReadAll(reader);
+
+        //Assert
+        packets.Count.Should().Be(3);
+        foreach (MediaPacket packet in packets) packet.Duration.Should().Be(TimeSpan.Zero);
+    }
+
+    // One AV1 picture track (DefaultDuration as given, or none for 0) and one cluster of three unlaced
+    // SimpleBlocks 40 ms apart - plus, when asked, a BlockGroup at 120 ms stating a BlockDuration of 100 ms.
+    private static byte[] BuildDefaultDurationWebM(long defaultDurationNs, bool withBlockGroup)
+    {
+        MatroskaTestBuilder builder = new MatroskaTestBuilder();
+        builder.EbmlHeader("webm");
+        builder.BeginMaster(MatroskaIds.Segment);
+        builder.Info(1_000_000, 200.0);
+
+        builder.BeginMaster(MatroskaIds.Tracks);
+        builder.BeginMaster(MatroskaIds.TrackEntry);
+        builder.UInt(MatroskaIds.TrackNumber, 1);
+        builder.UInt(MatroskaIds.TrackType, 1);
+        builder.Str(MatroskaIds.CodecId, "V_AV1");
+        if (defaultDurationNs > 0) builder.UInt(MatroskaIds.DefaultDuration, (ulong)defaultDurationNs);
+        builder.BeginMaster(MatroskaIds.Video);
+        builder.UInt(MatroskaIds.PixelWidth, 96);
+        builder.UInt(MatroskaIds.PixelHeight, 54);
+        builder.EndMaster();
+        builder.EndMaster();
+        builder.EndMaster();
+
+        builder.BeginMaster(MatroskaIds.Cluster);
+        builder.UInt(MatroskaIds.ClusterTimestamp, 0);
+        for (short i = 0; i < 3; i++)
+        {
+            builder.Element(
+                MatroskaIds.SimpleBlock,
+                MatroskaTestBuilder.SimpleBlockPayload(1, (short)(i * 40), (byte)(i == 0 ? 0x80 : 0x00), new byte[] { 1, 2, 3 }));
+        }
+
+        if (withBlockGroup)
+        {
+            builder.BeginMaster(MatroskaIds.BlockGroup);
+            builder.Element(MatroskaIds.Block, MatroskaTestBuilder.SimpleBlockPayload(1, 120, 0x00, new byte[] { 4, 5, 6 }));
+            builder.UInt(MatroskaIds.BlockDuration, 100);
+            builder.EndMaster();
+        }
+
+        builder.EndMaster();
+        builder.EndMaster();
+        return builder.ToArray();
+    }
+
     private static byte[] BuildMinimalMatroska(
         string codecId,
         int trackType,

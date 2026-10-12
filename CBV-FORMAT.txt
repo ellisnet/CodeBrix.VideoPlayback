@@ -6,8 +6,8 @@ The on-disk layout CodeBrix.VideoPlayback writes and reads
 STATUS
 ======
 Version 0 finalised 2026-08-28. Version 1 - the MASTER form, ".cbvmaster" -
-added 2026-10-10; it is version 0 plus an optional alpha-plane track and FLAC
-audio, and changes no byte of what version 0 means (see section 6). This
+added 2026-10-10; it is version 0 plus an optional alpha-plane track, FLAC
+audio and the Silent header flag (added 2026-10-11), and changes no byte of what version 0 means (see section 6). This
 document is the authority: where it and any other document disagree, this one
 is right.
 
@@ -94,7 +94,10 @@ index entry's own absolute offset to find a chunk.
     bit 0   HasIndex                    the file carries an index of every chunk
     bit 1   ChunksInPresentationOrder   chunks are stored in ascending
                                         presentation order across all tracks
-    bits 2-15 reserved, written as 0, ignored by a reader
+    bit 2   Silent                      VERSION 1 ONLY (section 6c): the file
+                                        is silent BY INTENT and carries no
+                                        audio track
+    bits 3-15 reserved, written as 0, ignored by a reader
 
   CHECKSUMS. Both are CRC-32/ISO-HDLC: polynomial 0xEDB88320 (the reflected
   form of 0x04C11DB7), initial value 0xFFFFFFFF, final exclusive-or 0xFFFFFFFF -
@@ -250,15 +253,16 @@ index entry's own absolute offset to find a chunk.
 
 6. VERSION 1: THE MASTER FILE (".cbvmaster")
 ============================================
-Version 1 is version 0 plus two optional things. Not one field moves and no
+Version 1 is version 0 plus three optional things: the alpha-plane track
+(6a), the FLAC track (6b) and the Silent header flag (6c). Not one field moves and no
 version-0 field changes meaning, so a version-1 reader reads a version-0 file
 exactly as before. A version-0 reader refuses a version-1 file outright, with a
 message saying a newer writer produced it - which is the point: such a reader
 would otherwise play the alpha plane as a second picture and choke on FLAC.
 
 THE VERSION A WRITER STAMPS is the LOWEST that describes the file: 1 when any
-track carries flag bit 4 or 5 or the codec "flac", and 0 otherwise. A file that
-uses neither is therefore byte for byte a version-0 file, and still plays on a
+track carries flag bit 4 or 5 or the codec "flac", or the header carries flag
+bit 2 (Silent), and 0 otherwise. A file that uses none of them is therefore byte for byte a version-0 file, and still plays on a
 version-0 reader.
 
 6a. THE ALPHA-PLANE TRACK
@@ -303,6 +307,19 @@ version-0 reader.
     body            sample_rate and channels as STREAMINFO says; pre_skip,
                     trailing_trim, codec_delay and seek_preroll all 0 (FLAC
                     frames decode independently and exactly)
+
+6c. THE SILENT FLAG
+  Header flag bit 2 (Silent) says the file is silent BY INTENT: its author
+  stated it has no sound, as opposed to a file whose sound was simply left
+  out. A file with the flag:
+    - is version 1 (a writer stamps 1 whenever it sets the flag)
+    - carries NO audio track (kind 2); a writer refuses to declare one, or to
+      set the flag once one is declared
+  A file with no audio track and no flag is silent BY ABSENCE. Consumers treat
+  the two alike - neither has anything to play; the flag records intent, for
+  tools that would otherwise ask where the sound went. The CodeBrix authoring
+  library sets it only on a master (Mode3) file whose request says
+  Audio.Silent = true.
 
 
 WHAT DELIBERATELY IS NOT IN VERSION 0

@@ -54,4 +54,11 @@ public sealed class CbvAuthoringRequest
 
     /// <summary>A name for the video track, or null.</summary>
     public string VideoName { get; set; }
+
+    /// <summary>
+    /// True to flag the file <see cref="CbvHeaderFlags.Silent" /> - silent by intent, which makes it a
+    /// format-version-1 file. A silent file carries no sound, so a request that sets this AND supplies audio
+    /// (<see cref="AudioOggPath" /> or <see cref="PacketAudio" />) is refused.
+    /// </summary>
+    public bool Silent { get; set; }
 }

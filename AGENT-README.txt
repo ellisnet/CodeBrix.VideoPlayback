@@ -130,6 +130,8 @@ in a build tool or an asset pipeline; never in the thing you ship, because it
 expects an encoder to be there and ffmpeg's binaries carry exactly the licences
 this family exists to keep out of a shipped application. Its consumer guide is
 src/CodeBrix.VideoPlayback.Authoring/AGENT-README.txt.
+It also EXPORTS those files back out to standard MP4 (VideoExporter, namespace
+CodeBrix.VideoPlayback.Authoring.Export) - see EXPORTING CODEBRIX VIDEO TO MP4 there.
 
 THE THREE PACKAGES ARE PUBLISHED TOGETHER, AT ONE VERSION. The core, the Skia
 presenter and the authoring library carry the same date-stamped version block and
@@ -165,6 +167,9 @@ KEY NAMESPACES / USINGS
     using CodeBrix.VideoPlayback.Rendering;     // VideoStretch, VideoRenderPath, VideoRectangle,
                                                 //   VideoCompositionContext, VideoStretchMath,
                                                 //   GpuUploadFence, the shader source
+    using CodeBrix.VideoPlayback.Processing;    // PlaneScaler / FrameScaler, PlaneRotator /
+                                                //   FrameRotator, FrameRateResampler,
+                                                //   PlanarLutGrader, ReadOnlyPlanarFrame / PlanarFrame
 
 Playing a file needs the first four. Everything else is there when you want it.
 
@@ -490,6 +495,8 @@ Authoring a .cbv file
         AddChapters / WriteChunk / Complete, for building one packet at a time
     CaptionFiles.ReadFile(path, id, language, name, flags)   // .vtt and .srt
     FfMetadataChapters.ReadFile(path)                        // FFmpeg's chapter format
+        (SORTS the chapters by start time and renumbers them from 0, whatever
+        order the file lists them in - silently; equal starts keep file order)
 
     That is the muxer: it takes files an ENCODER already produced. To drive the
     encoder as well - one call from a source video to a finished ".cbv" in
@@ -602,7 +609,11 @@ video stream - luma only, FULL range (0 transparent, the largest sample opaque),
 the same size and bit depth as the picture, and in LOCK STEP with it (the same
 frame count, timestamps and key-frame positions). The colours are STRAIGHT unless
 the track says otherwise. Its sound, when it has any, is FLAC. A master file
-without an alpha track plays like a Mode2 file with lossless sound.
+without an alpha track plays like a Mode2 file with lossless sound. A file may
+instead be flagged SILENT (header flag bit 2, also version 1): silent BY INTENT,
+with no audio track at all. A file with no audio track and no flag is silent BY
+ABSENCE; treat the two alike (neither has sound to play) - the flag only records
+that the author meant it. Silent plus any audio input is refused.
 
     CbvFormat.Version (0) / MasterVersion (1) / HighestReadableVersion
     CbvFormat.MasterFileExtension ".cbvmaster"   (a hint: readers sniff content)
@@ -612,11 +623,17 @@ without an alpha track plays like a Mode2 file with lossless sound.
     CbvReader.AlphaPlaneTrack       null when the file has none
     CbvReader.Version               0, or 1 for a master file
     CbvMuxer.FormatVersion          what the file being written will be stamped
+    CbvHeaderFlags.Silent           bit 2; makes the file version 1
+    CbvMuxer.Silent                 set before Complete; refuses an audio track
+    CbvReader.IsSilent              true only for the flag (not for absence)
 
     VideoPlaybackSession.HasAlpha   true when the open file has an alpha plane
     VideoPlaybackSession.AlphaTrack the alpha-plane track, or null
+    VideoPlaybackSession.IsSilent   true for a flagged bespoke file; false for
+                                    Matroska/WebM and for silence by absence
 
     CbvAuthoringRequest.AlphaIvfPath   a second IVF: the alpha plane
+    CbvAuthoringRequest.Silent         true = flag the file silent (no audio)
     CbvAuthoringRequest.PacketAudio    new CbvPacketAudioInput(codecId,
                                        codecPrivate, sampleRate, channels)
                                        { Packets = CbvAudioPacket(data, time, dur) }
@@ -850,6 +867,149 @@ and any other presenter share one definition rather than copying it.
                            no drawing library. A presenter takes the string, compiles
                            it with whatever library it is built on, and binds the
                            four children named above.
+
+
+FRAME PROCESSING (managed scaler / rotator / frame-rate / LUT) (…Processing)
+---------------------------------------------------------------------------
+Four managed primitives for engines that have no FFmpeg (Android, a frame-buffer
+device): resize, turn, change the frame rate, apply a colour grade. All of them
+work on PLANES - spans plus geometry - so they serve a decoded VideoFrame, an
+authoring frame and an export backdrop alike without referencing any of those
+types. On a desktop with FFmpeg, the FFmpeg path stays the default; these are
+the path for everything else, and the tests measure them against FFmpeg.
+
+Sample conventions everywhere: 8-bit samples are one byte; 10- and 12-bit are
+two bytes, little-endian, value in the LOW bits; strides are in BYTES; 4:2:0 /
+4:2:2 chroma is half size ROUNDED UP; RGBA is 8-bit interleaved R,G,B,A. Source
+and destination must never overlap - use a second buffer. Only the visible
+samples of each destination row are written.
+
+    ProcessingFrameLayout  Gray | I420 | I422 | I444 (same numbers as
+                           VideoPixelLayout) | Rgba
+
+    ReadOnlyPlanarFrame    ref struct - a SOURCE frame over the caller's memory
+    PlanarFrame            ref struct - a DESTINATION frame; AsReadOnly()
+                           CreateI420 / CreateI422 / CreateI444(width, height,
+                               bitDepth, y, yStride, u, uStride, v, vStride
+                               [, alpha, alphaStride])
+                           CreateGray(width, height, bitDepth, y, yStride
+                               [, alpha, alphaStride])
+                           CreateRgba(width, height, rgba, stride)
+                           Layout, Width, Height, BitDepth (8/10/12),
+                           BytesPerSample, MaxSampleValue, ChromaShiftX/Y,
+                           ChromaWidth/Height, Plane0/1/2 + Stride0/1/2,
+                           Alpha + AlphaStride, HasAlphaPlane
+                           The factories validate every plane against the
+                           geometry and name the plane that is too small.
+
+    ScalingFilter          Bilinear | Lanczos3
+    PlaneScaler            new PlaneScaler(srcW, srcH, dstW, dstH, filter)
+                               - holds the weight tables for ONE geometry;
+                               reuse it for a stream of frames
+                           Scale(source, srcStride, destination, dstStride,
+                                 bytesPerSample (1|2), channels (1|4),
+                                 maxSampleValue)
+                           static Scale(source, srcW, srcH, srcStride,
+                                 destination, dstW, dstH, dstStride,
+                                 bytesPerSample, channels, filter, maxSampleValue)
+                           static ScalingFilter ChooseDefault(srcW, srcH, dstW, dstH)
+                               - Lanczos3 when EITHER axis shrinks, else Bilinear
+                           IsIdentity - same geometry = byte-identical row copy
+    FrameScaler            new FrameScaler(layout, srcW, srcH, dstW, dstH, filter)
+                           Scale(in ReadOnlyPlanarFrame, in PlanarFrame)
+                           static Scale(in source, in destination, filter)
+                           static ScaleWithDefaultFilter(in source, in destination)
+                           Scales luma, both chroma planes (with their own
+                           rounded-up half geometry) and the alpha plane.
+
+    RotationAngle          None | Clockwise90 | Rotate180 | Clockwise270
+                           (value = clockwise degrees)
+    PlaneRotator           Rotate(source, w, h, srcStride, destination,
+                                  dstStride, bytesPerSample, channels, angle,
+                                  flipHorizontal = false, flipVertical = false)
+                           GetRotatedSize(w, h, angle, out rw, out rh)
+                           FromDisplayMatrixRotation(double degrees) - the
+                               engine's counter-clockwise display-matrix angle
+                               to the clockwise turn that makes it upright
+                               (-90 -> Clockwise90)
+                           Flips first, then the rotation. Exact: samples move,
+                           values never change.
+    FrameRotator           Rotate(in source, in destination, angle,
+                                  flipHorizontal = false, flipVertical = false)
+                           CanRotate(layout, width, height, angle)
+
+    FrameRateResampler     new FrameRateResampler(num, den [, srcNum, srcDen])
+                           FrameRateDecision Push(TimeSpan timestamp)
+                           FrameRateDecision Push(long pts, long tbNum, long tbDen)
+                           FrameRateDecision Complete() / Complete(TimeSpan end)
+                               / Complete(long end, tbNum, tbDen)
+                           TimeSpan GetOutputTimestamp(long n)  (n * den / num)
+                           long GetOutputIndex(TimeSpan)
+                           static FrameRateDecision[] Plan(timestamps, end,
+                               num, den [, srcNum, srcDen])
+                           NextOutputIndex, SourceFramesPushed, Reset()
+    FrameRateDecision      HasFrame, SourceIndex, SourceTimestamp,
+                           FirstOutputIndex, OutputCount (0 = dropped,
+                           2+ = duplicated), IsDropped, IsDuplicated
+
+    PlanarLutGrader        new PlanarLutGrader(Lut3D lut,
+                               LutInterpolation interpolation = Tetrahedral)
+                           Apply(in source, in destination,
+                                 VideoMatrixCoefficients matrix,
+                                 VideoColorRange range)
+                           static Apply(lut, in source, in destination,
+                                 matrix, range, interpolation = Tetrahedral)
+
+  The four in one breath:
+
+    // Resize a 10-bit 4:2:0 frame for a 720p export.
+    var scaler = new FrameScaler(ProcessingFrameLayout.I420, 1920, 1080,
+                                 1280, 720, ScalingFilter.Lanczos3);
+    scaler.Scale(
+        ReadOnlyPlanarFrame.CreateI420(1920, 1080, 10, y, 3840, u, 1920, v, 1920),
+        PlanarFrame.CreateI420(1280, 720, 10, outY, 2560, outU, 1280, outV, 1280));
+
+    // Turn a phone clip upright.
+    RotationAngle turn = PlaneRotator.FromDisplayMatrixRotation(-90);   // Clockwise90
+    FrameRotator.Rotate(source, destination, turn);
+
+    // 29.97 -> 30: one decision per source frame, one frame late.
+    var fps = new FrameRateResampler(30, 1);
+    FrameRateDecision d = fps.Push(pts, 1001, 30000);   // decides the PREVIOUS frame
+    for (long i = 0; i < d.OutputCount; i++)
+        Emit(previousFrame, fps.GetOutputTimestamp(d.FirstOutputIndex + i));
+    // ... and at the end: d = fps.Complete(endPts, 1001, 30000);
+
+    // Grade a frame with a .cube look, staying in YUV.
+    var grader = new PlanarLutGrader(CubeLutFile.ReadFile("look.cube").Lut3D);
+    grader.Apply(source, destination, VideoMatrixCoefficients.Bt709,
+                 VideoColorRange.Limited);
+
+  The rules each one keeps:
+
+    Scaler     separable two-pass, centre-aligned, edges clamped; kernels widen
+               by the factor when shrinking (as FFmpeg's do); results clamped to
+               [0, maxSampleValue]; RGBA channels scaled independently, NOT
+               premultiplied (as FFmpeg) - premultiply around the call if hard
+               transparent edges matter.
+    Rotator    quarter turns of 4:2:0 need EVEN width and height (refused with an
+               ArgumentException naming the odd dimension); quarter turns of
+               4:2:2 are NotSupportedException (they would be 4:4:0); half turns
+               and flips always work.
+    Frame rate drop/duplicate only - no blending. Slot = round(timestamp * rate)
+               (halves away from zero); the later of two frames in one slot wins;
+               a frame fills every slot up to the next frame's slot. Output n is
+               at n * den / num exactly. Push the stream's own pts + time base
+               for exactness - a TimeSpan tick can tip an exact half.
+    LUT grader YUV -> RGB (BT.709 or BT.601, studio or full range, 8/10/12-bit,
+               the converter's own constants) -> Lut3D.Sample -> back to the SAME
+               layout, matrix, range and depth. 4:2:0 / 4:2:2 chroma: bilinear
+               (centre-sited) upsample for the grade, box-average of the grade's
+               CHANGE back down, added to the original chroma - an identity table
+               returns the frame exactly. Gray is refused (a 3-D table needs
+               colour); an Unspecified matrix is an ArgumentException; other
+               matrices are NotSupportedException. RGBA is graded directly, alpha
+               kept.
 
 
 COMPLETE EXAMPLES
@@ -1250,6 +1410,21 @@ COMMON PITFALLS TO AVOID
   IsHighDynamicRange tells you when that is happening.
 
 
+- PASSING A STRIDE IN SAMPLES TO THE PROCESSING PRIMITIVES. Every stride in
+  CodeBrix.VideoPlayback.Processing is in BYTES - a 10-bit plane 1920 wide has
+  a stride of at least 3840.
+
+- BUILDING A PlaneScaler / FrameScaler PER FRAME. The instance IS the weight
+  table; build it once per geometry and keep it.
+
+- EXPECTING FrameRateResampler.Push TO ANSWER FOR THE FRAME JUST PUSHED. A
+  frame's fate depends on the NEXT timestamp, so Push answers for the previous
+  one and Complete() answers for the last.
+
+- GRADING A FRAME WITH VideoMatrixCoefficients.Unspecified. The grader will not
+  guess; resolve the frame's colour info first (VideoColorInfo.Resolve) and
+  pass the matrix it names.
+
 WHAT THIS PACKAGE DOES NOT DO
 =============================
 - IT DOES NOT DECODE CODED VIDEO. The decoder seam is the product. The only
@@ -1349,6 +1524,16 @@ fold several .cube tables into one    LutComposer.Compose(layers)
 write the result out for FFmpeg       CubeLutFile.Write(effective, path, title)
 fold a chain of effects into one      EffectComposer.Compose(effects)
   table, with no presenter            LutEffect.FromCubeFile(path, percent)
+resize a frame without FFmpeg         new FrameScaler(layout, sw, sh, dw, dh,
+                                        PlaneScaler.ChooseDefault(...)).Scale(src, dst)
+resize one plane                      PlaneScaler.Scale(src, sw, sh, sstride, dst,
+                                        dw, dh, dstride, bytes, channels, filter, max)
+turn a picture upright                FrameRotator.Rotate(src, dst,
+                                        PlaneRotator.FromDisplayMatrixRotation(deg))
+change the frame rate (drop/dup)      new FrameRateResampler(num, den); Push(...)
+                                        per frame, Complete(...) at the end
+apply a .cube grade to a YUV frame    new PlanarLutGrader(lut).Apply(src, dst,
+                                        matrix, range)
 work out where a picture goes         VideoStretchMath.ComputeDestination(...)
 find out why it failed                catch VideoPlaybackException, or session.MediaFailed
 
@@ -1367,6 +1552,14 @@ Signatures worth memorising:
     MatroskaAuthoringResult MatroskaMuxer.Write(MatroskaAuthoringRequest request)
     bool  IMediaContainerReader.TryReadPacket(out MediaPacket packet)
     bool  IMediaContainerReader.IsTrackExhausted(int trackId)
+    void  FrameScaler.Scale(in ReadOnlyPlanarFrame source, in PlanarFrame destination)
+    void  FrameRotator.Rotate(in ReadOnlyPlanarFrame source, in PlanarFrame destination,
+                              RotationAngle angle, bool flipHorizontal = false,
+                              bool flipVertical = false)
+    FrameRateDecision FrameRateResampler.Push(long timestamp, long timeBaseNumerator,
+                                              long timeBaseDenominator)
+    void  PlanarLutGrader.Apply(in ReadOnlyPlanarFrame source, in PlanarFrame destination,
+                                VideoMatrixCoefficients matrix, VideoColorRange range)
 
 Nine rules:
 

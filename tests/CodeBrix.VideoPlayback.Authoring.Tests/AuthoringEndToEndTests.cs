@@ -873,6 +873,105 @@ public class AuthoringEndToEndTests
         result.Commands[0].Arguments.Should().Contain("-map_chapters -1");
     }
 
+    [Fact]
+    public void The_ffmpeg_webm_pass_writes_the_title_and_the_track_metadata_ffprobe_reads_back()
+    {
+        //Arrange
+        SyntheticSource.SkipWithoutFFmpeg();
+        using WorkFolder work = new WorkFolder("webm-ffmpeg-metadata");
+        string source = SyntheticSource.WriteClip(work.File("source.mkv"));
+        VideoAuthoringRequest request =
+            NewRequest(VideoAuthoringFlavour.WebMProfile, source, work.File("clip.webm"), work);
+        request.Title = "Metadata clip";
+        request.Audio.Language = "fr";
+        request.Audio.Name = "Stereo mix";
+        request.Video.TrackName = "Main picture";
+
+        //Act
+        VideoAuthoringResult result = CbvAuthor.Write(request);
+        IMediaAnalysis analysis = FFProbe.Analyse(result.OutputPath);
+        using MatroskaReader reader = new MatroskaReader(new FileMediaSource(result.OutputPath));
+
+        //Assert
+        result.Commands.Count.Should().Be(1);
+        result.Commands[0].RunsFFmpeg.Should().BeTrue();
+        TagOf(analysis.Format.Tags, "title").Should().Be("Metadata clip");
+        TagOf(analysis.PrimaryVideoStream.Tags, "title").Should().Be("Main picture");
+        TagOf(analysis.PrimaryAudioStream.Tags, "title").Should().Be("Stereo mix");
+        analysis.PrimaryAudioStream.Language.Should().Be("fr");
+        reader.Title.Should().Be("Metadata clip");
+        FirstOfKind(reader, MediaTrackKind.Audio).Name.Should().Be("Stereo mix");
+        FirstOfKind(reader, MediaTrackKind.Video).Name.Should().Be("Main picture");
+    }
+
+    [Fact]
+    public void The_ffmpeg_webm_pass_without_them_writes_no_title_and_no_track_names()
+    {
+        //Arrange
+        SyntheticSource.SkipWithoutFFmpeg();
+        using WorkFolder work = new WorkFolder("webm-ffmpeg-no-metadata");
+        string source = SyntheticSource.WriteClip(work.File("source.mkv"));
+        VideoAuthoringRequest request =
+            NewRequest(VideoAuthoringFlavour.WebMProfile, source, work.File("clip.webm"), work);
+
+        //Act
+        VideoAuthoringResult result = CbvAuthor.Write(request);
+        IMediaAnalysis analysis = FFProbe.Analyse(result.OutputPath);
+
+        //Assert
+        TagOf(analysis.Format.Tags, "title").Should().BeNull();
+        TagOf(analysis.PrimaryVideoStream.Tags, "title").Should().BeNull();
+        TagOf(analysis.PrimaryAudioStream.Tags, "title").Should().BeNull();
+    }
+
+    [Fact]
+    public void A_title_asked_of_the_bespoke_flavour_is_noted_as_not_written()
+    {
+        //Arrange
+        SyntheticSource.SkipWithoutFFmpeg();
+        using WorkFolder work = new WorkFolder("bespoke-title-note");
+        string source = SyntheticSource.WriteClip(work.File("source.mkv"));
+        VideoAuthoringRequest request =
+            NewRequest(VideoAuthoringFlavour.Bespoke, source, work.File("clip.cbv"), work);
+        request.Title = "Bespoke clip";
+
+        //Act
+        VideoAuthoringResult result = CbvAuthor.Write(request);
+
+        //Assert
+        string.Join("\n", result.Notes).Should().Contain(
+            "Title has no field in the bespoke container: the bespoke (Mode2) file");
+        File.Exists(result.OutputPath).Should().BeTrue();
+    }
+
+    [Fact]
+    public void A_bespoke_run_without_a_title_earns_no_title_note()
+    {
+        //Arrange
+        SyntheticSource.SkipWithoutFFmpeg();
+        using WorkFolder work = new WorkFolder("bespoke-no-title-note");
+        string source = SyntheticSource.WriteClip(work.File("source.mkv"));
+        VideoAuthoringRequest request =
+            NewRequest(VideoAuthoringFlavour.Bespoke, source, work.File("clip.cbv"), work);
+
+        //Act
+        VideoAuthoringResult result = CbvAuthor.Write(request);
+
+        //Assert
+        string.Join("\n", result.Notes).Should().NotContain("Title has no field");
+    }
+
+    private static string TagOf(Dictionary<string, string> tags, string key)
+    {
+        if (tags == null) return null;
+        foreach (KeyValuePair<string, string> tag in tags)
+        {
+            if (string.Equals(tag.Key, key, StringComparison.OrdinalIgnoreCase)) return tag.Value;
+        }
+
+        return null;
+    }
+
     private static int CountOfKind(IMediaContainerReader reader, MediaTrackKind kind)
     {
         int count = 0;

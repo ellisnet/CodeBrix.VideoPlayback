@@ -14,6 +14,7 @@ using CodeBrix.VideoPlayback.Containers.Cbv;
 using CodeBrix.VideoPlayback.Containers.Ivf;
 using CodeBrix.VideoPlayback.Containers.Matroska;
 using CodeBrix.VideoPlayback.Containers.Ogg;
+using CodeBrix.VideoPlayback.Processing;
 using CodeBrix.VideoProcessing;
 using CodeBrix.VideoProcessing.Core;
 using CodeBrix.VideoProcessing.Core.Encoding;
@@ -88,6 +89,13 @@ internal static class InProcessAuthoring
     /// default - asks the machine.
     /// </summary>
     internal static readonly AsyncLocal<bool?> FFmpegPathAvailableOverride = new AsyncLocal<bool?>();
+
+    /// <summary>
+    /// Lets a test hand the in-process passes an engine of its own, for the flow it runs in only, WITHOUT
+    /// registering it process-wide (the registry cannot take an engine back out); null - the default - resolves
+    /// the engine as an application's run does.
+    /// </summary>
+    internal static readonly AsyncLocal<IVideoProcessor> EngineOverride = new AsyncLocal<IVideoProcessor>();
 
     /// <summary>
     /// Decides whether a bespoke request runs as FFmpeg command lines or in process, and why when it falls back.
@@ -170,14 +178,22 @@ internal static class InProcessAuthoring
             StringComparison.Ordinal);
 
     /// <summary>
-    /// The engine the master flavour decodes with: the registered one, or the desktop ffmpeg engine when the
-    /// application registered none.
+    /// The engine the in-process passes decode with: a test's override when one is set, else the registered one,
+    /// or the desktop ffmpeg engine when the application registered none.
     /// </summary>
     /// <returns>The engine.</returns>
-    internal static IVideoProcessor ResolveEngine() =>
-        VideoProcessors.TryGetCurrent(out IVideoProcessor processor) ? processor : CodeBrixVideoProcessing.Processor;
+    internal static IVideoProcessor ResolveEngine()
+    {
+        IVideoProcessor forced = EngineOverride.Value;
+        if (forced != null) return forced;
 
-    /// <summary>True when an engine is the ffmpeg one - the only engine with a prepare pass and a source survey.</summary>
+        return VideoProcessors.TryGetCurrent(out IVideoProcessor processor) ? processor : CodeBrixVideoProcessing.Processor;
+    }
+
+    /// <summary>
+    /// True when an engine is the ffmpeg one - the only engine with an ffmpeg prepare pass and a source survey.
+    /// Every other engine has its picture shaped in process instead (<see cref="ManagedFrameShaping" />).
+    /// </summary>
     /// <param name="engine">The engine.</param>
     /// <returns>True for the ffmpeg engine.</returns>
     internal static bool IsFFmpegEngine(IVideoProcessor engine) => engine is FFmpegVideoProcessor;
@@ -211,8 +227,9 @@ internal static class InProcessAuthoring
     }
 
     /// <summary>
-    /// The settings that need the ffmpeg prepare pass, judged from the request alone - everything except a
-    /// rotated source, which only reading the source can reveal.
+    /// The settings that shape the picture before it is encoded - by the ffmpeg prepare pass on the ffmpeg engine,
+    /// in process (<see cref="ManagedFrameShaping" />) on any other - judged from the request alone: everything
+    /// except a rotated source, which only reading the source can reveal.
     /// </summary>
     /// <param name="request">The request.</param>
     /// <param name="hasGrade">Whether the colour-grade chain reduced to a table.</param>
@@ -229,19 +246,21 @@ internal static class InProcessAuthoring
         return settings;
     }
 
-    /// <summary>The refusal for a request that needs the prepare pass on an engine that has none.</summary>
+    /// <summary>
+    /// Refuses a 10-bit master on an engine that cannot hand over 10-bit frames.
+    /// </summary>
     /// <param name="engine">The engine in use.</param>
-    /// <param name="settings">The settings that need the pass.</param>
-    /// <returns>The exception to throw.</returns>
-    internal static VideoAuthoringException RefusePreparePass(IVideoProcessor engine, IReadOnlyList<string> settings)
+    /// <param name="request">The request.</param>
+    /// <exception cref="VideoAuthoringException">The request asks for 10 bits and the engine cannot deliver them.</exception>
+    internal static void RequireBitDepthSupport(IVideoProcessor engine, VideoAuthoringRequest request)
     {
-        return new VideoAuthoringException(
-            "The request asks the master flavour for " + string.Join(", ", settings) + " on the '" + engine.Name
-            + "' engine. Scaling (FrameSize), frame-rate conversion (FrameRate / FrameRateMode), a colour grade "
-            + "(Luts) and turning a rotated source the right way up (AutoRotate on a rotated source) are done by an "
-            + "ffmpeg prepare pass, which exists only with the ffmpeg engine; on this engine the master flavour "
-            + "encodes the source exactly as it is decoded. Clear those settings - AutoRotate = false for a rotated "
-            + "source - or author on a machine with the ffmpeg engine.");
+        if (request.Video.BitDepth <= 8 || engine.Supports(VideoProcessorCapabilities.HighBitDepthFrameSource)) return;
+
+        throw new VideoAuthoringException(
+            "The request asks for a " + Number(request.Video.BitDepth) + "-bit master, and the '" + engine.Name
+            + "' engine cannot deliver frames deeper than 8 bits (it lacks "
+            + "VideoProcessorCapabilities.HighBitDepthFrameSource). Set Video.BitDepth to 8, or author on an engine "
+            + "that can - the desktop ffmpeg engine can.");
     }
 
     /// <summary>The libaom cq-level a constant rate factor asks for: the same 0..63 number.</summary>
@@ -286,7 +305,7 @@ internal static class InProcessAuthoring
             ? video.KeyframeIntervalFrames.ToString(CultureInfo.InvariantCulture)
             : "auto";
 
-        return "av1 i420 8-bit " + size + " good-quality cq-level " + Number(video.ConstantRateFactor)
+        return "av1 i420 " + Number(video.BitDepth) + "-bit " + size + " good-quality cq-level " + Number(video.ConstantRateFactor)
             + " cpu-used " + Number(CpuUsedFor(video))
             + " keyint " + keyInterval
             + (fill ? " fill-transparent-pixels" : string.Empty)
@@ -303,7 +322,7 @@ internal static class InProcessAuthoring
     {
         AuthoringVideoSettings video = request.Video;
 
-        return "av1 gray 8-bit " + size + " full-range realtime cq-level " + Number(video.ResolvedAlphaConstantRateFactor)
+        return "av1 gray " + Number(video.BitDepth) + "-bit " + size + " full-range realtime cq-level " + Number(video.ResolvedAlphaConstantRateFactor)
             + " cpu-used " + Number(CpuUsedFor(video))
             + " key-frames-of-video-pass"
             + " <- " + (input ?? "fully-opaque-plane") + " -> " + ivfPath;
@@ -363,6 +382,12 @@ internal static class InProcessAuthoring
             + " channel(s) <- " + input + " -> " + oggPath;
     }
 
+    /// <summary>
+    /// What a master run with <c>Audio.Silent</c> lists where its audio pass would be: no pass runs, and the file is
+    /// flagged silent.
+    /// </summary>
+    internal const string SilentAudioPass = "silent - no audio pass; the file is flagged Silent (no audio track)";
+
     /// <summary>The settings line the WebM-profile flavour's in-process Opus pass is listed with.</summary>
     /// <param name="request">The request.</param>
     /// <param name="input">What the pass reads.</param>
@@ -403,8 +428,8 @@ internal static class InProcessAuthoring
     /// </summary>
     /// <param name="audio">The audio settings.</param>
     /// <returns>The encoder options.</returns>
-    internal static OpusFileWriterOptions OpusOptionsFor(AuthoringAudioSettings audio) =>
-        new OpusFileWriterOptions
+    internal static OpusEncoderOptions OpusOptionsFor(AuthoringAudioSettings audio) =>
+        new OpusEncoderOptions
         {
             Bitrate = audio.BitrateKilobitsPerSecond * 1000,
             Profile = OpusEncodingProfile.Music,
@@ -442,23 +467,21 @@ internal static class InProcessAuthoring
     /// <param name="engine">The engine to decode with.</param>
     /// <param name="request">The request.</param>
     /// <param name="input">The file to read - always the source.</param>
-    /// <param name="oggPath">Where the encoder's Ogg Opus stream is written on its way to becoming packets.</param>
     /// <param name="duration">The sound's duration if known, for progress; zero when not.</param>
     /// <param name="progress">Called with 0..100 as the pass advances, or null.</param>
     /// <param name="cancellationToken">Stops the pass between chunks.</param>
     /// <returns>The track, its header and its packets.</returns>
-    /// <exception cref="VideoAuthoringException">The stream the encoder wrote is not what the container needs.</exception>
+    /// <exception cref="VideoAuthoringException">The encoder's stream is not what the container needs.</exception>
     /// <remarks>
-    /// The encoder package's public face writes Ogg Opus to a stream, so the sound goes through an Ogg file in the
-    /// temporary folder and is read back packet for packet with the core's Ogg reader - the same reader the
-    /// muxer would use on an Ogg input. The header the encoder wrote is checked against the one built here from
-    /// its own pre-skip, so a header the container would misread never reaches the file.
+    /// The encoder package's packet encoder hands over bare Opus packets and the identification header, so
+    /// nothing is written to disk on the way: the packets are drained after every chunk (an undrained queue holds
+    /// the whole stream) and after the final pad. The header the encoder states is checked against the one built
+    /// here from its own pre-skip, so a header the container would misread never reaches the file.
     /// </remarks>
     internal static MatroskaPacketAudioInput EncodeOpus(
         IVideoProcessor engine,
         VideoAuthoringRequest request,
         string input,
-        string oggPath,
         TimeSpan duration,
         Action<int> progress,
         CancellationToken cancellationToken)
@@ -470,53 +493,22 @@ internal static class InProcessAuthoring
             Channels = settings.Channels,
         };
 
-        int channels;
-        int preSkip;
         long framesRead = 0;
 
-        using (IAudioSampleSource source = engine.OpenAudio(input, sourceOptions))
-        {
-            int sampleRate = source.Info.SampleRate;
-            channels = source.Info.Channels;
-            if (sampleRate != OpusSampleRate || channels != settings.Channels)
-            {
-                throw new VideoAuthoringException(
-                    "The '" + engine.Name + "' engine delivered the sound of '" + input + "' at " + Number(sampleRate)
-                    + " Hz in " + Number(channels) + " channel(s), and the Opus pass asked for "
-                    + Number(OpusSampleRate) + " Hz in " + Number(settings.Channels) + ".");
-            }
-
-            long expectedFrames = duration > TimeSpan.Zero ? (long)(duration.TotalSeconds * sampleRate) : 0;
-            int lastPercent = -1;
-
-            using FileStream file = new FileStream(oggPath, FileMode.Create, FileAccess.Write, FileShare.None);
-            using OpusFileWriter encoder = new OpusFileWriter(file, OpusSampleRate, channels, OpusOptionsFor(settings));
-            float[] buffer = new float[AudioChunkFrames * channels];
-            int read;
-
-            while ((read = source.Read(buffer)) > 0)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                encoder.Write(buffer.AsSpan(0, read * channels));
-                framesRead += read;
-                Report(progress, framesRead, expectedFrames, ref lastPercent);
-            }
-
-            cancellationToken.ThrowIfCancellationRequested();
-            encoder.Finish();
-            preSkip = encoder.PreSkip;
-        }
-
-        if (framesRead == 0)
+        using IAudioSampleSource source = engine.OpenAudio(input, sourceOptions);
+        int sampleRate = source.Info.SampleRate;
+        int channels = source.Info.Channels;
+        if (sampleRate != OpusSampleRate || channels != settings.Channels)
         {
             throw new VideoAuthoringException(
-                "The audio pass decoded no sound from '" + input + "'. Set Audio.Include to false for a source "
-                + "without sound.");
+                "The '" + engine.Name + "' engine delivered the sound of '" + input + "' at " + Number(sampleRate)
+                + " Hz in " + Number(channels) + " channel(s), and the Opus pass asked for "
+                + Number(OpusSampleRate) + " Hz in " + Number(settings.Channels) + ".");
         }
 
-        using OggAudioStream stream = OggAudioStream.Open(oggPath);
-        byte[] head = BuildOpusHead(channels, preSkip, OpusSampleRate);
-        string problem = DescribeOpusHeadProblem(stream.CodecId, stream.CodecPrivate.Span, head, stream.PreSkipSamples);
+        using OpusPacketEncoder encoder = new OpusPacketEncoder(channels, OpusSampleRate, OpusOptionsFor(settings));
+        byte[] head = BuildOpusHead(channels, encoder.PreSkip, OpusSampleRate);
+        string problem = DescribeOpusHeadProblem(encoder.IdentificationHeader.Span, head);
         if (problem != null)
         {
             throw new VideoAuthoringException(
@@ -527,11 +519,30 @@ internal static class InProcessAuthoring
         MatroskaPacketAudioInput audio = new MatroskaPacketAudioInput(
             ContainerCodecIds.Opus, head, OpusSampleRate, channels);
 
-        while (stream.TryReadPacket(out OggAudioPacket packet))
+        long expectedFrames = duration > TimeSpan.Zero ? (long)(duration.TotalSeconds * sampleRate) : 0;
+        int lastPercent = -1;
+        float[] buffer = new float[AudioChunkFrames * channels];
+        int read;
+
+        while ((read = source.Read(buffer)) > 0)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            audio.Packets.Add(new MatroskaAudioPacket(packet.Data.ToArray(), packet.Timestamp, packet.Duration));
+            encoder.Encode(buffer.AsSpan(0, read * channels));
+            DrainOpusPackets(encoder, audio);
+            framesRead += read;
+            Report(progress, framesRead, expectedFrames, ref lastPercent);
         }
+
+        if (framesRead == 0)
+        {
+            throw new VideoAuthoringException(
+                "The audio pass decoded no sound from '" + input + "'. Set Audio.Include to false for a source "
+                + "without sound.");
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        encoder.Finish();
+        DrainOpusPackets(encoder, audio);
 
         if (audio.Packets.Count == 0 || audio.Packets[0].Timestamp != TimeSpan.Zero)
         {
@@ -542,40 +553,32 @@ internal static class InProcessAuthoring
                 + ", so its timing cannot be stated in the container.");
         }
 
-        audio.TrailingTrimSamples = stream.TrailingTrimSamples;
+        audio.TrailingTrimSamples = encoder.TrailingTrimSamples;
         return audio;
     }
 
-    /// <summary>
-    /// Checks that the header the Opus encoder wrote is the one this library would build for the stream: the
-    /// <c>OpusHead</c> a Matroska <c>A_OPUS</c> track carries, with the pre-skip the Ogg reader also found.
-    /// </summary>
-    /// <param name="codecId">What the Ogg reader made of the stream.</param>
-    /// <param name="written">The header the encoder wrote.</param>
-    /// <param name="built">The header built from the encoder's channel count and pre-skip.</param>
-    /// <param name="readPreSkip">The pre-skip the Ogg reader read.</param>
-    /// <returns>Null when they agree; otherwise what is wrong.</returns>
-    internal static string DescribeOpusHeadProblem(
-        string codecId,
-        ReadOnlySpan<byte> written,
-        ReadOnlySpan<byte> built,
-        int readPreSkip)
+    // Moves every packet the encoder has completed onto the track, oldest first.
+    private static void DrainOpusPackets(OpusPacketEncoder encoder, MatroskaPacketAudioInput audio)
     {
-        if (!string.Equals(codecId, ContainerCodecIds.Opus, StringComparison.Ordinal))
+        while (encoder.TryReadPacket(out OpusPacket packet))
         {
-            return "the encoder's stream reads as '" + codecId + "', not Opus";
+            audio.Packets.Add(new MatroskaAudioPacket(packet.Data.ToArray(), packet.Timestamp, packet.Duration));
         }
+    }
 
-        if (!written.SequenceEqual(built))
+    /// <summary>
+    /// Checks that the identification header the Opus encoder states is the one this library would build for the
+    /// stream: the <c>OpusHead</c> a Matroska <c>A_OPUS</c> track carries.
+    /// </summary>
+    /// <param name="stated">The header the encoder states.</param>
+    /// <param name="built">The header built from the encoder's channel count and pre-skip.</param>
+    /// <returns>Null when they agree; otherwise what is wrong.</returns>
+    internal static string DescribeOpusHeadProblem(ReadOnlySpan<byte> stated, ReadOnlySpan<byte> built)
+    {
+        if (!stated.SequenceEqual(built))
         {
-            return "the encoder wrote " + Convert.ToHexString(written) + " and the header for its channel count and "
+            return "the encoder stated " + Convert.ToHexString(stated) + " and the header for its channel count and "
                 + "pre-skip is " + Convert.ToHexString(built);
-        }
-
-        int builtPreSkip = BinaryPrimitives.ReadUInt16LittleEndian(built.Slice(10, 2));
-        if (builtPreSkip != readPreSkip)
-        {
-            return "its pre-skip is " + Number(builtPreSkip) + " and the Ogg reader read " + Number(readPreSkip);
         }
 
         return null;
@@ -673,8 +676,17 @@ internal static class InProcessAuthoring
     /// <param name="ivfPath">Where the IVF goes.</param>
     /// <param name="progress">Called with 0..100 as the pass advances, or null.</param>
     /// <param name="cancellationToken">Stops the pass between frames.</param>
+    /// <param name="shaping">
+    /// The in-process shaping to put round the decode - an engine other than ffmpeg standing in for the prepare
+    /// pass - or null to encode the frames as they are decoded.
+    /// </param>
     /// <returns>What the pass wrote.</returns>
     /// <exception cref="VideoAuthoringException">The source cannot be encoded as it stands.</exception>
+    /// <remarks>
+    /// The depth is <c>request.Video.BitDepth</c>: 8, or 10 for a master. At 10 bits every plane is two bytes a
+    /// sample (little-endian, value in the low bits), the encoder is asked for 10-bit 4:2:0, and the
+    /// transparent-pixel fill works on the 10-bit planes.
+    /// </remarks>
     internal static VideoPassResult EncodeVideo(
         IVideoProcessor engine,
         VideoAuthoringRequest request,
@@ -683,17 +695,22 @@ internal static class InProcessAuthoring
         VideoStreamInfo stream,
         string ivfPath,
         Action<int> progress,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        ManagedFrameShaping shaping = null)
     {
         AuthoringVideoSettings video = request.Video;
+        int depth = video.BitDepth;
+        int bytes = depth > 8 ? 2 : 1;
+        RequireBitDepthSupport(engine, request);
+
         VideoSourceOptions sourceOptions = new VideoSourceOptions
         {
             PixelLayout = VideoPixelLayout.I420,
-            BitDepth = 8,
+            BitDepth = depth,
             IncludeAlpha = alpha && engine.Supports(VideoProcessorCapabilities.AlphaFrameSource),
         };
 
-        using IVideoFrameSource source = engine.OpenVideo(input, sourceOptions);
+        using IVideoFrameSource source = OpenPicture(engine, input, sourceOptions, shaping, false);
         VideoSourceInfo info = source.Info;
         RequireCroppableSize(info.Width, info.Height, input);
         RequireYuvMatrix(engine, info, input);
@@ -710,7 +727,7 @@ internal static class InProcessAuthoring
             Width = width,
             Height = height,
             PixelLayout = VideoPixelLayout.I420,
-            BitDepth = 8,
+            BitDepth = depth,
             FrameRate = info.FrameRate,
             Quality = QualityFor(video.ConstantRateFactor),
             MaxKeyFrameInterval = Math.Max(0, video.KeyframeIntervalFrames),
@@ -731,15 +748,16 @@ internal static class InProcessAuthoring
         TransparentPixelFill filler = fill ? new TransparentPixelFill() : null;
         int chromaWidth = width / 2;
         int chromaHeight = height / 2;
-        byte[] y = fill ? new byte[width * height] : null;
-        byte[] u = fill ? new byte[chromaWidth * chromaHeight] : null;
-        byte[] v = fill ? new byte[chromaWidth * chromaHeight] : null;
+        byte[] y = fill ? new byte[width * height * bytes] : null;
+        byte[] u = fill ? new byte[chromaWidth * chromaHeight * bytes] : null;
+        byte[] v = fill ? new byte[chromaWidth * chromaHeight * bytes] : null;
 
         List<bool> keyFrames = new List<bool>();
         PacketSink sink = new PacketSink(keyFrames);
         int filledFrames = 0;
         long frames = 0;
         int lastPercent = -1;
+        bool widened = false;
 
         using (Av1Encoder encoder = StartEncoder(encoderRequest, options, VideoPassLabel))
         using (IvfWriter writer = IvfWriter.CreateAv1(
@@ -749,13 +767,20 @@ internal static class InProcessAuthoring
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
+                if (frame.BitDepth != depth)
+                {
+                    frame = WidenTo(frame, depth, input);
+                    widened = true;
+                }
+
                 if (fill && frame.HasAlpha)
                 {
-                    CopyRows(frame.Y, y, width, height);
-                    CopyRows(frame.U, u, chromaWidth, chromaHeight);
-                    CopyRows(frame.V, v, chromaWidth, chromaHeight);
+                    CopyRows(frame.Y, y, width * bytes, height);
+                    CopyRows(frame.U, u, chromaWidth * bytes, chromaHeight);
+                    CopyRows(frame.V, v, chromaWidth * bytes, chromaHeight);
 
-                    if (filler.Apply(width, height, y, width, u, v, chromaWidth, frame.A.Data.Span, frame.A.Stride))
+                    if (filler.Apply(
+                        width, height, y, width * bytes, u, v, chromaWidth * bytes, frame.A.Data.Span, frame.A.Stride, bytes))
                     {
                         filledFrames++;
                     }
@@ -763,11 +788,13 @@ internal static class InProcessAuthoring
                     VideoFrameData filled = VideoFrameData.CreateI420(
                         width,
                         height,
-                        VideoPlane.FromArray(y, width, height),
-                        VideoPlane.FromArray(u, chromaWidth, chromaHeight),
-                        VideoPlane.FromArray(v, chromaWidth, chromaHeight),
+                        VideoPlane.FromArray(y, width * bytes, height),
+                        VideoPlane.FromArray(u, chromaWidth * bytes, chromaHeight),
+                        VideoPlane.FromArray(v, chromaWidth * bytes, chromaHeight),
                         frame.Timestamp,
-                        frame.FrameIndex);
+                        frame.FrameIndex,
+                        default,
+                        depth);
                     Encode(encoder, filled, false, VideoPassLabel);
                 }
                 else
@@ -799,7 +826,103 @@ internal static class InProcessAuthoring
                 + Number(keyFrames.Count) + " packet(s); a master file needs exactly one packet per frame.");
         }
 
-        return new VideoPassResult(info, width, height, keyFrames, fill, filledFrames);
+        ShapedVideoFrameSource shaped = source as ShapedVideoFrameSource;
+        return new VideoPassResult(info, width, height, keyFrames, fill, filledFrames)
+        {
+            Shaping = shaping,
+            Rotation = shaped != null ? shaped.Rotation : RotationAngle.None,
+            TurnedWidth = shaped != null ? shaped.TurnedWidth : info.Width,
+            TurnedHeight = shaped != null ? shaped.TurnedHeight : info.Height,
+            Widened = widened,
+        };
+    }
+
+    /// <summary>
+    /// Opens the picture of a file, with the in-process shaping round it when there is one.
+    /// </summary>
+    /// <param name="engine">The engine.</param>
+    /// <param name="input">The file.</param>
+    /// <param name="options">What to ask the engine for.</param>
+    /// <param name="shaping">The shaping, or null.</param>
+    /// <param name="alphaOnly">True for the alpha pass's Gray frames made from the alpha plane.</param>
+    /// <returns>The frame source; the caller disposes it.</returns>
+    internal static IVideoFrameSource OpenPicture(
+        IVideoProcessor engine,
+        string input,
+        VideoSourceOptions options,
+        ManagedFrameShaping shaping,
+        bool alphaOnly)
+    {
+        IVideoFrameSource source = engine.OpenVideo(input, options);
+        if (shaping == null) return source;
+
+        try
+        {
+            return shaping.Wrap(source, alphaOnly);
+        }
+        catch
+        {
+            source.Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Widens an 8-bit frame an engine handed over when 10 bits were asked for: luma and chroma by
+    /// <c>value &lt;&lt; 2</c> (studio levels stay studio levels - 16 becomes 64, 235 becomes 940), the alpha plane by
+    /// bit replication (<c>value &lt;&lt; 2 | value &gt;&gt; 6</c>), so 255 - fully opaque - becomes 1023 and stays fully
+    /// opaque.
+    /// </summary>
+    /// <param name="frame">The 8-bit 4:2:0 or Gray frame.</param>
+    /// <param name="depth">The depth asked for.</param>
+    /// <param name="input">The file, for the message.</param>
+    /// <returns>The widened frame.</returns>
+    /// <exception cref="VideoAuthoringException">The frame is not 8-bit, or the depth asked for is not 10.</exception>
+    internal static VideoFrameData WidenTo(VideoFrameData frame, int depth, string input)
+    {
+        if (frame.BitDepth != 8 || depth != 10)
+        {
+            throw new VideoAuthoringException(
+                "The engine handed over a " + Number(frame.BitDepth) + "-bit frame of '" + input + "' where "
+                + Number(depth) + "-bit frames were asked for.");
+        }
+
+        VideoPlane a = frame.HasAlpha ? WidenPlane(frame.A, true) : default;
+        if (frame.Layout == VideoPixelLayout.Gray)
+        {
+            return VideoFrameData.CreateGray(
+                frame.Width, frame.Height, WidenPlane(frame.Y, false), frame.Timestamp, frame.FrameIndex, a, 10);
+        }
+
+        return VideoFrameData.CreateI420(
+            frame.Width,
+            frame.Height,
+            WidenPlane(frame.Y, false),
+            WidenPlane(frame.U, false),
+            WidenPlane(frame.V, false),
+            frame.Timestamp,
+            frame.FrameIndex,
+            a,
+            10);
+    }
+
+    private static VideoPlane WidenPlane(VideoPlane plane, bool replicate)
+    {
+        byte[] wide = new byte[plane.RowLength * plane.Rows * 2];
+        for (int row = 0; row < plane.Rows; row++)
+        {
+            ReadOnlySpan<byte> narrow = plane.GetRow(row);
+            int offset = row * plane.RowLength * 2;
+            for (int x = 0; x < narrow.Length; x++)
+            {
+                int value = narrow[x] << 2;
+                if (replicate) value |= narrow[x] >> 6;
+                wide[offset + (2 * x)] = (byte)value;
+                wide[offset + (2 * x) + 1] = (byte)(value >> 8);
+            }
+        }
+
+        return VideoPlane.FromArray(wide, plane.RowLength * 2, plane.Rows);
     }
 
     /// <summary>
@@ -814,6 +937,11 @@ internal static class InProcessAuthoring
     /// <param name="progress">Called with 0..100 as the pass advances, or null.</param>
     /// <param name="cancellationToken">Stops the pass between frames.</param>
     /// <exception cref="VideoAuthoringException">The plane did not come out in lock step with the picture.</exception>
+    /// <remarks>
+    /// When the video pass was shaped in process, the alpha plane is decoded again and given the SAME turn,
+    /// scale and frame-rate conversion - never the grade - so the two stay frame for frame. At 10 bits the plane
+    /// is 10-bit Gray; fully opaque is 1023.
+    /// </remarks>
     internal static void EncodeAlpha(
         IVideoProcessor engine,
         VideoAuthoringRequest request,
@@ -827,13 +955,15 @@ internal static class InProcessAuthoring
         VideoSourceInfo info = picture.Info;
         int width = picture.Width;
         int height = picture.Height;
+        int depth = video.BitDepth;
+        int bytes = depth > 8 ? 2 : 1;
 
         VideoEncoderRequest encoderRequest = new VideoEncoderRequest
         {
             Width = width,
             Height = height,
             PixelLayout = VideoPixelLayout.Gray,
-            BitDepth = 8,
+            BitDepth = depth,
             FrameRate = info.FrameRate,
             Quality = QualityFor(video.ResolvedAlphaConstantRateFactor),
             ColorRange = VideoColorRange.Full,
@@ -866,15 +996,13 @@ internal static class InProcessAuthoring
         {
             if (input == null)
             {
-                byte[] opaque = new byte[width * height];
-                Array.Fill(opaque, (byte)255);
-                VideoPlane plane = VideoPlane.FromArray(opaque, width, height);
+                VideoPlane plane = VideoPlane.FromArray(OpaquePlane(width, height, depth), width * bytes, height);
 
                 for (int index = 0; index < pictureKeys.Count; index++)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     VideoFrameData frame = VideoFrameData.CreateGray(
-                        width, height, plane, info.FrameRate.TimestampOf(index), index);
+                        width, height, plane, info.FrameRate.TimestampOf(index), index, default, depth);
                     Encode(encoder, frame, pictureKeys[index], AlphaPassLabel);
                     sink.Drain(encoder, writer, AlphaPassLabel);
                     frames++;
@@ -886,11 +1014,11 @@ internal static class InProcessAuthoring
                 VideoSourceOptions sourceOptions = new VideoSourceOptions
                 {
                     PixelLayout = VideoPixelLayout.I420,
-                    BitDepth = 8,
+                    BitDepth = depth,
                     IncludeAlpha = true,
                 };
 
-                using IVideoFrameSource source = engine.OpenVideo(input, sourceOptions);
+                using IVideoFrameSource source = OpenPicture(engine, input, sourceOptions, picture.Shaping, true);
                 byte[] opaque = null;
 
                 while (source.TryReadFrame(out VideoFrameData frame))
@@ -905,24 +1033,27 @@ internal static class InProcessAuthoring
                         continue;
                     }
 
+                    if (frame.BitDepth != depth) frame = WidenTo(frame, depth, input);
+
                     VideoPlane plane;
-                    if (frame.HasAlpha)
+                    if (frame.Layout == VideoPixelLayout.Gray)
                     {
-                        plane = CropPlane(frame.A, width, height);
+                        // The shaped source has already made the plane - Gray from the alpha plane, opaque where
+                        // a frame had none.
+                        plane = CropPlane(frame.Y, width * bytes, height);
+                    }
+                    else if (frame.HasAlpha)
+                    {
+                        plane = CropPlane(frame.A, width * bytes, height);
                     }
                     else
                     {
-                        if (opaque == null)
-                        {
-                            opaque = new byte[width * height];
-                            Array.Fill(opaque, (byte)255);
-                        }
-
-                        plane = VideoPlane.FromArray(opaque, width, height);
+                        opaque ??= OpaquePlane(width, height, depth);
+                        plane = VideoPlane.FromArray(opaque, width * bytes, height);
                     }
 
                     VideoFrameData gray = VideoFrameData.CreateGray(
-                        width, height, plane, frame.Timestamp, frame.FrameIndex);
+                        width, height, plane, frame.Timestamp, frame.FrameIndex, default, depth);
                     Encode(encoder, gray, pictureKeys[(int)frames], AlphaPassLabel);
                     sink.Drain(encoder, writer, AlphaPassLabel);
                     frames++;
@@ -943,6 +1074,31 @@ internal static class InProcessAuthoring
                 "The alpha pass did not come out in lock step with the video pass: " + mismatch + " A master "
                 + "file pairs the two frame for frame, so nothing was written.");
         }
+    }
+
+    /// <summary>A fully opaque plane: every sample the depth's maximum (255, or 1023 little-endian).</summary>
+    /// <param name="width">The width.</param>
+    /// <param name="height">The height.</param>
+    /// <param name="depth">8 or 10.</param>
+    /// <returns>The tightly packed plane.</returns>
+    internal static byte[] OpaquePlane(int width, int height, int depth)
+    {
+        if (depth <= 8)
+        {
+            byte[] narrow = new byte[width * height];
+            Array.Fill(narrow, (byte)255);
+            return narrow;
+        }
+
+        int maximum = (1 << depth) - 1;
+        byte[] wide = new byte[width * height * 2];
+        for (int i = 0; i < wide.Length; i += 2)
+        {
+            wide[i] = (byte)maximum;
+            wide[i + 1] = (byte)(maximum >> 8);
+        }
+
+        return wide;
     }
 
     /// <summary>Says how an alpha plane fails to be in lock step with its picture.</summary>
@@ -1155,8 +1311,7 @@ internal static class InProcessAuthoring
 
         return "the picture is " + Number(width) + "x" + Number(height) + ", and 4:2:0 AV1 needs even dimensions, so "
             + what + " cropped away (not resampled) and it was encoded at " + Number(EvenFloor(width)) + "x"
-            + Number(EvenFloor(height)) + ". Set Video.FrameSize to choose the "
-            + "size yourself on the ffmpeg engine.";
+            + Number(EvenFloor(height)) + ". Set Video.FrameSize to choose the size yourself.";
     }
 
     /// <summary>Refuses a picture too small to crop to even dimensions - one pixel wide or high.</summary>
@@ -1174,24 +1329,32 @@ internal static class InProcessAuthoring
             + "cropped.");
     }
 
-    /// <summary>A view of an I420 frame's top-left even-sized part: no copy, the planes' strides kept.</summary>
+    /// <summary>
+    /// A view of an I420 frame's top-left even-sized part, at the frame's own depth: no copy, the planes' strides
+    /// kept, the alpha plane left behind.
+    /// </summary>
     /// <param name="frame">The frame.</param>
     /// <param name="width">The even width.</param>
     /// <param name="height">The even height.</param>
     /// <returns>The cropped frame.</returns>
-    internal static VideoFrameData CropI420(VideoFrameData frame, int width, int height) =>
-        VideoFrameData.CreateI420(
+    internal static VideoFrameData CropI420(VideoFrameData frame, int width, int height)
+    {
+        int bytes = frame.BytesPerSample;
+        return VideoFrameData.CreateI420(
             width,
             height,
-            CropPlane(frame.Y, width, height),
-            CropPlane(frame.U, width / 2, height / 2),
-            CropPlane(frame.V, width / 2, height / 2),
+            CropPlane(frame.Y, width * bytes, height),
+            CropPlane(frame.U, width / 2 * bytes, height / 2),
+            CropPlane(frame.V, width / 2 * bytes, height / 2),
             frame.Timestamp,
-            frame.FrameIndex);
+            frame.FrameIndex,
+            default,
+            frame.BitDepth);
+    }
 
-    /// <summary>A view of an 8-bit plane's top-left part.</summary>
+    /// <summary>A view of a plane's top-left part.</summary>
     /// <param name="plane">The plane.</param>
-    /// <param name="rowLength">The bytes per row to keep.</param>
+    /// <param name="rowLength">The BYTES per row to keep (two a sample at 10 bits).</param>
     /// <param name="rows">The rows to keep.</param>
     /// <returns>The plane itself when nothing is cut, otherwise the view.</returns>
     internal static VideoPlane CropPlane(VideoPlane plane, int rowLength, int rows)
@@ -1209,23 +1372,26 @@ internal static class InProcessAuthoring
     }
 
     /// <summary>
-    /// Refuses a picture its engine describes with the RGB (identity) matrix: the samples it delivers are 4:2:0
-    /// YUV, which no RGB matrix describes, so the tag would be wrong and the AV1 encoder refuses it outright.
+    /// The contract check on the matrix an engine reports: <see cref="VideoSourceInfo.ColorMatrix" /> names the
+    /// matrix of the samples the engine DELIVERS, and the video pass asks for 4:2:0 YUV, which the RGB (identity)
+    /// matrix never describes. An RGB source is fine - an engine delivering it as YUV converts it and names the
+    /// matrix it converted with (the ffmpeg engine says BT.709) - so only an engine that misdescribes its own
+    /// delivery is refused here, before the wrong tag reaches the file (the AV1 encoder refuses it outright).
     /// </summary>
     /// <param name="engine">The engine.</param>
     /// <param name="info">What its frame source said.</param>
     /// <param name="input">The file, for the message.</param>
-    /// <exception cref="VideoAuthoringException">The matrix is RGB.</exception>
+    /// <exception cref="VideoAuthoringException">The engine reports the RGB matrix for YUV samples.</exception>
     internal static void RequireYuvMatrix(IVideoProcessor engine, VideoSourceInfo info, string input)
     {
         if (info.ColorMatrix != VideoColorMatrix.Rgb) return;
 
         throw new VideoAuthoringException(
-            "The '" + engine.Name + "' engine delivers the picture of '" + input + "' as 4:2:0 YUV and describes it "
-            + "with the RGB (identity) colour matrix - the matrix of the SOURCE, which is RGB - so it cannot be "
-            + "tagged correctly and the AV1 encoder refuses it. The engine should name the matrix of the samples it "
-            + "delivers. Until it does, convert the source to YUV first, for example 'ffmpeg -i <source> -c:v ffv1 "
-            + "-pix_fmt yuva420p -c:a copy <source>.mkv', and author from that.");
+            "The '" + engine.Name + "' engine delivers the picture of '" + input + "' as " + info.PixelLayout
+            + " (YUV) samples but reports the RGB (identity) colour matrix for them, which no YUV sample is in: the "
+            + "engine misdescribes its delivery. An engine must report the matrix of the samples it delivers - for "
+            + "an RGB source converted to YUV, the matrix it converted with - so the file can be tagged correctly. "
+            + "This is a fault in the '" + engine.Name + "' engine, not in the source.");
     }
 
     private static Av1Encoder StartEncoder(VideoEncoderRequest request, Av1EncoderOptions options, string label)

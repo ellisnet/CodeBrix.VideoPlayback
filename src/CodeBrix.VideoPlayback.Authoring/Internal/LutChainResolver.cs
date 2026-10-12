@@ -156,6 +156,26 @@ internal static class LutChainResolver
         return resolved;
     }
 
+    /// <summary>
+    /// What a chain is called: every table that applies, in order, joined by " then " - the title a composed
+    /// table is written with, and the name the in-process grade is listed under.
+    /// </summary>
+    /// <param name="luts">The request's chain.</param>
+    /// <returns>The description, or an empty string when no table applies.</returns>
+    internal static string DescribeChain(IList<AuthoringLutInput> luts)
+    {
+        List<AuthoringLutInput> applied = new List<AuthoringLutInput>();
+        if (luts != null)
+        {
+            foreach (AuthoringLutInput lut in luts)
+            {
+                if (lut != null && lut.HasEffect) applied.Add(lut);
+            }
+        }
+
+        return BuildTitle(applied);
+    }
+
     private static string BuildTitle(IReadOnlyList<AuthoringLutInput> applied)
     {
         List<string> parts = new List<string>(applied.Count);

@@ -31,7 +31,8 @@ namespace CodeBrix.VideoPlayback.Containers.Cbv;
 /// MASTER (MODE3) FILES. A second video track declared with <see cref="CbvTrackFlags.AlphaPlane" /> carries
 /// the picture's alpha channel as a monochrome stream, and an audio track may be FLAC
 /// (<see cref="VideoCodecIds.Flac" />). Either makes the file format version 1 (<see cref="CbvFormat.MasterVersion" />);
-/// a file with neither is version 0, byte for byte what this muxer has always written. An alpha-plane track
+/// so does the <see cref="Silent" /> header flag (a file silent by intent, with no audio track). A file with
+/// none of them is version 0, byte for byte what this muxer has always written. An alpha-plane track
 /// is checked twice: when it is declared (dimensions, bit depth, monochrome layout, full range against the
 /// picture track) and when the file is completed (the same frame count, the same timestamps, key frames in
 /// the same places) - and refused with a message saying exactly what differs.
@@ -54,6 +55,7 @@ public sealed class CbvMuxer : IDisposable
     private long maximumEndTicks;
     private bool completed;
     private bool disposed;
+    private bool silent;
 
     /// <summary>Creates a muxer writing to a stream.</summary>
     /// <param name="output">Where the finished file is written. It must be writable.</param>
@@ -96,10 +98,34 @@ public sealed class CbvMuxer : IDisposable
 
     /// <summary>
     /// The format version the file will be stamped with, given the tracks declared so far: 1
-    /// (<see cref="CbvFormat.MasterVersion" />) when one of them is an alpha-plane track or FLAC audio, 0
+    /// (<see cref="CbvFormat.MasterVersion" />) when one of them is an alpha-plane track or FLAC audio, or the
+    /// file is flagged <see cref="Silent" />; 0
     /// (<see cref="CbvFormat.Version" />) otherwise.
     /// </summary>
     public ushort FormatVersion => RequiredVersion();
+
+    /// <summary>
+    /// True to flag the file <see cref="CbvHeaderFlags.Silent" />: silent by intent. A silent file is stamped
+    /// format version 1 (<see cref="CbvFormat.MasterVersion" />) and carries no audio track.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The file has already been completed.</exception>
+    /// <exception cref="VideoPlaybackException">Set to true after an audio track was declared.</exception>
+    public bool Silent
+    {
+        get => silent;
+        set
+        {
+            ThrowIfCompleted();
+            if (value && HasAudioTrack())
+            {
+                throw new VideoPlaybackException(
+                    "The file cannot be flagged Silent: an audio track is already declared, and a silent file "
+                    + "carries no sound.");
+            }
+
+            silent = value;
+        }
+    }
 
     /// <summary>Declares a video track.</summary>
     /// <param name="codecId">The codec identifier - see <see cref="VideoCodecIds" />.</param>
@@ -205,7 +231,10 @@ public sealed class CbvMuxer : IDisposable
     /// <param name="flags">What the track is for.</param>
     /// <returns>The identifier the track was given.</returns>
     /// <exception cref="InvalidOperationException">The file has already been completed.</exception>
-    /// <exception cref="VideoPlaybackException">A field will not fit the format, or a chunk has already been written.</exception>
+    /// <exception cref="VideoPlaybackException">
+    /// A field will not fit the format, a chunk has already been written, or the file is flagged
+    /// <see cref="Silent" /> - a silent file carries no sound.
+    /// </exception>
     public int AddAudioTrack(
         string codecId,
         ReadOnlyMemory<byte> codecPrivate,
@@ -219,6 +248,12 @@ public sealed class CbvMuxer : IDisposable
         string name = null,
         CbvTrackFlags flags = CbvTrackFlags.None)
     {
+        if (silent)
+        {
+            throw new VideoPlaybackException(
+                "An audio track cannot be declared in a file flagged Silent; a silent file carries no sound.");
+        }
+
         if (preSkipSamples is < 0 or > ushort.MaxValue)
         {
             throw new VideoPlaybackException(
@@ -430,6 +465,16 @@ public sealed class CbvMuxer : IDisposable
         if (!leaveOutputOpen) output.Dispose();
     }
 
+    private bool HasAudioTrack()
+    {
+        foreach (TrackDefinition track in trackDefinitions)
+        {
+            if (track.Kind == 2) return true;
+        }
+
+        return false;
+    }
+
     private TrackDefinition BeginTrack(
         string codecId,
         byte kind,
@@ -470,6 +515,8 @@ public sealed class CbvMuxer : IDisposable
     /// </summary>
     private ushort RequiredVersion()
     {
+        if (silent) return CbvFormat.MasterVersion;
+
         foreach (TrackDefinition track in trackDefinitions)
         {
             if ((track.Flags & (CbvTrackFlags.AlphaPlane | CbvTrackFlags.PremultipliedAlpha)) != 0)
@@ -624,7 +671,9 @@ public sealed class CbvMuxer : IDisposable
         using MemoryStream stream = new MemoryStream();
         stream.Write(CbvFormat.Magic);
         WriteUInt16(stream, RequiredVersion());
-        WriteUInt16(stream, (ushort)(CbvHeaderFlags.HasIndex | CbvHeaderFlags.ChunksInPresentationOrder));
+        CbvHeaderFlags headerFlags = CbvHeaderFlags.HasIndex | CbvHeaderFlags.ChunksInPresentationOrder;
+        if (silent) headerFlags |= CbvHeaderFlags.Silent;
+        WriteUInt16(stream, (ushort)headerFlags);
 
         Span<byte> placeholder = stackalloc byte[CbvFormat.FixedHeaderLength - 8];
         placeholder.Clear();

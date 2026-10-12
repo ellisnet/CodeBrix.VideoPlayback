@@ -74,7 +74,8 @@ Add, as your application needs them:
 * Reading and writing `.cbv`, the bespoke container, with its index and every caption cue in front of the
   media data
 * Reading and writing `.cbvmaster`, the bespoke container's master form: an optional alpha-plane track beside
-  the picture, for video with real transparency, and lossless FLAC sound
+  the picture, for video with real transparency, lossless FLAC sound, and a flag marking a file silent by
+  intent
 * Playing transparent video: the alpha plane is decoded beside the picture, kept frame for frame in step with
   it, and handed on as premultiplied colour with real opacity
 * Playing from files, streams, memory, memory-mapped files and HTTP
@@ -83,6 +84,9 @@ Add, as your application needs them:
 * A frame presenter: a one-slot mailbox that always holds the newest frame, so the drawing side never waits
   and never shows a stale picture
 * A managed SIMD converter from planar YUV to BGRA, for when there is no graphics device to do it
+* Managed frame processing for engines without FFmpeg: a bilinear and Lanczos scaler, quarter-turn
+  rotation and flips, drop/duplicate frame-rate conversion, and 3D LUT grading of YUV frames at 8, 10
+  and 12 bits - all working on plain planes, all measured against FFmpeg
 * Colour lookup tables - 1D and 3D, `.cube` reading and writing, and layered chains composed into one
   resultant table
 * Container readers for EBML, Matroska/WebM and `.cbv`, and writers for Matroska/WebM, `.cbv`, IVF and Ogg
@@ -114,20 +118,26 @@ Add, as your application needs them:
 * A master flavour, `.cbvmaster`, encoded in process from frames the registered video-processing engine
   decodes - on any engine, with no FFmpeg encoder involved: the source's alpha channel as a second,
   monochrome AV1 track whose key frames are forced onto the picture's, fully transparent pixels filled with
-  the colour of the nearest visible one, and lossless FLAC sound
+  the colour of the nearest visible one, and lossless FLAC sound - or, with `Audio.Silent`, no sound at all
+  and the file flagged silent
+* Ten-bit masters: `Video.BitDepth = 10` encodes the picture and its alpha plane at 10 bits on any engine that
+  delivers 10-bit frames, and they play back at 10 bits
 * The bespoke flavour encoded in process too, on request or when FFmpeg is not available: AV1 and Vorbis
   from the in-process encoders, with the same captions, chapters and container
 * The WebM-profile flavour - CodeBrix Video Mode1 - encoded and muxed in process too, on request or when
   FFmpeg is not available: AV1 and Opus from the in-process encoders and the file written by this
   repository's own WebM muxer, with WebVTT captions, chapters in every title language, the index in front
   and the streamable-profile check, so a Mode1 file can be authored where FFmpeg does not exist
-* An optional FFmpeg prepare pass for in-process runs that need scaling, a frame rate, a colour grade or
-  rotation
+* Scaling, frame-rate conversion, colour grading and rotation for in-process runs: an FFmpeg prepare pass on
+  the desktop, and the same steps in managed code on an engine without FFmpeg
 * Device-class presets, applied to a request in one call
 * A colour grade baked from a chain of `.cube` tables with the same composer the presenter uses
 * A dry run that renders every command line - and every in-process pass's settings - without running
   anything
 * A streamable-profile report over the finished file
+* Exporting any CodeBrix video - `.cbv`, `.cbvmaster` or a WebM-profile file - to a standard MP4 (H.264, or
+  HEVC where the engine has it, with AAC sound), compositing a transparent master over a colour, an image or
+  another video - with no audio device needed
 * Refusing, before any process starts, what would not play or would not encode: Opus in a bespoke file,
   anything but FLAC in a master file, SubRip in a WebM-profile file, Vorbis or surround Opus in a WebM file
   encoded in process, a Vorbis bit rate outside the encoder's band, a malformed language tag
@@ -230,6 +240,19 @@ foreach (AuthoringCommand command in CbvAuthor.RenderCommands(request))
 }
 ```
 
+### Export to MP4
+
+```csharp
+using CodeBrix.VideoPlayback.Authoring.Export;
+
+VideoExportResult exported = VideoExporter.Run(new VideoExportRequest
+{
+    SourcePath = "intro.cbvmaster",
+    OutputPath = "intro.mp4",
+    Backdrop = ExportBackdrop.FromImage("stage.png"),
+});
+```
+
 ### Look inside a file
 
 ```
@@ -272,6 +295,9 @@ https://github.com/ellisnet/CodeBrix.VideoPlayback/tree/main/tests/CodeBrix.Vide
 
 The presenter and the authoring library have suites of their own beside it,
 `CodeBrix.VideoPlayback.Skia.Tests` and `CodeBrix.VideoPlayback.Authoring.Tests`.
+
+An Android device proof that authors all three modes, exports them to MP4 and plays them back on a phone, with no ffmpeg, is in
+[samples/VideoAuthoringAndroidProof](https://github.com/ellisnet/CodeBrix.VideoPlayback/tree/main/samples/VideoAuthoringAndroidProof).
 
 ## License
 

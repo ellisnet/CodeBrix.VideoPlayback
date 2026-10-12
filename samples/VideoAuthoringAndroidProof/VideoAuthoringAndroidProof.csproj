@@ -1,0 +1,51 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-android36.1</TargetFramework>
+    <SupportedOSPlatformVersion>33.0</SupportedOSPlatformVersion>
+    <OutputType>Exe</OutputType>
+    <ApplicationId>com.codebrix.videoplayback.authoringproof</ApplicationId>
+    <ApplicationVersion>1</ApplicationVersion>
+    <ApplicationDisplayVersion>1.0</ApplicationDisplayVersion>
+    <RuntimeIdentifiers>android-arm64;android-x64</RuntimeIdentifiers>
+    <RootNamespace>VideoAuthoringAndroidProof</RootNamespace>
+    <Nullable>disable</Nullable>
+  </PropertyGroup>
+  <!-- SDK / JDK defaults for this machine: used only when nothing else set them; override with
+       -p:AndroidSdkDirectory=... -p:JavaSdkDirectory=... or ANDROID_HOME / JAVA_HOME. -->
+  <PropertyGroup>
+    <_CodeBrixUserAndroidSdk>$([System.Environment]::GetFolderPath(SpecialFolder.UserProfile))/Android/Sdk</_CodeBrixUserAndroidSdk>
+    <AndroidSdkDirectory Condition="'$(AndroidSdkDirectory)' == '' and Exists('$(_CodeBrixUserAndroidSdk)')">$(_CodeBrixUserAndroidSdk)</AndroidSdkDirectory>
+    <JavaSdkDirectory Condition="'$(JavaSdkDirectory)' == '' and Exists('/usr/lib/jvm/java-21-openjdk-amd64')">/usr/lib/jvm/java-21-openjdk-amd64</JavaSdkDirectory>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- The registered video-processing engine the in-process authoring decodes through and the MP4 export writes
+         with (MediaCodec / MediaMuxer; it carries no natives). -->
+    <PackageReference Include="CodeBrix.VideoProcessing.Android.MitLicenseForever" Version="1.0.285.663" />
+    <PackageReference Include="CodeBrix.VideoProcessing.Core.MitLicenseForever" Version="1.0.285.663" />
+    <!-- The AV1 decoder the export and the playback steps decode with (its Android natives ride in the package). -->
+    <PackageReference Include="CodeBrix.VideoPlayback.Dav1d.BsdLicenseForever" Version="1.0.271.1206" />
+    <!-- Opus: the Mode1 file's sound, decoded by the export. -->
+    <PackageReference Include="CodeBrix.Audio.Opus.BsdLicenseForever" Version="1.0.284.1151" />
+    <!-- The same CodeBrix.Audio.Core pin as the playback core. -->
+    <PackageReference Include="CodeBrix.Audio.Core.MitLicenseForever" Version="1.0.283.1382" />
+  </ItemGroup>
+  <!-- FOR THIS PROOF APP ONLY: the authoring library and the playback core are referenced FROM SOURCE, because the
+       proof exercises this tree's unpublished features (MP4 export, in-process managed shaping, Silent masters,
+       10-bit masters). At the next CodeBrix.VideoPlayback publish these two ProjectReferences switch to
+       PackageReferences (CodeBrix.VideoPlayback.Authoring.MitLicenseForever and
+       CodeBrix.VideoPlayback.MitLicenseForever at the published version), and the sample is nuget.org-only again. -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\CodeBrix.VideoPlayback.Authoring\CodeBrix.VideoPlayback.Authoring.csproj" />
+    <ProjectReference Include="..\..\src\CodeBrix.VideoPlayback\CodeBrix.VideoPlayback.csproj" />
+  </ItemGroup>
+  <!-- The synthetic inputs, copied into the app's files dir at start (see Assets/PROVENANCE.txt). -->
+  <ItemGroup>
+    <AndroidAsset Include="Assets\clip-h264-aac.mp4" />
+    <AndroidAsset Include="Assets\clip-rotated90.mp4" />
+    <AndroidAsset Include="Assets\backdrop.png" />
+    <AndroidAsset Include="Assets\backdrop-3s.mp4" />
+    <AndroidAsset Include="Assets\twist.cube" />
+    <AndroidAsset Include="Assets\alpha-master.cbvmaster" />
+    <None Include="Assets\PROVENANCE.txt" />
+  </ItemGroup>
+</Project>

@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using CodeBrix.VideoPlayback.Processing;
 using CodeBrix.VideoProcessing.Core.Frames;
 
 namespace CodeBrix.VideoPlayback.Authoring.Internal;
@@ -46,4 +47,22 @@ internal sealed class VideoPassResult
 
     /// <summary>How many frames it changed.</summary>
     internal int FilledFrames { get; }
+
+    /// <summary>
+    /// The in-process shaping the picture was decoded through, or null - the alpha pass puts the same shaping
+    /// round its own decode so the two stay in lock step.
+    /// </summary>
+    internal ManagedFrameShaping Shaping { get; init; }
+
+    /// <summary>The turn the in-process shaping applied; none when there was no shaping.</summary>
+    internal RotationAngle Rotation { get; init; }
+
+    /// <summary>The width after the turn and before any scaling.</summary>
+    internal int TurnedWidth { get; init; }
+
+    /// <summary>The height after the turn and before any scaling.</summary>
+    internal int TurnedHeight { get; init; }
+
+    /// <summary>True when the engine handed over 8-bit frames for a 10-bit master and they were widened here.</summary>
+    internal bool Widened { get; init; }
 }
