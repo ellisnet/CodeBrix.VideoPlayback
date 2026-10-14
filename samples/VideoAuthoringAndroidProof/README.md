@@ -51,13 +51,9 @@ build's results can be pulled without root:
 adb -s <serial> pull /sdcard/Android/data/com.codebrix.videoplayback.authoringproof/files/vaproof/ .
 ```
 
-## The project-reference note
+## Packages only
 
-Samples in this repository consume published NuGet packages. This one is the exception, for now: it
-references `src/CodeBrix.VideoPlayback.Authoring` and `src/CodeBrix.VideoPlayback` as **projects**, because it
-proves features of this tree that have not been published yet (the MP4 export, the in-process managed shaping,
-Silent masters and 10-bit masters). At the next CodeBrix.VideoPlayback publish those two references switch to
-the `CodeBrix.VideoPlayback.Authoring.MitLicenseForever` and `CodeBrix.VideoPlayback.MitLicenseForever`
-packages. Everything else - the Android engine, the video-processing core, the AV1 decoder, Opus and the audio
-core - already comes from nuget.org, and the AV1 encoder, FLAC, Vorbis and AV1 decoder natives ride into the
-APK inside their packages.
+Like every sample in this repository, this one consumes published NuGet packages and nothing else: the
+authoring library and the playback core, the Android engine and the video-processing core, the AV1 decoder,
+Opus and the audio core all come from nuget.org, and the AV1 encoder, FLAC, Vorbis and AV1 decoder natives ride
+into the APK inside their packages. It has no project references and no path outside the package feed.

@@ -94,6 +94,6 @@ ALSO WORTH READING, IN PLACE
       the render-path drop-down, the LUT panel and the smoke verification.
   samples/VideoAuthoringAndroidProof/README.md
       The Android device proof: authoring all three modes, the MP4 export and
-      headless playback on a phone, how to build, install and pull the results,
-      and why it references the authoring library from source.
+      headless playback on a phone, how to build, install and pull the results;
+      packages from nuget.org only.
 ================================================================================

@@ -29,14 +29,11 @@
     <!-- The same CodeBrix.Audio.Core pin as the playback core. -->
     <PackageReference Include="CodeBrix.Audio.Core.MitLicenseForever" Version="1.0.283.1382" />
   </ItemGroup>
-  <!-- FOR THIS PROOF APP ONLY: the authoring library and the playback core are referenced FROM SOURCE, because the
-       proof exercises this tree's unpublished features (MP4 export, in-process managed shaping, Silent masters,
-       10-bit masters). At the next CodeBrix.VideoPlayback publish these two ProjectReferences switch to
-       PackageReferences (CodeBrix.VideoPlayback.Authoring.MitLicenseForever and
-       CodeBrix.VideoPlayback.MitLicenseForever at the published version), and the sample is nuget.org-only again. -->
+  <!-- The authoring library and the playback core from nuget.org, like everything else here: this sample is
+       self-contained and reaches nothing outside the package feed. -->
   <ItemGroup>
-    <ProjectReference Include="..\..\src\CodeBrix.VideoPlayback.Authoring\CodeBrix.VideoPlayback.Authoring.csproj" />
-    <ProjectReference Include="..\..\src\CodeBrix.VideoPlayback\CodeBrix.VideoPlayback.csproj" />
+    <PackageReference Include="CodeBrix.VideoPlayback.Authoring.MitLicenseForever" Version="1.0.285.833" />
+    <PackageReference Include="CodeBrix.VideoPlayback.MitLicenseForever" Version="1.0.285.833" />
   </ItemGroup>
   <!-- The synthetic inputs, copied into the app's files dir at start (see Assets/PROVENANCE.txt). -->
   <ItemGroup>
