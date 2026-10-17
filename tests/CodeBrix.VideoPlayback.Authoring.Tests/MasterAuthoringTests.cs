@@ -163,6 +163,43 @@ public class MasterAuthoringTests
     }
 
     [Fact]
+    public void A_prepare_pass_scales_with_exact_rounding_and_full_chroma_interpolation()
+    {
+        //Arrange
+        VideoAuthoringRequest request = DryRequest();
+        request.Video.FrameSize = AuthoringFrameSize.Exact(640, 360);
+
+        VideoAuthoringRequest named = DryRequest();
+        named.Video.FrameSize = AuthoringFrameSize.Exact(640, 360);
+        named.Video.ScalerFlags = "bicubic+accurate_rnd";
+
+        //Act
+        IReadOnlyList<AuthoringCommand> commands = CbvAuthor.RenderCommands(request);
+        IReadOnlyList<AuthoringCommand> namedCommands = CbvAuthor.RenderCommands(named);
+
+        //Assert
+        commands[0].Label.Should().Be("prepare pass");
+        commands[0].Arguments.Should().Contain("scale=w=640:h=360:flags=lanczos+accurate_rnd+full_chroma_int, format=");
+        namedCommands[0].Arguments.Should().Contain("flags=bicubic+accurate_rnd+full_chroma_int, format=");
+    }
+
+    [Fact]
+    public void A_prepare_pass_in_encoder_mode_converts_the_rate_with_the_fps_filter_at_the_end_of_the_chain()
+    {
+        //Arrange
+        VideoAuthoringRequest request = DryRequest();
+        request.Video.FrameRate = 24;
+
+        //Act
+        IReadOnlyList<AuthoringCommand> commands = CbvAuthor.RenderCommands(request);
+
+        //Assert
+        commands[0].Label.Should().Be("prepare pass");
+        commands[0].Arguments.Should().Contain("-vf \"fps=24, format=yuva420p\"");
+        commands[0].Arguments.Should().NotContain("-r 24");
+    }
+
+    [Fact]
     public void The_alpha_rate_factor_defaults_to_six_below_the_picture_and_can_be_set()
     {
         //Arrange

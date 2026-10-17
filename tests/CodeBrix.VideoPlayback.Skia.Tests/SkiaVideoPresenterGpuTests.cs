@@ -102,6 +102,35 @@ public class SkiaVideoPresenterGpuTests
     }
 
     [Fact]
+    public void A_context_handed_over_after_the_first_resolution_is_the_path_the_start_up_line_names()
+    {
+        //Arrange
+        RequireGraphics();
+
+        //Act & Assert
+        HeadlessGraphicsContext.Run(graphics =>
+        {
+            using PinnedFrameBufferPool pool = new PinnedFrameBufferPool();
+            using SkiaVideoPresenter presenter = new SkiaVideoPresenter();
+            presenter.ResolveRenderPath().Should().Be(VideoRenderBackend.Cpu);
+            presenter.UseGpu(graphics);
+
+            using (VideoFrame frame =
+                TestFrames.CreatePattern(pool, 16, 16, VideoPixelLayout.I420, TestFrames.Bt709Limited, 1))
+            {
+                presenter.Present(frame);
+            }
+
+            presenter.Update();
+
+            presenter.ActiveRenderPath.Should().Be(VideoRenderBackend.Gpu);
+            presenter.RenderPathReportCount.Should().Be(1);
+            presenter.LastRenderPathReport.Should().Be(
+                "CodeBrix.VideoPlayback.Skia: composing on the GPU, because a graphics context is available.");
+        });
+    }
+
+    [Fact]
     public void The_graphics_path_composes_what_the_core_converter_would_have()
     {
         //Arrange

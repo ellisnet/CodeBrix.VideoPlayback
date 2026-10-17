@@ -57,8 +57,8 @@ public class CbvAuthorTests
         //Assert
         line.Should().Be(
             "-autorotate -i \"/clips/source.mkv\" -map 0:v:0 -map 0:a:0 -map_chapters -1 -map_metadata -1 "
-            + "-c:v libsvtav1 -preset 6 -crf 28 -pix_fmt yuv420p -r 30 -g 60 "
-            + "-vf \"scale=w=1920:h=1080:flags=lanczos, format=yuv420p\" "
+            + "-c:v libsvtav1 -preset 6 -crf 28 -pix_fmt yuv420p -g 60 "
+            + "-vf \"scale=w=1920:h=1080:flags=lanczos, fps=30, format=yuv420p\" "
             + "-c:a libopus -b:a 128k -ar 48000 -ac 2 -f webm -cues_to_front 1 \"/out/clip.cbv\" -y");
     }
 
@@ -84,8 +84,8 @@ public class CbvAuthorTests
 
         commands[0].Arguments.Should().Be(
             "-autorotate -i \"/clips/source.mkv\" -map 0:v:0 -map_metadata -1 "
-            + "-c:v libsvtav1 -preset 6 -crf 28 -pix_fmt yuv420p -r 30 -g 60 "
-            + "-vf \"scale=w=1920:h=1080:flags=lanczos, format=yuv420p\" "
+            + "-c:v libsvtav1 -preset 6 -crf 28 -pix_fmt yuv420p -g 60 "
+            + "-vf \"scale=w=1920:h=1080:flags=lanczos, fps=30, format=yuv420p\" "
             + "-an -f ivf \"" + Path.Combine("/work", "clip.video.ivf") + "\" -y");
 
         commands[1].Arguments.Should().Be(
@@ -251,18 +251,37 @@ public class CbvAuthorTests
     }
 
     [Fact]
-    public void RenderCommands_puts_the_frame_rate_at_the_encoder_by_default()
+    public void RenderCommands_puts_the_frame_rate_at_the_end_of_the_chain_by_default()
     {
         //Arrange
         VideoAuthoringRequest request = NewRequest(VideoAuthoringFlavour.WebMProfile);
+        request.Video.FrameSize = AuthoringFrameSize.Exact(640, 360);
         request.Video.FrameRate = 24;
+        request.Video.Luts.Add(new AuthoringLutInput("/luts/warm.cube"));
 
         //Act
         string line = CbvAuthor.RenderCommands(request)[0].Arguments;
 
         //Assert
-        line.Should().Contain("-r 24");
-        line.Should().NotContain("fps=24");
+        line.Should().Contain(
+            "-vf \"scale=w=640:h=360:flags=lanczos, lut3d=file=/luts/warm.cube:interp=tetrahedral, fps=24, "
+            + "format=yuv420p\"");
+        line.Should().NotContain("-r 24");
+    }
+
+    [Fact]
+    public void RenderCommands_leaves_the_scale_flags_of_an_encoding_pass_as_the_request_gave_them()
+    {
+        //Arrange
+        VideoAuthoringRequest request = NewRequest(VideoAuthoringFlavour.WebMProfile);
+        request.Video.FrameSize = AuthoringFrameSize.Exact(640, 360);
+
+        //Act
+        string line = CbvAuthor.RenderCommands(request)[0].Arguments;
+
+        //Assert
+        line.Should().Contain("scale=w=640:h=360:flags=lanczos, format=yuv420p");
+        line.Should().NotContain("accurate_rnd");
     }
 
     [Fact]

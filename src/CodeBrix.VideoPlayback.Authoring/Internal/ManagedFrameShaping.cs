@@ -18,9 +18,9 @@ namespace CodeBrix.VideoPlayback.Authoring.Internal;
 /// <para>
 /// THE ORDER is the prepare pass's own, so the two paths agree frame for frame: the rotation first (FFmpeg
 /// applies it while decoding, ahead of every filter), then <c>scale</c>, then <c>fps</c>, then <c>lut3d</c>. A
-/// frame rate given for <see cref="AuthoringFrameRateMode.Encoder" /> lands after the grade on the FFmpeg
-/// command line; dropping and duplicating whole frames before or after a per-frame grade gives the same
-/// pictures, so here it always runs before the grade and a dropped frame is never graded.
+/// frame rate given for <see cref="AuthoringFrameRateMode.Encoder" /> is an <c>fps</c> filter after the grade on
+/// the FFmpeg command line; dropping and duplicating whole frames before or after a per-frame grade gives the
+/// same pictures, so here it always runs before the grade and a dropped frame is never graded.
 /// </para>
 /// <para>
 /// One instance describes the shaping of one run. <see cref="Wrap" /> puts it round a frame source; the
@@ -263,7 +263,7 @@ internal sealed class ManagedFrameShaping
             notes.Add(
                 "FrameRateMode = Encoder has no separate in-process meaning: the frame rate was converted by "
                 + "dropping and duplicating whole frames, before the grade, exactly as FrameRateMode = Filter does "
-                + "(FFmpeg's fps filter). FFmpeg's encoder-side rate can keep other frames when it lowers the rate.");
+                + "(FFmpeg's fps filter) - the same frames the FFmpeg path keeps in either mode.");
         }
 
         return notes;

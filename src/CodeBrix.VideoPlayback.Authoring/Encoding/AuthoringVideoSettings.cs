@@ -38,6 +38,11 @@ namespace CodeBrix.VideoPlayback.Authoring.Encoding;
 ///     stages grade the same numbers.
 ///   </description></item>
 ///   <item><description>
+///     <c>fps</c> - here instead when <see cref="FrameRateMode" /> is
+///     <see cref="AuthoringFrameRateMode.Encoder" /> (the default): the same filter, so the same frames, at the
+///     output end of the chain.
+///   </description></item>
+///   <item><description>
 ///     <c>format</c> - LAST, so whatever the chain did, the encoder is handed 8-bit 4:2:0.
 ///   </description></item>
 /// </list>
@@ -146,7 +151,12 @@ public sealed class AuthoringVideoSettings
     /// <summary>The frame rate to conform the output to, or 0 to leave the source's own rate alone.</summary>
     public double FrameRate { get; set; }
 
-    /// <summary>Where <see cref="FrameRate" /> is applied. At the encoder by default.</summary>
+    /// <summary>
+    /// Where in the filter chain <see cref="FrameRate" /> is applied: at the output end
+    /// (<see cref="AuthoringFrameRateMode.Encoder" />) by default, or straight after the scale
+    /// (<see cref="AuthoringFrameRateMode.Filter" />). Both are FFmpeg's <c>fps</c> filter and keep the same
+    /// frames; the in-process shaping on an engine without FFmpeg keeps those same frames in either mode.
+    /// </summary>
     public AuthoringFrameRateMode FrameRateMode { get; set; } = AuthoringFrameRateMode.Encoder;
 
     /// <summary>

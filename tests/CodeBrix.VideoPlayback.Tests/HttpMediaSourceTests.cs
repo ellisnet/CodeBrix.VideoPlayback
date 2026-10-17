@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Net;
+using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
 using CodeBrix.VideoPlayback;
@@ -213,9 +214,15 @@ public class HttpMediaSourceTests
 
         internal static TestServer Start(byte[] content, bool supportsRanges, int statusCode = 200)
         {
+            Exception lastFailure = null;
+
             for (int attempt = 0; attempt < 20; attempt++)
             {
-                int port = Random.Shared.Next(20000, 45000);
+                // HttpListener cannot bind port 0 itself, so the operating system is asked for a free port by
+                // binding a socket to port 0 and reading back the one it assigned. Another process can still take
+                // that port in the moment before the listener binds it, so a failed start is retried with a fresh
+                // one - whichever exception type the platform's listener reports it with.
+                int port = AssignedLoopbackPort();
                 string prefix = $"http://127.0.0.1:{port}/media/";
                 HttpListener listener = new HttpListener();
                 listener.Prefixes.Add(prefix);
@@ -224,40 +231,85 @@ public class HttpMediaSourceTests
                 {
                     listener.Start();
                 }
-                catch (HttpListenerException)
+                catch (Exception exception) when (exception is HttpListenerException || exception is SocketException)
                 {
+                    lastFailure = exception;
+                    CloseQuietly(listener);
                     continue;
                 }
 
                 return new TestServer(listener, new Uri(prefix + "clip.bin"), content, supportsRanges, statusCode);
             }
 
-            throw new InvalidOperationException("No free local port could be found for the test server.");
+            throw new InvalidOperationException("No free local port could be found for the test server.", lastFailure);
         }
 
         public void Dispose()
         {
-            cancellation.Cancel();
+            // Teardown never throws: a test's own failure must not be replaced by a failure to stop its server.
             try
             {
-                listener.Stop();
-                listener.Close();
+                cancellation.Cancel();
             }
-            catch (ObjectDisposedException)
+            catch (Exception)
             {
-                // Already closed.
+                // Already cancelled or disposed.
             }
+
+            CloseQuietly(listener);
 
             try
             {
                 loop.Wait(TimeSpan.FromSeconds(2));
             }
-            catch (AggregateException)
+            catch (Exception)
             {
                 // The loop ends by the listener being closed underneath it; that is not a failure.
             }
 
-            cancellation.Dispose();
+            try
+            {
+                cancellation.Dispose();
+            }
+            catch (Exception)
+            {
+                // Nothing left to release.
+            }
+        }
+
+        private static int AssignedLoopbackPort()
+        {
+            TcpListener probe = new TcpListener(IPAddress.Loopback, 0);
+            probe.Start();
+            try
+            {
+                return ((IPEndPoint)probe.LocalEndpoint).Port;
+            }
+            finally
+            {
+                probe.Stop();
+            }
+        }
+
+        private static void CloseQuietly(HttpListener listener)
+        {
+            try
+            {
+                if (listener.IsListening) listener.Stop();
+            }
+            catch (Exception)
+            {
+                // Already stopped, or never started.
+            }
+
+            try
+            {
+                listener.Close();
+            }
+            catch (Exception)
+            {
+                // Already closed.
+            }
         }
 
         private void Serve()

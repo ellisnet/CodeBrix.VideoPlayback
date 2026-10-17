@@ -1463,10 +1463,13 @@ grade, so lock step is kept by determinism, not by sharing frames. The source
 reads one frame ahead (a frame-rate decision needs the next timestamp); output n
 is stamped FrameRate.TimestampOf(n), the engine contract's own stamp, so the
 frames equal what the ffmpeg engine reads back from the prepare pass's
-intermediate. Both FrameRateModes are the fps filter in process: ffmpeg's
-output-side -r was measured keeping OTHER frames than fps= when it halves a rate
-(and padding two at the end), so Encoder mode is the one place the two paths
-pick different frames, and the run's notes say so. The dry run cannot see a
+intermediate. Both FrameRateModes are the fps filter on BOTH paths: ffmpeg's
+output-side -r (what Encoder mode used to render) was measured keeping OTHER
+frames than fps= when it halves a rate (and padding two at the end), so Encoder
+mode now renders fps= at the end of the chain instead, and the two paths pick
+the same frames. The prepare pass's scale also carries
+accurate_rnd+full_chroma_int, closer to what the managed scaler is measured
+against; the encoding passes' scale flags are the request's own. The dry run cannot see a
 rotation; the result's Commands can. The managed-versus-ffmpeg bounds are in
 tests/CodeBrix.VideoPlayback.Authoring.Tests/ManagedVersusFFmpegShapingTests.cs,
 measured over SyntheticClip pixels served by a test engine that never registers

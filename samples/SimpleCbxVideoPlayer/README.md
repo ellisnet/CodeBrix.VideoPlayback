@@ -275,7 +275,7 @@ views for their platform:
 
 The two `CodeBrix.Platform.WinUI` and `.WPF` packages are the *native* members of that family - the same
 "Simple" MVVM toolkit (`SimpleViewModel`, `SimpleCommand`, `SimpleServiceResolver`) compiled against real
-WinUI and real WPF, sharing no code with the Uno-derived CodeBrix.Platform packages. That is what lets the
+WinUI and real WPF, sharing no code with the CodeBrix.Platform packages. That is what lets the
 view models be copied between the families almost verbatim.
 
 The SkiaSharp versions have to agree, and they do: `CodeBrix.VideoPlayback.Skia` wants SkiaSharp 4.153.1,

@@ -18,9 +18,9 @@ namespace CodeBrix.VideoPlayback.Authoring.Internal;
 // parse, the libsvtav1 -> libaom-av1 fallback rewrite, the parse of "ffmpeg -encoders" and the names of the two
 // tools. It NEVER references the ffmpeg package (CodeBrix.VideoProcessing): it composes its lines with Core's
 // ExternalToolArguments and runs them through the IExternalTools of the REGISTERED engine (CodeBrix.VideoProcessing
-// .Core.Tools), so Authoring depends on CodeBrix.VideoProcessing.Core and nothing else of that family. The lines are
-// BYTE-IDENTICAL to the ones the ported FFMpegCore builder rendered before - the corpus manifest under
-// tests/assets/authoring and CorpusCommandEquivalenceTests are the fence.
+// .Core.Tools), so Authoring depends on CodeBrix.VideoProcessing.Core and nothing else of that family. The corpus
+// manifest under tests/assets/authoring and CorpusCommandEquivalenceTests are the fence: a change to a rendered line
+// is a corpus re-encode.
 // =====================================================================================================================
 
 /// <summary>
@@ -235,8 +235,14 @@ internal static class FFmpegVocabulary
     /// default, and the only depth the command-line corpus uses - the line is unchanged.
     /// </para>
     /// <para>
-    /// A frame rate given for <see cref="AuthoringFrameRateMode.Encoder" /> is applied on this pass's output, the
-    /// place FFmpeg's encoder-side rate conversion has always lived; the intermediate is constant-rate either way.
+    /// A frame rate given for <see cref="AuthoringFrameRateMode.Encoder" /> is an <c>fps</c> filter at the END of
+    /// the chain (after <c>lut3d</c>, ahead of <c>format</c>), exactly as on the encoding passes - see
+    /// the filter-chain notes in this file; the intermediate is constant-rate either way.
+    /// </para>
+    /// <para>
+    /// The scale filter's flags gain <c>accurate_rnd+full_chroma_int</c> on THIS pass only: the prepare pass is
+    /// what the in-process shaping is measured against, and FFmpeg's default rounding and chroma interpolation
+    /// are the coarser of the two. The encoding passes' lines are left as they are.
     /// </para>
     /// </remarks>
     internal static CommandLine BuildPreparePass(
@@ -255,13 +261,8 @@ internal static class FFmpegVocabulary
 
         line.Add("-c:v " + MasterIntermediateCodec);
 
-        if (video.FrameRate > 0d && video.FrameRateMode == AuthoringFrameRateMode.Encoder)
-        {
-            line.Add("-r " + video.FrameRate.ToString(CultureInfo.InvariantCulture));
-        }
-
         string pixelFormat = PreparedPixelFormatFor(video, alpha);
-        line.Add(VideoFilterToken(video, lut, pixelFormat));
+        line.Add(VideoFilterToken(video, lut, pixelFormat, PrepareScalerFlags));
 
         line.Add("-pix_fmt " + pixelFormat);
         line.Add("-an");
@@ -353,11 +354,6 @@ internal static class FFmpegVocabulary
 
         line.Add("-pix_fmt " + AuthoringVideoSettings.PixelFormat);
 
-        if (video.FrameRate > 0d && video.FrameRateMode == AuthoringFrameRateMode.Encoder)
-        {
-            line.Add("-r " + video.FrameRate.ToString(CultureInfo.InvariantCulture));
-        }
-
         if (video.KeyframeIntervalFrames > 0)
         {
             line.Add("-g " + Number(video.KeyframeIntervalFrames));
@@ -365,26 +361,41 @@ internal static class FFmpegVocabulary
 
         // LAST in the chain is the format, so whatever the chain did - and lut3d works in RGB, so it did convert -
         // the encoder is handed the 8-bit 4:2:0 the streamable profile recommends.
-        line.Add(VideoFilterToken(video, lut, AuthoringVideoSettings.PixelFormat));
+        line.Add(VideoFilterToken(video, lut, AuthoringVideoSettings.PixelFormat, null));
     }
+
+    // The scale flags the prepare pass adds to the request's own: exact rounding and full chroma interpolation,
+    // which is what the managed scaler is measured against (see BuildPreparePass).
+    private static readonly string[] PrepareScalerFlags = { "accurate_rnd", "full_chroma_int" };
 
     // ONE -vf for the whole chain: ffmpeg keeps only the last one it is given. The filters are joined with ", " and
     // the whole chain is wrapped in double quotes.
-    private static string VideoFilterToken(AuthoringVideoSettings video, ResolvedLutChain lut, string pixelFormat)
+    //
+    // THE FRAME RATE IS ALWAYS THE fps FILTER. FrameRateMode only decides WHERE in the chain it sits: Filter puts it
+    // straight after scale, so a grade is never computed for a frame that is about to be dropped; Encoder puts it at
+    // the end, after lut3d and ahead of format, where the output-side -r used to act. It used to BE -r, and -r
+    // picks frames differently from fps when it LOWERS a rate (measured with FFmpeg 7.1, 10 -> 5 frames a second
+    // over a 2-second clip: -r 5 wrote 12 frames, and not the ones fps=5 keeps; fps=5 wrote 10). The in-process
+    // shaping follows the fps filter in both modes, so both paths now select the same frames. Dropping whole frames
+    // before or after a per-frame grade gives the same pictures; the output is constant-rate either way.
+    private static string VideoFilterToken(
+        AuthoringVideoSettings video,
+        ResolvedLutChain lut,
+        string pixelFormat,
+        string[] extraScalerFlags)
     {
-        List<string> filters = new List<string>(4);
+        List<string> filters = new List<string>(5);
+        bool convertsRate = video.FrameRate > 0d;
+        string fps = convertsRate ? "fps=" + video.FrameRate.ToString(CultureInfo.InvariantCulture) : null;
 
         if (!video.FrameSize.IsSourceSize)
         {
             // Raw: the aspect-preserving forms render an ffmpeg expression whose commas are already escaped
             // ONCE for the filtergraph (RenderScaleFilter); escaping again would hand ffmpeg stray backslashes.
-            filters.Add(RenderScaleFilter(video));
+            filters.Add(RenderScaleFilter(video, extraScalerFlags));
         }
 
-        if (video.FrameRate > 0d && video.FrameRateMode == AuthoringFrameRateMode.Filter)
-        {
-            filters.Add("fps=" + video.FrameRate.ToString(CultureInfo.InvariantCulture));
-        }
+        if (convertsRate && video.FrameRateMode == AuthoringFrameRateMode.Filter) filters.Add(fps);
 
         if (lut != null && lut.HasGrade)
         {
@@ -392,6 +403,8 @@ internal static class FFmpegVocabulary
             // survives.
             filters.Add("lut3d=file=" + EscapeFilterValue(lut.FilterPath) + ":interp=tetrahedral");
         }
+
+        if (convertsRate && video.FrameRateMode == AuthoringFrameRateMode.Encoder) filters.Add(fps);
 
         filters.Add("format=" + EscapeFilterValue(pixelFormat));
 
@@ -490,15 +503,33 @@ internal static class FFmpegVocabulary
         return dispositions;
     }
 
-    private static string RenderScaleFilter(AuthoringVideoSettings video)
+    private static string RenderScaleFilter(AuthoringVideoSettings video, string[] extraScalerFlags)
     {
         StringBuilder filter = new StringBuilder("scale=w=");
         filter.Append(EscapeCommas(video.FrameSize.RenderWidth()));
         filter.Append(":h=");
         filter.Append(EscapeCommas(video.FrameSize.RenderHeight()));
         filter.Append(":flags=");
-        filter.Append(EscapeCommas(video.ScalerFlags));
+        filter.Append(EscapeCommas(WithScalerFlags(video.ScalerFlags, extraScalerFlags)));
         return filter.ToString();
+    }
+
+    // The request's scaler flags with each extra flag appended ("+name") unless the request already names it.
+    private static string WithScalerFlags(string flags, string[] extraScalerFlags)
+    {
+        if (extraScalerFlags == null || extraScalerFlags.Length == 0) return flags;
+
+        HashSet<string> present = new HashSet<string>(
+            flags.Split(new[] { '+' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
+            StringComparer.OrdinalIgnoreCase);
+
+        StringBuilder combined = new StringBuilder(flags);
+        foreach (string extra in extraScalerFlags)
+        {
+            if (present.Add(extra)) combined.Append('+').Append(extra);
+        }
+
+        return combined.ToString();
     }
 
     // A comma would end the filter, so an expression that contains one escapes it ONCE - which is what the

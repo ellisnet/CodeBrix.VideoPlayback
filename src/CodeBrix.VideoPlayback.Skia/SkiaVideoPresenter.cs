@@ -83,7 +83,8 @@ public sealed class SkiaVideoPresenter : IDisposable
     private VideoRenderPath renderPath = VideoRenderPath.GpuAuto;
     private VideoRenderBackend activeBackend = VideoRenderBackend.Cpu;
     private bool backendResolved;
-    private bool fallbackReported;
+    private bool renderPathReported;
+    private string resolvedReason = string.Empty;
     private bool allowEffectsOnCpu;
     private bool effectsChainDirty = true;
     private bool effectsActive;
@@ -187,7 +188,7 @@ public sealed class SkiaVideoPresenter : IDisposable
         {
             if (renderPath == value) return;
             renderPath = value;
-            fallbackReported = false;
+            renderPathReported = false;
             effectsChainDirty = true;
         }
     }
@@ -198,6 +199,12 @@ public sealed class SkiaVideoPresenter : IDisposable
     /// without raising <see cref="RenderPathChanged" />.
     /// </remarks>
     public VideoRenderBackend ActiveRenderPath => backendResolved ? activeBackend : PeekBackend();
+
+    /// <summary>The start-up line most recently written about the render path, or null before the first.</summary>
+    internal string LastRenderPathReport { get; private set; }
+
+    /// <summary>How many start-up lines about the render path this presenter has written.</summary>
+    internal int RenderPathReportCount { get; private set; }
 
     /// <summary>True when the configured <see cref="Effects" /> are actually being applied.</summary>
     /// <remarks>
@@ -465,7 +472,7 @@ public sealed class SkiaVideoPresenter : IDisposable
         if (ReferenceEquals(grContext, graphicsContext)) return;
 
         grContext = graphicsContext;
-        fallbackReported = false;
+        renderPathReported = false;
         effectsChainDirty = true;
     }
 
@@ -516,17 +523,9 @@ public sealed class SkiaVideoPresenter : IDisposable
             reason = grContext == null
                 ? "no graphics context was supplied, so the processor path is running instead."
                 : "the graphics context has been abandoned, so the processor path is running instead.";
-
-            if (!fallbackReported)
-            {
-                fallbackReported = true;
-                Trace.TraceInformation(
-                    "CodeBrix.VideoPlayback.Skia: {0} Set RenderPath to GpuNoFallback if that should be an "
-                    + "error instead. Configured effects are {1}.",
-                    reason,
-                    allowEffectsOnCpu ? "being applied on the processor" : "not being applied");
-            }
         }
+
+        resolvedReason = reason;
 
         if (backendResolved && wanted == activeBackend) return activeBackend;
 
@@ -559,6 +558,7 @@ public sealed class SkiaVideoPresenter : IDisposable
 
         try
         {
+            ReportRenderPathOnce(backend);
             Compose(frame, backend);
         }
         finally
@@ -613,6 +613,7 @@ public sealed class SkiaVideoPresenter : IDisposable
         if (frame == null) return;
 
         VideoRenderBackend backend = ResolveRenderPath();
+        ReportRenderPathOnce(backend);
         Compose(frame, backend);
         Invalidated?.Invoke(this, EventArgs.Empty);
     }
@@ -1037,6 +1038,40 @@ public sealed class SkiaVideoPresenter : IDisposable
         surfaceWidth = 0;
         surfaceHeight = 0;
         hasComposition = false;
+    }
+
+    // ONE line per start, written at the first composition - the moment the path is final - rather than when the
+    // path is first resolved: a host that draws before it hands over its GRContext resolves the processor path once
+    // and then composes every frame on the graphics device, and a line written at that first resolution would name
+    // the wrong path. A new GRContext (UseGpu) or a new RenderPath is a new start and earns a new line.
+    private void ReportRenderPathOnce(VideoRenderBackend backend)
+    {
+        if (renderPathReported) return;
+        renderPathReported = true;
+
+        string line;
+        if (backend == VideoRenderBackend.Gpu)
+        {
+            line = "CodeBrix.VideoPlayback.Skia: composing on the GPU, because " + resolvedReason;
+        }
+        else
+        {
+            string effects = allowEffectsOnCpu ? "being applied on the processor" : "not being applied";
+
+            line = renderPath == VideoRenderPath.Cpu
+                ? "CodeBrix.VideoPlayback.Skia: composing on the CPU, because " + resolvedReason
+                  + " Configured effects are " + effects + "."
+                : "CodeBrix.VideoPlayback.Skia: composing on the CPU, because "
+                  + (grContext == null
+                      ? "no graphics context was supplied."
+                      : "the graphics context has been abandoned.")
+                  + " Set RenderPath to GpuNoFallback if that should be an error instead. Configured effects are "
+                  + effects + ".";
+        }
+
+        LastRenderPathReport = line;
+        RenderPathReportCount++;
+        Trace.TraceInformation(line);
     }
 
     private static void WarnOnceAboutEffectsOnCpu()

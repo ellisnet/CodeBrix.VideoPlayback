@@ -460,15 +460,17 @@ AuthoringVideoSettings - the picture
     dimensions are refused: 4:2:0 chroma has half as many samples per axis, so
     an odd dimension has nowhere to put the last one.
 
-  THE FRAME RATE goes either at the encoder (-r N, which makes the output
-  constant-frame-rate and therefore makes a keyframe interval in FRAMES mean a
-  fixed number of seconds) or in the filter chain (fps=N, which drops frames
-  BEFORE the grade runs, so a lookup is never computed for a frame that is about
-  to be thrown away). THE TWO PATHS DIFFER HERE: with ffmpeg, FrameRateMode =
-  Encoder really is the encoder's -r (the published command lines are
-  unchanged); on an engine without ffmpeg the in-process shaping follows the
-  fps filter's frame choice in BOTH modes (Encoder earns a note), so when the
-  rate is LOWERED the two can keep different frames.
+  THE FRAME RATE is always ffmpeg's fps filter (fps=N), which drops and
+  duplicates whole frames and makes the output constant-frame-rate - so a
+  keyframe interval in FRAMES means a fixed number of seconds. FrameRateMode
+  only decides WHERE in the chain it sits: Encoder (the default) puts it at the
+  output end, after the grade and ahead of the final format; Filter puts it
+  straight after the scale, so a lookup is never computed for a frame that is
+  about to be thrown away. Both modes keep the SAME frames, and on an engine
+  without ffmpeg the in-process shaping keeps those same frames too (Encoder
+  earns a note there, because in process the frames are always dropped before
+  the grade). Lowering 10 frames a second to 5 over a 2-second clip gives 10
+  frames on every path.
 
   AUTOROTATE is an INPUT option, and the library puts it where ffmpeg will honour
   it - before the -i it belongs to. With it on, a portrait phone recording comes
@@ -476,10 +478,11 @@ AuthoringVideoSettings - the picture
 
   THE ONE FILTER CHAIN, and the order it is built in:
         1. scale     the resample first, so everything after works on less
-        2. fps       only in Filter mode; drops frames before the expensive part
+        2. fps       in Filter mode; drops frames before the expensive part
         3. lut3d     the colour grade; ffmpeg's lookup works in RGB and inserts
                      the conversion itself, exactly as the playback presenter
                      applies its own lookup to RGB after the same conversion
+        (3a. fps     in Encoder mode, the same filter at the output end)
         4. format    LAST, so the encoder is handed 8-bit 4:2:0 whatever the
                      chain did
     ffmpeg keeps only the last -vf it is given, so there is exactly one, always.
@@ -499,8 +502,9 @@ AuthoringVideoSettings - the picture
         FrameRate      the decimal becomes the fraction ffmpeg makes of it
                        (29.97 -> 2997/100); frames are dropped and duplicated
                        exactly as ffmpeg's fps filter does, in BOTH
-                       FrameRateModes (Encoder earns a note: ffmpeg's -r keeps
-                       other frames when it lowers the rate)
+                       FrameRateModes - the frames the ffmpeg path keeps too
+                       (Encoder earns a note: in process the drop is always
+                       before the grade)
         Luts           the same chain, composed by the same composer, read as a
                        3-D table and applied tetrahedrally in YUV with the
                        matrix the engine reports (untagged = BT.601, as ffmpeg's
@@ -768,7 +772,9 @@ references. Up to four passes, then the same managed muxer:
      done first by one ffmpeg command writing a LOSSLESS intermediate (FFV1 in
      Matroska, yuva420p when alpha is carried, yuv420p otherwise, no sound)
      through the same filter chain the bespoke flavour uses - scale, fps,
-     lut3d, then format. It runs when the request sets ANY of:
+     lut3d, then format - except that its scale flags gain
+     accurate_rnd+full_chroma_int (exact rounding and full chroma
+     interpolation; flags the request already names are not repeated). It runs when the request sets ANY of:
          Video.FrameSize       (anything but Source)
          Video.FrameRate       (above 0, in either FrameRateMode)
          Video.Luts            (a grade that is not empty)
@@ -1383,7 +1389,8 @@ PERFORMANCE TIPS
 
   * PUT THE FRAME-RATE CAP IN THE FILTER CHAIN when there is a grade. In Filter
     mode the fps filter drops frames before lut3d runs; in Encoder mode the
-    lookup is computed for frames the encoder then discards.
+    same filter sits after lut3d, so the lookup is computed for frames it then
+    discards. The frames kept are the same either way.
 
   * COMPOSE THE GRADE ONCE. A chain of ten tables costs ffmpeg exactly one
     lookup, because this library folds it before ffmpeg ever sees it.
@@ -1453,9 +1460,8 @@ COMMON PITFALLS TO AVOID
   * DO NOT EXPECT THE IN-PROCESS SHAPING TO BE BIT-IDENTICAL TO FFMPEG'S. On an
     engine without ffmpeg, FrameSize, FrameRate, Luts and AutoRotate are served
     in process: rotation and frame selection are exact, but scaled and graded
-    samples can differ by a few levels at hard edges. And FrameRateMode =
-    Encoder means the fps filter's frames in process, where ffmpeg's -r keeps
-    other frames when it lowers the rate.
+    samples can differ by a few levels at hard edges. Frame selection is the
+    same on both paths, in both FrameRateModes.
 
   * DO NOT ASK FOR 10 BITS OUTSIDE A MASTER. Video.BitDepth = 10 is refused for
     the WebM-profile and bespoke flavours, and on an engine without

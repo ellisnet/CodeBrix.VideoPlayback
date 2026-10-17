@@ -15,21 +15,23 @@ namespace CodeBrix.VideoPlayback.Authoring.Tests;
 /// </summary>
 /// <remarks>
 /// <para>
-/// The bounds are the differences MEASURED on these clips (2026-10-11, host FFmpeg 7.1) with a level or two of
-/// head-room; the means are asserted too, because a worst case can hide a systematic shift. Where they are wider
-/// than the core's own oracle measurements (MAINTAINER-README, "THE MANAGED FRAME-PROCESSING PRIMITIVES") it is
-/// because the prepare pass runs FFmpeg with its DEFAULT conversions: <c>scale ... flags=lanczos</c> without
-/// <c>accurate_rnd</c>, and the RGB conversions FFmpeg inserts round <c>lut3d</c> with its default (bicubic,
-/// no full chroma interpolation) scaler - the core's oracle used <c>accurate_rnd+full_chroma_int</c> and bilinear
-/// chroma. The scaler's larger worst cases sit on the clip's hard-edged frame-counter block (Lanczos ringing).
+/// The bounds are the differences MEASURED on these clips (host FFmpeg 7.1) with a level or two of head-room; the
+/// means are asserted too, because a worst case can hide a systematic shift. The prepare pass's scale carries
+/// <c>accurate_rnd+full_chroma_int</c>, as the core's own oracle measurements do (MAINTAINER-README, "THE MANAGED
+/// FRAME-PROCESSING PRIMITIVES"); with it the 8-bit scaling means fell to a third or less of what FFmpeg's default
+/// rounding gave (scale-down-lanczos luma mean 0.352 -> 0.092, everything-8-bit 1.424 -> 0.401), and the bounds
+/// were tightened to match. Where they are still wider than the oracle's it is the grade: the RGB conversions
+/// FFmpeg inserts round <c>lut3d</c> use its default (bicubic, no full chroma interpolation) scaler, which no scale
+/// flag reaches. The scaler's larger worst cases sit on the clip's hard-edged frame-counter block (Lanczos ringing);
+/// the 10-bit cases did not move.
 /// </para>
 /// <para>
 /// FRAME RATES are compared in <see cref="AuthoringFrameRateMode.Filter" /> mode, where FFmpeg's <c>fps</c> filter
-/// is what the managed resampler mirrors. In <see cref="AuthoringFrameRateMode.Encoder" /> mode FFmpeg's
-/// output-side <c>-r</c> agrees on up-conversion but, measured, keeps different frames and ADDS two when it halves 10 to
-/// 5 frames a second (12 frames for a 2-second clip, and not the same source frames as <c>fps=5</c> keeps); the
-/// managed path is the <c>fps</c> filter in both modes - see
-/// <see cref="Encoder_mode_halving_is_the_fps_filter_in_process_where_ffmpeg_output_rate_picks_and_pads_differently" />.
+/// is what the managed resampler mirrors. <see cref="AuthoringFrameRateMode.Encoder" /> mode is the same <c>fps</c>
+/// filter at the end of FFmpeg's chain (it used to be the output-side <c>-r</c>, which kept different frames and
+/// wrote 12 instead of 10 when it halved a 2-second clip from 10 to 5 frames a second), so both paths keep the same
+/// frames in both modes - see
+/// <see cref="Encoder_mode_halving_keeps_the_same_frames_on_both_paths" />.
 /// </para>
 /// </remarks>
 public class ManagedVersusFFmpegShapingTests
@@ -41,12 +43,12 @@ public class ManagedVersusFFmpegShapingTests
         { "rotate-180", 0, 0, 0, 0d, 0d },
         { "rotate-270", 0, 0, 0, 0d, 0d },
         { "rotate-90-10-bit-alpha", 0, 0, 0, 0d, 0d },
-        { "scale-down-lanczos", 2, 2, 0, 0.5d, 0.4d },
-        { "scale-up-lanczos", 4, 2, 0, 0.2d, 0.2d },
-        { "scale-down-bilinear", 2, 2, 0, 0.3d, 0.3d },
-        { "scale-long-side", 2, 2, 0, 0.6d, 0.4d },
-        { "scale-short-side", 2, 2, 0, 0.1d, 0.2d },
-        { "scale-down-alpha", 2, 2, 2, 0.5d, 0.4d },
+        { "scale-down-lanczos", 2, 2, 0, 0.2d, 0.2d },
+        { "scale-up-lanczos", 4, 2, 0, 0.1d, 0.1d },
+        { "scale-down-bilinear", 2, 2, 0, 0.2d, 0.2d },
+        { "scale-long-side", 2, 2, 0, 0.2d, 0.1d },
+        { "scale-short-side", 2, 2, 0, 0.1d, 0.1d },
+        { "scale-down-alpha", 2, 2, 1, 0.2d, 0.2d },
         { "scale-down-10-bit", 4, 2, 0, 0.1d, 0.1d },
         { "scale-up-10-bit", 12, 2, 0, 0.1d, 0.1d },
         { "grade-single", 4, 6, 0, 1.3d, 0.5d },
@@ -56,7 +58,7 @@ public class ManagedVersusFFmpegShapingTests
         { "fps-up-15", 0, 0, 0, 0d, 0d },
         { "fps-up-24", 0, 0, 0, 0d, 0d },
         { "fps-30-to-29.97", 0, 0, 0, 0d, 0d },
-        { "everything-8-bit", 5, 5, 0, 1.7d, 0.8d },
+        { "everything-8-bit", 4, 5, 0, 0.6d, 0.6d },
         { "everything-10-bit-alpha", 12, 22, 3, 0.7d, 0.9d },
     };
 
@@ -98,7 +100,7 @@ public class ManagedVersusFFmpegShapingTests
     }
 
     [Fact]
-    public void Encoder_mode_halving_is_the_fps_filter_in_process_where_ffmpeg_output_rate_picks_and_pads_differently()
+    public void Encoder_mode_halving_keeps_the_same_frames_on_both_paths()
     {
         //Arrange
         SyntheticSource.SkipWithoutFFmpeg();
@@ -117,8 +119,10 @@ public class ManagedVersusFFmpegShapingTests
         ShapedFrames.Compare(managed, ffmpegFilter).LumaWorst.Should().Be(0);
         for (int i = 0; i < managed.Count; i++) managed[i].Timestamp.Should().Be(ffmpegFilter[i].Timestamp);
 
-        // Measured 2026-10-11: FFmpeg's output-side -r 5 keeps other source frames than fps=5 and writes 12.
-        ffmpegEncoder.Count.Should().Be(12);
+        // Encoder mode is fps=5 at the end of FFmpeg's chain: the same ten frames as Filter mode and the managed path.
+        ffmpegEncoder.Count.Should().Be(10);
+        ShapedFrames.Compare(managed, ffmpegEncoder).LumaWorst.Should().Be(0);
+        for (int i = 0; i < managed.Count; i++) managed[i].Timestamp.Should().Be(ffmpegEncoder[i].Timestamp);
     }
 
     [Fact]

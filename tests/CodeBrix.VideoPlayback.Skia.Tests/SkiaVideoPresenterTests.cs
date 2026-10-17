@@ -156,6 +156,58 @@ public class SkiaVideoPresenterTests
     }
 
     [Fact]
+    public void The_start_up_line_names_the_processor_path_once_at_the_first_composition()
+    {
+        //Arrange
+        using PinnedFrameBufferPool pool = new PinnedFrameBufferPool();
+        using SkiaVideoPresenter presenter = new SkiaVideoPresenter { RenderPath = VideoRenderPath.GpuAuto };
+        presenter.ResolveRenderPath();
+        int beforeComposition = presenter.RenderPathReportCount;
+
+        //Act
+        for (int i = 0; i < 2; i++)
+        {
+            using (VideoFrame frame = TestFrames.CreatePattern(
+                pool, 16, 16, VideoPixelLayout.I420, TestFrames.Bt709Limited, i + 1))
+            {
+                presenter.Present(frame);
+            }
+
+            presenter.Update();
+        }
+
+        //Assert
+        beforeComposition.Should().Be(0);
+        presenter.RenderPathReportCount.Should().Be(1);
+        presenter.LastRenderPathReport.Should().StartWith(
+            "CodeBrix.VideoPlayback.Skia: composing on the CPU, because no graphics context was supplied.");
+        presenter.LastRenderPathReport.Should().Contain("GpuNoFallback");
+    }
+
+    [Fact]
+    public void The_start_up_line_for_an_explicit_cpu_path_says_it_was_asked_for()
+    {
+        //Arrange
+        using PinnedFrameBufferPool pool = new PinnedFrameBufferPool();
+        using SkiaVideoPresenter presenter = new SkiaVideoPresenter { RenderPath = VideoRenderPath.Cpu };
+
+        //Act
+        using (VideoFrame frame = TestFrames.CreatePattern(
+            pool, 16, 16, VideoPixelLayout.I420, TestFrames.Bt709Limited, 1))
+        {
+            presenter.Present(frame);
+        }
+
+        presenter.Update();
+
+        //Assert
+        presenter.RenderPathReportCount.Should().Be(1);
+        presenter.LastRenderPathReport.Should().StartWith(
+            "CodeBrix.VideoPlayback.Skia: composing on the CPU, because the render path is set to Cpu.");
+        presenter.LastRenderPathReport.Should().NotContain("GpuNoFallback");
+    }
+
+    [Fact]
     public void GpuAuto_falling_back_leaves_a_configured_effect_chain_inactive()
     {
         //Arrange
