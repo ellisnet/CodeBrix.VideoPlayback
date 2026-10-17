@@ -6,7 +6,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.10.1" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.11.0" />
     <PackageReference Include="xunit.runner.visualstudio" Version="4.0.1">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
@@ -20,7 +20,7 @@
       files, it does not play them. See MAINTAINER-README.txt.
     -->
     <PackageReference Include="CodeBrix.VideoPlayback.Dav1d.BsdLicenseForever" Version="1.0.271.1206" />
-    <PackageReference Include="CodeBrix.Audio.Opus.BsdLicenseForever" Version="1.0.284.1151" />
+    <PackageReference Include="CodeBrix.Audio.Opus.BsdLicenseForever" Version="1.0.290.960" />
     <!--
       The TEST project references the full audio package because the master-file session test opens the
       audio device and needs its native engine (same arrangement as CodeBrix.VideoPlayback.Tests). The
@@ -32,7 +32,7 @@
       through whichever engine is registered; the test project registers this one (FFmpegEngineRegistration.cs),
       as an application does, and its fixtures use the package directly to make the clips they author from.
     -->
-    <PackageReference Include="CodeBrix.VideoProcessing.MitLicenseForever" Version="1.0.285.792" />
+    <PackageReference Include="CodeBrix.VideoProcessing.MitLicenseForever" Version="1.0.290.1023" />
   </ItemGroup>
 
   <ItemGroup>

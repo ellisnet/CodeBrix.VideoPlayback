@@ -24,7 +24,7 @@
     the corpus judged by an implementation other than the one that wrote it.
   -->
   <ItemGroup>
-    <PackageReference Include="CodeBrix.VideoProcessing.MitLicenseForever" Version="1.0.285.792" />
+    <PackageReference Include="CodeBrix.VideoProcessing.MitLicenseForever" Version="1.0.290.1023" />
   </ItemGroup>
 
   <ItemGroup>

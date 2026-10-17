@@ -6,7 +6,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.10.1" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.11.0" />
     <PackageReference Include="xunit.runner.visualstudio" Version="4.0.1">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
@@ -17,7 +17,7 @@
       The TEST project may reference the Opus package - it proves the Opus path works once an
       application registers it. The LIBRARY never does; see MAINTAINER-README.txt.
     -->
-    <PackageReference Include="CodeBrix.Audio.Opus.BsdLicenseForever" Version="1.0.284.1151" />
+    <PackageReference Include="CodeBrix.Audio.Opus.BsdLicenseForever" Version="1.0.290.960" />
     <!--
       The TEST project references the full audio package because the opt-in tests that open the audio
       device need its native engine. The LIBRARY references only CodeBrix.Audio.Core, which ships no

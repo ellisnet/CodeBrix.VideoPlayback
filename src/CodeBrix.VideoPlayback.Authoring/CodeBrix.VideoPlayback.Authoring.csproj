@@ -90,12 +90,12 @@
     playback registry: authoring writes files, it does not play them or draw them.
   -->
   <ItemGroup>
-    <PackageReference Include="CodeBrix.VideoProcessing.Core.MitLicenseForever" Version="1.0.285.792" />
-    <PackageReference Include="CodeBrix.VideoEncoding.Av1.BsdLicenseForever" Version="1.0.284.321" />
+    <PackageReference Include="CodeBrix.VideoProcessing.Core.MitLicenseForever" Version="1.0.290.1023" />
+    <PackageReference Include="CodeBrix.VideoEncoding.Av1.BsdLicenseForever" Version="1.0.290.1202" />
     <PackageReference Include="CodeBrix.Audio.FlacWriter.BsdLicenseForever" Version="1.0.284.304" />
     <PackageReference Include="CodeBrix.Audio.Vorbis.BsdLicenseForever" Version="1.0.283.1118" />
-    <PackageReference Include="CodeBrix.Audio.Opus.BsdLicenseForever" Version="1.0.284.1151" />
-    <PackageReference Include="CodeBrix.Imaging.ApacheLicenseForever" Version="1.0.285.619" />
+    <PackageReference Include="CodeBrix.Audio.Opus.BsdLicenseForever" Version="1.0.290.960" />
+    <PackageReference Include="CodeBrix.Imaging.ApacheLicenseForever" Version="1.0.290.858" />
   </ItemGroup>
 
   <!--
